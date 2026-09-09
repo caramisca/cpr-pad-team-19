@@ -1,0 +1,69 @@
+# Local Lab Guidelines & PDF Documents
+Lab0/
+*.pdf
+
+# Environment & Secrets (DO NOT COMMIT)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+appsettings.Development.json
+appsettings.Production.json
+!appsettings.json
+!appsettings.Example.json
+
+# OS Specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE & Editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-workspace
+*.sublime-project
+
+# Java / Maven / Gradle (Services 1 & 3)
+target/
+*.class
+*.jar
+*.war
+*.ear
+.gradle/
+build/
+!src/**/build/
+gradle-app.setting
+!gradle-wrapper.jar
+.project
+.classpath
+.settings/
+
+# C# / .NET (Services 2 & 4)
+bin/
+obj/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+.vs/
+_ReSharper*/
+*.dotCover
+packages/
+*.nupkg
+*.publishsettings
+
+# Database & Cache files
+*.db
+*.sqlite
+*.sqlite3
+data/
+db_data/
+
+# Logs
+*.log
+logs/

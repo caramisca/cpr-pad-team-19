@@ -1,0 +1,31 @@
+[submodule "services/player-service"]
+	path = services/player-service
+	url = https://github.com/daria-username/player-service.git
+
+[submodule "services/server-moderation-session-service"]
+	path = services/server-moderation-session-service
+	url = https://github.com/daria-username/server-moderation-session-service.git
+
+[submodule "services/applicant-service"]
+	path = services/applicant-service
+	url = https://github.com/caramisca/applicant-service.git
+
+[submodule "services/credential-service"]
+	path = services/credential-service
+	url = https://github.com/caramisca/credential-service.git
+
+[submodule "services/server-rules-service"]
+	path = services/server-rules-service
+	url = https://github.com/diana7376/server-rules-service.git
+
+[submodule "services/university-record-service"]
+	path = services/university-record-service
+	url = https://github.com/diana7376/university-record-service.git
+
+[submodule "services/moderation-service"]
+	path = services/moderation-service
+	url = https://github.com/andi-username/moderation-service.git
+
+[submodule "services/discord-dms-service"]
+	path = services/discord-dms-service
+	url = https://github.com/andi-username/discord-dms-service.git
