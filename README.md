@@ -132,6 +132,50 @@ Owner: Andi — C# (.NET 8) — In-Memory
 - **Exposes:** `POST /notifications/dm`, `GET /notifications/{id}/status`.
 - **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
 
+
+## Technologies & Communication Patterns
+
+The team works in 2 languages, split by repo/member pair. Python was excluded to keep both stacks
+statically typed and consistent with the team's existing Spring Boot / .NET expertise, and to
+enforce compile-time type safety across the credential/verdict logic where correctness matters
+most.
+
+| Repo | Service | Language / Framework | Sync communication | Async communication |
+|---|---|---|---|---|
+| `player-service` | Player | Java (Spring Boot) | REST CRUD (profile, rank, stats lookup) | Consumes `decision.evaluated` to update score/rank/penalties |
+| `server-moderation-session-service` | Session | Java (Spring Boot) | REST to open/close a shift, pull next applicant, assign moderator/junior-mod roles | Publishes `session.started`/`session.closed`; consumes `decision.recorded` to advance the queue |
+| `server-rules-service` | Server Rules | Java (Spring Boot) | REST to read active ruleset/revisions | Publishes `ruleset.updated` for services that need to react to mid-shift rule changes |
+| `university-record-service` | University Record | Java (Spring Boot) | REST for authoritative student/faculty/enrolment lookups | — (read-mostly system of record; no events published) |
+| `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service synchronously to attach documents | — |
+| `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service synchronously to derive authentic fields | — |
+| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record synchronously to gather everything a verdict needs | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume |
+| `discord-dms-service` | Discord DMs | C# (.NET 8) | WebSocket for real-time moderator ↔ junior-mod chat channels (`#enrollment-check`, `#faculty-check`, `#general-mod-chat`) | Purely event-driven for outbound notifications: consumes `verdict.issued`, `session.started`/`closed`, `ruleset.updated`; no service calls it synchronously |
+
+**Why this split:**
+
+- **Java (Spring Boot)** for Player, Session, Rules, University Record: these hold the most
+  structured, long-lived, relational domain data (player progression, shift/queue state, versioned
+  rulesets, the authoritative enrolment registry) and benefit from Spring's mature ecosystem for
+  transactional REST APIs, JPA-backed consistency, and strong typing where correctness matters
+  most — e.g. no two junior mods ever pulling the same applicant, no stale enrolment data feeding
+  a verdict.
+- **C# (.NET 8)** for Applicant, Credential, Moderation, Discord DMs: these sit closer to the live
+  decision path — applicant/credential generation is short-lived and disposable per shift,
+  Moderation is the single most latency-sensitive call in the system (a moderator's accept/deny
+  should never feel slow), and Discord DMs is a connection-heavy delivery/chat edge where .NET's
+  async I/O and lower per-instance overhead are a good fit.
+- **Python was excluded** across both stacks to keep the codebase statically typed end-to-end,
+  which matters for a system where a type error in credential or verdict handling would be a
+  correctness bug, not just a runtime inconvenience.
+- **WebSockets** are used specifically for `discord-dms-service`'s moderator ↔ junior-mod chat,
+  since that interaction is inherently real-time and bidirectional — REST elsewhere, since most
+  other operations are simple request/response.
+- **Async events** are used wherever a service shouldn't block on, or depend on the availability
+  of, a downstream consumer — most notably after a verdict is produced in Moderation Service
+  (scoring, queue advancement, and Discord delivery all react independently) and for rule changes
+  propagating out via `ruleset.updated`.
+
+
 ## Architecture Diagram
 
 Solid arrows are synchronous REST calls in the request path. Dashed arrows are asynchronous domain
