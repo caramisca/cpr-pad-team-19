@@ -24,8 +24,8 @@
 
 [submodule "services/moderation-service"]
 	path = services/moderation-service
-	url = https://github.com/andi-username/moderation-service.git
+	url = https://github.com/blinduandi/moderation-service.git
 
 [submodule "services/discord-dms-service"]
 	path = services/discord-dms-service
-	url = https://github.com/andi-username/discord-dms-service.git
+	url = https://github.com/blinduandi/discord-dms-service.git
