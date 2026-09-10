@@ -253,3 +253,502 @@ or fail a moderator's decision.
 `player-service` and `discord-dms-service` are never called synchronously by another service, and
 `discord-dms-service` never calls back into the domain. These two boundaries are deliberately kept
 event-driven so that a failure in scoring or in the Discord API cannot block a shift in progress.
+
+## Communication Contract
+
+### Data Management Strategy
+
+The system follows **Database-per-Service**: every microservice owns an isolated datastore and no
+service is ever granted direct access to another service's schema, tables, or keys. The storage
+engine is picked per service based on the shape of the data it owns, not on team-wide consistency:
+
+| Service | Storage Engine | Why |
+| :--- | :--- | :--- |
+| `player-service` | PostgreSQL | Relational integrity between a player and its stats/penalty history. |
+| `server-moderation-session-service` | PostgreSQL | Sessions and their queue entries are relational and transactional (close-shift is atomic). |
+| `applicant-service` | Redis / In-Memory | Applicants are scoped to a single session and expire with it; no durability is needed. |
+| `credential-service` | Redis / In-Memory | Credentials are as ephemeral as the applicant they belong to. |
+| `server-rules-service` | MongoDB | Rule shapes vary by rule type and change between revisions; document storage avoids rigid schemas. |
+| `university-record-service` | PostgreSQL | Enrolments and faculties need referential integrity as the system of record. |
+| `moderation-service` | PostgreSQL | Decisions/verdicts/violations form the permanent audit trail and must not be lost. |
+| `discord-dms-service` | In-Memory | The outbox only needs to survive long enough to retry a delivery. |
+
+All cross-service data access happens exclusively over the contract published below:
+
+- **Synchronous REST** is used when the caller cannot proceed without the answer (e.g.
+  `moderation-service` needs the credential, the ruleset, and the student record before a verdict
+  exists).
+- **Asynchronous domain events**, delivered through the message broker, are used everywhere the
+  caller does not need to block on the result (scoring, queue advancement, Discord delivery).
+- Every event consumer treats events as **at-least-once** and deduplicates on the event's `eventId`,
+  since retried deliveries must never double-award XP, double-advance a queue, or double-send a DM.
+- No service ever queries another service's database, cache, or message topics directly — only the
+  endpoints and event payloads documented below are considered part of the public contract.
+
+### Endpoint Contracts
+
+Unless noted otherwise, all endpoints accept and return `application/json`, and error responses share
+the shape `{ "error": "string (machine-readable code)", "message": "string (human-readable detail)" }`.
+
+#### `player-service`
+
+**`POST /players`** — register a new player.
+
+Request:
+```json
+{
+  "discordId": "string",
+  "displayName": "string"
+}
+```
+Response `201 Created`:
+```json
+{
+  "id": "string (uuid)",
+  "discordId": "string",
+  "displayName": "string",
+  "rank": "string",
+  "xp": "integer",
+  "level": "integer",
+  "createdAt": "string (ISO-8601 datetime)"
+}
+```
+
+**`GET /players/{id}`** — fetch a player profile.
+
+Response `200 OK`: same shape as the `POST /players` response.
+Response `404 Not Found`: standard error shape.
+
+**`GET /players/{id}/stats`** — fetch lifetime moderation statistics.
+
+Response `200 OK`:
+```json
+{
+  "playerId": "string (uuid)",
+  "totalShifts": "integer",
+  "correctDecisions": "integer",
+  "incorrectDecisions": "integer",
+  "accuracyScore": "number (0-1)",
+  "lastShiftAt": "string (ISO-8601 datetime) | null"
+}
+```
+
+**`GET /players/{id}/rank`** — fetch current rank standing.
+
+Response `200 OK`:
+```json
+{
+  "playerId": "string (uuid)",
+  "rank": "string",
+  "xp": "integer",
+  "level": "integer",
+  "percentile": "number (0-100)"
+}
+```
+
+**Consumes `decision.evaluated`** — recomputes score, rank, and penalties.
+```json
+{
+  "eventId": "string (uuid)",
+  "decisionId": "string (uuid)",
+  "playerId": "string (uuid)",
+  "sessionId": "string (uuid)",
+  "correct": "boolean",
+  "xpAwarded": "integer",
+  "evaluatedAt": "string (ISO-8601 datetime)"
+}
+```
+
+#### `server-moderation-session-service`
+
+**`POST /sessions`** — open a new moderation shift.
+
+Request:
+```json
+{
+  "moderatorId": "string (uuid)",
+  "juniorModeratorIds": ["string (uuid)"]
+}
+```
+Response `201 Created`:
+```json
+{
+  "id": "string (uuid)",
+  "moderatorId": "string (uuid)",
+  "juniorModeratorIds": ["string (uuid)"],
+  "status": "string (OPEN | CLOSED)",
+  "startedAt": "string (ISO-8601 datetime)"
+}
+```
+
+**`GET /sessions/{id}`** — fetch session state.
+
+Response `200 OK`:
+```json
+{
+  "id": "string (uuid)",
+  "moderatorId": "string (uuid)",
+  "juniorModeratorIds": ["string (uuid)"],
+  "status": "string (OPEN | CLOSED)",
+  "queueLength": "integer",
+  "applicantsProcessed": "integer",
+  "startedAt": "string (ISO-8601 datetime)",
+  "closedAt": "string (ISO-8601 datetime) | null"
+}
+```
+
+**`POST /sessions/{id}/close`** — end the shift and compute the summary.
+
+Request: empty body.
+Response `200 OK`:
+```json
+{
+  "id": "string (uuid)",
+  "status": "CLOSED",
+  "closedAt": "string (ISO-8601 datetime)",
+  "summary": {
+    "applicantsProcessed": "integer",
+    "correctDecisions": "integer",
+    "incorrectDecisions": "integer",
+    "score": "number"
+  }
+}
+```
+
+**`GET /sessions/{id}/next-applicant`** — pull the next queued applicant.
+
+Response `200 OK`:
+```json
+{
+  "sessionId": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "queuePosition": "integer",
+  "presentedAt": "string (ISO-8601 datetime)"
+}
+```
+Response `404 Not Found`: standard error shape, returned when the queue is empty.
+
+**Calls:** `applicant-service` to fetch/generate the next applicant; `server-rules-service` to read
+the ruleset currently in force.
+
+**Consumes `decision.recorded`** — advances the queue and stops the applicant timer.
+```json
+{
+  "eventId": "string (uuid)",
+  "decisionId": "string (uuid)",
+  "sessionId": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "action": "string (ACCEPT | REJECT | FLAG | BAN)",
+  "recordedAt": "string (ISO-8601 datetime)"
+}
+```
+
+**Publishes `session.started`:**
+```json
+{ "eventId": "string (uuid)", "sessionId": "string (uuid)", "moderatorId": "string (uuid)", "startedAt": "string (ISO-8601 datetime)" }
+```
+**Publishes `session.closed`:**
+```json
+{ "eventId": "string (uuid)", "sessionId": "string (uuid)", "closedAt": "string (ISO-8601 datetime)", "summary": { "applicantsProcessed": "integer", "score": "number" } }
+```
+
+#### `applicant-service`
+
+**`POST /applicants/generate`** — generate a new applicant for a session.
+
+Request:
+```json
+{
+  "sessionId": "string (uuid)",
+  "difficulty": "string (EASY | MEDIUM | HARD) | null"
+}
+```
+Response `201 Created`:
+```json
+{
+  "id": "string (uuid)",
+  "name": "string",
+  "studentId": "string | null",
+  "faculty": "string",
+  "year": "integer | null",
+  "role": "string (STUDENT | OTHER_MAJOR | TA | STAFF | ALUMNUS | OUTSIDER)",
+  "photoRef": "string (url)",
+  "credentialId": "string (uuid)",
+  "createdAt": "string (ISO-8601 datetime)",
+  "expiresAt": "string (ISO-8601 datetime)"
+}
+```
+
+**`GET /applicants/{id}`** — fetch an applicant profile.
+
+Response `200 OK`: same shape as the `POST /applicants/generate` response.
+Response `404 Not Found`: standard error shape, also returned once the applicant has expired.
+
+**Calls:** `credential-service` (`POST /credentials/issue`) to attach a credential bundle to a freshly
+generated applicant.
+
+#### `credential-service`
+
+**`POST /credentials/issue`** — issue a credential bundle for an applicant.
+
+Request:
+```json
+{
+  "applicantId": "string (uuid)",
+  "isLegitimate": "boolean",
+  "seed": {
+    "studentId": "string | null",
+    "faculty": "string | null",
+    "year": "integer | null"
+  }
+}
+```
+Response `201 Created`:
+```json
+{
+  "id": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "documentType": "string (STUDENT_ID | ENROLLMENT_CONFIRMATION | STAFF_BADGE)",
+  "fields": {
+    "fullName": "string",
+    "studentId": "string | null",
+    "faculty": "string",
+    "year": "integer | null"
+  },
+  "issuedAt": "string (ISO-8601 datetime)",
+  "expiresAt": "string (ISO-8601 datetime)",
+  "integrityHash": "string (sha256)",
+  "issuingAuthority": "string"
+}
+```
+
+**`GET /credentials/{id}`** — fetch a credential bundle.
+
+Response `200 OK`: same shape as the `POST /credentials/issue` response.
+Response `404 Not Found`: standard error shape.
+
+**`POST /credentials/{id}/verify-hash`** — check whether a presented hash matches the stored one.
+
+Request:
+```json
+{ "providedHash": "string (sha256)" }
+```
+Response `200 OK`:
+```json
+{
+  "credentialId": "string (uuid)",
+  "valid": "boolean",
+  "checkedAt": "string (ISO-8601 datetime)"
+}
+```
+
+**Calls:** `university-record-service` (`POST /records/students/lookup`) to derive authentic field
+values when `isLegitimate` is true.
+
+#### `server-rules-service`
+
+**`GET /rulesets/active`** — fetch the ruleset currently in force.
+
+Response `200 OK`:
+```json
+{
+  "id": "string (uuid)",
+  "version": "integer",
+  "effectiveFrom": "string (ISO-8601 datetime)",
+  "rules": [
+    {
+      "type": "string (e.g. ALLOWED_FACULTY, MIN_ENROLLMENT_YEARS, BLACKLIST)",
+      "description": "string",
+      "params": "object (rule-specific, e.g. { \"faculties\": [\"FAF\"] })"
+    }
+  ]
+}
+```
+
+**`GET /rulesets/{id}`** — fetch a specific ruleset by id.
+
+Response `200 OK`: same shape as `GET /rulesets/active`.
+Response `404 Not Found`: standard error shape.
+
+**`POST /rulesets`** — publish a new ruleset revision.
+
+Request:
+```json
+{
+  "effectiveFrom": "string (ISO-8601 datetime)",
+  "rules": [
+    { "type": "string", "description": "string", "params": "object" }
+  ]
+}
+```
+Response `201 Created`: same shape as `GET /rulesets/active`.
+
+**`GET /rulesets/{id}/revisions`** — fetch the revision history of a ruleset.
+
+Response `200 OK`:
+```json
+{
+  "rulesetId": "string (uuid)",
+  "revisions": [
+    {
+      "revisionNumber": "integer",
+      "changedAt": "string (ISO-8601 datetime)",
+      "changedFields": ["string"]
+    }
+  ]
+}
+```
+
+**Publishes `ruleset.updated`:**
+```json
+{
+  "eventId": "string (uuid)",
+  "rulesetId": "string (uuid)",
+  "version": "integer",
+  "effectiveFrom": "string (ISO-8601 datetime)",
+  "changedFields": ["string"]
+}
+```
+
+#### `university-record-service`
+
+**`GET /records/students/{studentId}`** — fetch the authoritative record for one student.
+
+Response `200 OK`:
+```json
+{
+  "studentId": "string",
+  "fullName": "string",
+  "faculty": "string",
+  "groupName": "string",
+  "studyYear": "integer",
+  "enrolmentStatus": "string (ENROLLED | GRADUATED | EXPELLED | ON_LEAVE)",
+  "academicStanding": "string (GOOD | PROBATION)"
+}
+```
+Response `404 Not Found`: standard error shape.
+
+**`POST /records/students/lookup`** — fuzzy lookup by any known field, used to cross-check a
+presented credential.
+
+Request (at least one field required):
+```json
+{
+  "studentId": "string | null",
+  "fullName": "string | null",
+  "faculty": "string | null"
+}
+```
+Response `200 OK`:
+```json
+{
+  "matches": [
+    {
+      "studentId": "string",
+      "fullName": "string",
+      "faculty": "string",
+      "studyYear": "integer",
+      "enrolmentStatus": "string (ENROLLED | GRADUATED | EXPELLED | ON_LEAVE)"
+    }
+  ]
+}
+```
+
+**`GET /records/faculties`** — list known faculties.
+
+Response `200 OK`:
+```json
+{ "faculties": [ { "code": "string", "name": "string" } ] }
+```
+
+#### `moderation-service`
+
+**`POST /decisions`** — record a moderator's call on an applicant.
+
+Request:
+```json
+{
+  "sessionId": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "moderatorId": "string (uuid)",
+  "action": "string (ACCEPT | REJECT | FLAG | BAN)"
+}
+```
+Response `201 Created`:
+```json
+{
+  "id": "string (uuid)",
+  "sessionId": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "moderatorId": "string (uuid)",
+  "action": "string (ACCEPT | REJECT | FLAG | BAN)",
+  "createdAt": "string (ISO-8601 datetime)",
+  "verdict": {
+    "correct": "boolean",
+    "violatedRules": ["string"],
+    "evaluatedAt": "string (ISO-8601 datetime)"
+  }
+}
+```
+
+**`GET /decisions/{id}`** — fetch a single decision and its verdict.
+
+Response `200 OK`: same shape as the `POST /decisions` response.
+Response `404 Not Found`: standard error shape.
+
+**`GET /sessions/{id}/decisions`** — list every decision made during a session.
+
+Response `200 OK`:
+```json
+{ "sessionId": "string (uuid)", "decisions": [ "object (same shape as POST /decisions response)" ] }
+```
+
+**Calls:** `credential-service` (`GET /credentials/{id}`), `server-rules-service`
+(`GET /rulesets/active`), `university-record-service` (`GET /records/students/{studentId}`).
+
+**Publishes `decision.recorded`:**
+```json
+{ "eventId": "string (uuid)", "decisionId": "string (uuid)", "sessionId": "string (uuid)", "applicantId": "string (uuid)", "action": "string", "recordedAt": "string (ISO-8601 datetime)" }
+```
+**Publishes `decision.evaluated`:**
+```json
+{ "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "correct": "boolean", "xpAwarded": "integer", "evaluatedAt": "string (ISO-8601 datetime)" }
+```
+**Publishes `verdict.issued`:**
+```json
+{ "eventId": "string (uuid)", "decisionId": "string (uuid)", "applicantId": "string (uuid)", "action": "string", "correct": "boolean", "violatedRules": ["string"], "issuedAt": "string (ISO-8601 datetime)" }
+```
+
+#### `discord-dms-service`
+
+**`POST /notifications/dm`** — queue an outbound notification.
+
+Request:
+```json
+{
+  "recipientId": "string (uuid)",
+  "type": "string (VERDICT | SESSION_STARTED | SESSION_CLOSED | RULESET_UPDATED)",
+  "message": "string",
+  "metadata": "object | null"
+}
+```
+Response `202 Accepted`:
+```json
+{ "id": "string (uuid)", "status": "QUEUED", "createdAt": "string (ISO-8601 datetime)" }
+```
+
+**`GET /notifications/{id}/status`** — check delivery status.
+
+Response `200 OK`:
+```json
+{
+  "id": "string (uuid)",
+  "status": "string (QUEUED | SENT | FAILED | RATE_LIMITED)",
+  "attempts": "integer",
+  "lastAttemptAt": "string (ISO-8601 datetime) | null"
+}
+```
+
+**Consumes `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`** — each event is
+mapped to a `POST /notifications/dm`-shaped message and enqueued for delivery to the relevant
+applicant or moderator; the service never calls back into any domain service.
