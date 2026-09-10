@@ -4,7 +4,7 @@
 
 [submodule "services/server-moderation-session-service"]
 	path = services/server-moderation-session-service
-	url = https://github.com/daria-username/server-moderation-session-service.git
+	url = https://github.com/DariaRateeva/server-moderation-session-service.git
 
 [submodule "services/applicant-service"]
 	path = services/applicant-service
