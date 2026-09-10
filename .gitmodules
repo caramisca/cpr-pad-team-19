@@ -1,10 +1,10 @@
 [submodule "services/player-service"]
 	path = services/player-service
-	url = https://github.com/daria-username/player-service.git
+	url = https://github.com/DariaRateeva/player-service.git
 
 [submodule "services/server-moderation-session-service"]
 	path = services/server-moderation-session-service
-	url = https://github.com/daria-username/server-moderation-session-service.git
+	url = https://github.com/DariaRateeva/server-moderation-session-service.git
 
 [submodule "services/applicant-service"]
 	path = services/applicant-service
@@ -24,8 +24,8 @@
 
 [submodule "services/moderation-service"]
 	path = services/moderation-service
-	url = https://github.com/andi-username/moderation-service.git
+	url = https://github.com/blinduandi/moderation-service.git
 
 [submodule "services/discord-dms-service"]
 	path = services/discord-dms-service
-	url = https://github.com/andi-username/discord-dms-service.git
+	url = https://github.com/blinduandi/discord-dms-service.git
