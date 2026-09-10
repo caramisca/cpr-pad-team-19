@@ -67,3 +67,5 @@ db_data/
 # Logs
 *.log
 logs/
+
+CONTRIBUTING.md

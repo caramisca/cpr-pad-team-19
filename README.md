@@ -752,3 +752,146 @@ Response `200 OK`:
 **Consumes `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`** — each event is
 mapped to a `POST /notifications/dm`-shaped message and enqueued for delivery to the relevant
 applicant or moderator; the service never calls back into any domain service.
+
+
+## Contribution Workflow & GitHub Rules
+
+To ensure code quality, predictable releases, and equal team collaboration, all contributions to the
+Common Public Repository and the underlying microservices follow strict GitHub workflow rules. Direct
+pushes to protected branches are blocked by GitHub Rulesets.
+
+### Branching Strategy
+
+The repository employs a two-tier branch hierarchy:
+
+```text
+feature branch (feat/*, fix/*, docs/*)
+       │
+       ▼  [Pull Request + ≥1 Peer Approval]
+      dev  (Active Integration Branch)
+       │
+       ▼  [Release Pull Request + Review]
+     main  (Production-Ready Milestone Branch)
+```
+
+- **`main` (Production):** Contains only stable, milestone-verified releases. Direct commits and force
+  pushes are permanently blocked.
+- **`dev` (Integration):** The primary working branch where all feature and fix pull requests land.
+- **Topic / Feature Branches:** All development occurs on dedicated, short-lived branches created from
+  the latest `dev`.
+
+#### Branch Naming Conventions
+
+All branch names must follow one of these prefixes:
+
+- `feat/<scope>/<description>` — New features, endpoints, or architecture contracts (e.g. `feat/applicant/generator-api`).
+- `fix/<scope>/<description>` — Bug fixes or schema corrections (e.g. `fix/rules/expiry-tolerance`).
+- `docs/<scope>/<description>` — Documentation, README updates, or diagrams (e.g. `docs/readme/contract-sync`).
+- `chore/<scope>/<description>` — Repository maintenance, gitignore, or submodule updates (e.g. `chore/submodule/link-services`).
+
+### Branch Protection & GitHub Rulesets
+
+Active GitHub Rulesets are configured on the repository to enforce policy at the server level:
+
+1. **`main-protection` Ruleset:**
+   - Target: `main` (Default branch).
+   - Deletions: Disabled.
+   - Force pushes: Disabled.
+   - Require Pull Request before merging: Enabled.
+   - Required approvals: `1` peer review minimum.
+   - Dismiss stale pull request approvals on new pushes: Enabled.
+   - Require conversation resolution: Enabled.
+
+2. **`dev-protection` Ruleset:**
+   - Target: `dev` branch.
+   - Deletions: Disabled.
+   - Force pushes: Disabled.
+   - Require Pull Request before merging: Enabled.
+   - Required approvals: `1` peer review minimum.
+   - Require conversation resolution: Enabled.
+
+### Pull Request & Review Standards
+
+Every pull request into `dev` or `main` must meet the following criteria before merging:
+
+1. **Review Requirement:** Must be reviewed and approved by at least one teammate other than the author.
+2. **Review Scope:** Reviewers must verify:
+   - Compliance with the published Communication Contract and Database-per-Service boundary.
+   - Absence of hardcoded credentials, API tokens, `.env` files, or binary artifacts.
+   - Clean, self-documenting code with appropriate unit test coverage where applicable.
+3. **PR Content Template:**
+   - **Summary:** Concise bullet points detailing what was added, changed, or removed.
+   - **Milestone / Grade Reference:** Which laboratory requirement or issue is addressed.
+   - **Verification:** Description or evidence of local testing.
+
+### Merging Strategy
+
+- **Feature Branch to `dev`:** **Squash and merge** is preferred to maintain a clean, linear git history on `dev`.
+- **`dev` to `main`:** **Merge commit** is used for milestone releases to preserve individual integration commits.
+
+### Commit Message Conventions
+
+All commit messages across the CPR and individual microservices must adhere to the **Conventional Commits** standard:
+
+```text
+<type>(<scope>): <subject in imperative present tense>
+```
+
+- Allowed types: `feat`, `fix`, `docs`, `refactor`, `chore`, `test`, `ci`.
+- Scope examples: `player`, `session`, `applicant`, `credential`, `rules`, `record`, `moderation`, `dms`, `cpr`.
+- Examples:
+  - `feat(applicant): add photo reference and inconsistency flags`
+  - `fix(session): correct queue advancement on decision event`
+  - `docs(contracts): update moderation verdict json payload`
+  - `chore(gitmodules): link private service submodules`
+
+### Code Quality, Testing & Secret Safety
+
+1. **Secret Prevention (Strict Policy):** Committing `.env`, `appsettings.Development.json`, `.pem`, private keys, or passwords will result in immediate rejection of the PR.
+2. **Build Output Exclusion:** All compiled binaries, intermediate artifacts (`target/`, `bin/`, `obj/`, `.class`, `.dll`), and virtual environments are ignored via `.gitignore`.
+3. **Testing Standards:** Core domain logic (e.g. document hash verification, rule evaluation engines, score projections) must include unit tests.
+
+### Versioning Strategy
+
+The project adheres to **Semantic Versioning (SemVer 2.0.0)** formatted as `vMAJOR.MINOR.PATCH`:
+- **`v0.1.0`** — Laboratory 0: CPR setup, service boundaries, polyglot selection, communication contracts, and git workflow.
+- **`v0.2.0`** — Laboratory 1: Containerization, mock data, and baseline REST endpoints.
+- **`v0.3.0`+** — Subsequent laboratories introducing service mesh, resilience patterns, and messaging.
+
+
+
+## Getting Started
+
+### Prerequisites
+
+- **Git** $\ge 2.40$
+- **Docker & Docker Compose** (for cluster containerization)
+- **Java Development Kit (JDK 17+)** & **Maven** (for Services 1, 2, 5, 6)
+- **.NET 8 SDK** (for Services 3, 4, 7, 8)
+
+### Cloning the Repository
+
+To clone the Common Public Repository along with all initialized microservice submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/caramisca/cpr-pad-team-19.git
+cd cpr-pad-team-19
+```
+
+If the repository was already cloned without the `--recurse-submodules` flag, initialize and fetch the submodules manually:
+
+```bash
+git submodule update --init --recursive
+```
+
+### Working with Submodules
+
+To pull the latest commits for all microservices:
+
+```bash
+git submodule update --remote --merge
+```
+
+To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+
+
