@@ -181,52 +181,7 @@ most.
 Solid arrows are synchronous REST calls in the request path. Dashed arrows are asynchronous domain
 events delivered through the message broker.
 
-```mermaid
-flowchart LR
-    CLIENT["Discord Client / Moderator UI"]
-    BROKER{{"Message Broker"}}
-
-    subgraph SESSIONDOMAIN["Session and Player Domain - Java"]
-        SESSION["server-moderation-session-service<br/>PostgreSQL"]
-        PLAYER["player-service<br/>PostgreSQL"]
-    end
-
-    subgraph INTAKE["Applicant Intake Domain - C sharp"]
-        APPLICANT["applicant-service<br/>Redis"]
-        CREDENTIAL["credential-service<br/>Redis"]
-    end
-
-    subgraph AUTHORITY["Rules and Records Domain - Java"]
-        RULES["server-rules-service<br/>MongoDB"]
-        RECORD["university-record-service<br/>PostgreSQL"]
-    end
-
-    subgraph DELIVERY["Decision and Delivery Domain - C sharp"]
-        MODERATION["moderation-service<br/>PostgreSQL"]
-        DMS["discord-dms-service<br/>In-Memory"]
-    end
-
-    CLIENT -->|"open / close shift"| SESSION
-    CLIENT -->|"accept or deny applicant"| MODERATION
-    CLIENT -->|"view profile and rank"| PLAYER
-
-    SESSION -->|"request next applicant"| APPLICANT
-    SESSION -->|"read active ruleset"| RULES
-    APPLICANT -->|"issue credential bundle"| CREDENTIAL
-    CREDENTIAL -->|"derive authentic fields"| RECORD
-
-    MODERATION -->|"read presented credential"| CREDENTIAL
-    MODERATION -->|"read active ruleset"| RULES
-    MODERATION -->|"cross-check student record"| RECORD
-
-    MODERATION -.->|"decision.recorded<br/>decision.evaluated<br/>verdict.issued"| BROKER
-    SESSION -.->|"session.started<br/>session.closed"| BROKER
-    RULES -.->|"ruleset.updated"| BROKER
-
-    BROKER -.->|"decision.recorded"| SESSION
-    BROKER -.->|"decision.evaluated"| PLAYER
-    BROKER -.->|"verdict.issued / session events / ruleset.updated"| DMS
-```
+![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram.png)
 
 ### Communication Matrix
 
