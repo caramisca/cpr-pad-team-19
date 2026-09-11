@@ -181,7 +181,7 @@ most.
 Solid arrows are synchronous REST calls in the request path. Dashed arrows are asynchronous domain
 events delivered through the message broker.
 
-![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram.png)
+![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram-2.png)
 
 ### Communication Matrix
 
