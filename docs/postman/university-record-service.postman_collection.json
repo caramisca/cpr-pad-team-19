@@ -1,0 +1,295 @@
+{
+  "info": {
+    "name": "university-record-service",
+    "description": "Authoritative university registry endpoints for university-record-service (Team 19, Topic 3 \u2014 Student ID, Please). Read-only reference data \u2014 the service seeds a handful of demo faculties/students on boot, so every request here works against fixed seed data without any prior setup.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8086",
+      "type": "string"
+    },
+    {
+      "key": "seededStudentId",
+      "value": "1234567890",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Get Faculties",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"includes seeded FAF faculty\", () => {",
+                  "  pm.expect(body.faculties.map(f => f.code)).to.include(\"FAF\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/records/faculties",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "faculties"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Student By Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns the seeded student\", () => {",
+                  "  pm.expect(body.studentId).to.eql(pm.collectionVariables.get(\"seededStudentId\"));",
+                  "  pm.expect(body.faculty).to.eql(\"FAF\");",
+                  "  pm.expect(body.enrolmentStatus).to.eql(\"ENROLLED\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/records/students/{{seededStudentId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "{{seededStudentId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup Student By Full Name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"finds Andrei by partial name\", () => {",
+                  "  pm.expect(body.matches).to.have.lengthOf(1);",
+                  "  pm.expect(body.matches[0].fullName).to.eql(\"Andrei Munteanu\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fullName\": \"andrei\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/records/students/lookup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "lookup"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup Student By Faculty",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"finds at least the two seeded FAF students\", () => {",
+                  "  pm.expect(body.matches.length).to.be.at.least(2);",
+                  "  body.matches.forEach(m => pm.expect(m.faculty).to.eql(\"FAF\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"faculty\": \"FAF\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/records/students/lookup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "lookup"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup Student By StudentId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"finds exactly the seeded student\", () => {",
+                  "  pm.expect(body.matches).to.have.lengthOf(1);",
+                  "  pm.expect(body.matches[0].studentId).to.eql(pm.collectionVariables.get(\"seededStudentId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"studentId\": \"{{seededStudentId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/records/students/lookup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "lookup"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Get Student With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is STUDENT_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"STUDENT_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/records/students/0000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "0000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Lookup With No Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is INVALID_LOOKUP_REQUEST\", () => pm.expect(body.error).to.eql(\"INVALID_LOOKUP_REQUEST\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/records/students/lookup",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "records",
+                "students",
+                "lookup"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
