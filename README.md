@@ -815,6 +815,17 @@ The project adheres to **Semantic Versioning (SemVer 2.0.0)** formatted as `vMAJ
 
 
 
+## DockerHub Images
+
+Public images pushed so far, tagged `username/service-name:version` per the lab requirement:
+
+| Service | Image | Requirements |
+| :--- | :--- | :--- |
+| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
+| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
+
+Other services will be added here as their owners push images to DockerHub.
+
 ## Getting Started
 
 ### Prerequisites
@@ -848,5 +859,20 @@ git submodule update --remote --merge
 ```
 
 To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+
+### Running `server-rules-service` and `university-record-service`
+
+The root `docker-compose.yml` runs these two services against their real databases (MongoDB and
+PostgreSQL respectively), pulling their published DockerHub images rather than building locally:
+
+```bash
+cp .env.example .env   # fill in real values - .env is gitignored, never commit it
+docker compose up
+```
+
+`server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
+`http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
+DB scripts are in `docs/db/`. See each service's own README (linked from the table above) for
+full endpoint contracts and error codes.
 
 
