@@ -1,0 +1,52 @@
+# Common Docker Compose file for Team 19 (Student ID, Please).
+#
+# Points only at images already pushed to DockerHub - never at local Dockerfiles - per the CPR's
+# Lab 1 requirement. Currently wires up the two services owned by Diana
+# (server-rules-service, university-record-service); other members should append their own
+# service + database blocks here following the same pattern as their services come online.
+#
+# Usage:
+#   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
+#   docker compose up
+
+services:
+  server-rules-service:
+    image: diana7376/server-rules-service:0.2.0
+    ports:
+      - "8085:8085"
+    environment:
+      MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
+    depends_on:
+      - rules-mongo
+
+  rules-mongo:
+    image: mongo:7
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${RULES_MONGO_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${RULES_MONGO_PASSWORD}
+    volumes:
+      - rules-mongo-data:/data/db
+
+  university-record-service:
+    image: diana7376/university-record-service:0.2.0
+    ports:
+      - "8086:8086"
+    environment:
+      DB_URL: jdbc:postgresql://record-postgres:5432/university_record
+      DB_USERNAME: ${RECORD_POSTGRES_USER}
+      DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
+    depends_on:
+      - record-postgres
+
+  record-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: university_record
+      POSTGRES_USER: ${RECORD_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
+    volumes:
+      - record-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  rules-mongo-data:
+  record-postgres-data:
