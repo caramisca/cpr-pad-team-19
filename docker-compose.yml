@@ -49,7 +49,7 @@ services:
       - record-postgres-data:/var/lib/postgresql/data
 
   moderation-service:
-    image: blinduandi/moderation-service:0.2.0
+    image: andiblindu1/moderation-service:0.2.0
     ports:
       - "8087:8087"
     environment:
@@ -83,7 +83,7 @@ services:
       retries: 12
 
   discord-dms-service:
-    image: blinduandi/discord-dms-service:0.2.0
+    image: andiblindu1/discord-dms-service:0.2.0
     ports:
       - "8088:8088"
     environment:
