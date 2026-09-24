@@ -19,6 +19,16 @@
       "key": "moderatorId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "queueApplicantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionEventId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -320,6 +330,303 @@
               "host": ["{{baseUrl}}"],
               "path": ["sessions", "00000000-0000-0000-0000-000000000000"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Queue & Mock Decisions",
+      "item": [
+        {
+          "name": "Open Session For Queue Tests",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set(\"sessionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": []\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Pull Applicant 1",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"queuePosition is 1\", () => pm.expect(body.queuePosition).to.eql(1));",
+                  "pm.collectionVariables.set(\"queueApplicantId\", body.applicantId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "next-applicant"] }
+          }
+        },
+        {
+          "name": "Pull Applicant 2",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"queuePosition is 2\", () => pm.expect(body.queuePosition).to.eql(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "next-applicant"] }
+          }
+        },
+        {
+          "name": "Pull Applicant 3",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"queuePosition is 3\", () => pm.expect(body.queuePosition).to.eql(3));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "next-applicant"] }
+          }
+        },
+        {
+          "name": "Pull Applicant 4 Returns 404 Queue Empty",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is QUEUE_EMPTY\", () => pm.expect(body.error).to.eql(\"QUEUE_EMPTY\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "next-applicant"] }
+          }
+        },
+        {
+          "name": "Record Decision For Applicant 1",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+          }
+        },
+        {
+          "name": "Get Session Reflects Processed Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"queueLength is 2\", () => pm.expect(body.queueLength).to.eql(2));",
+                  "pm.test(\"applicantsProcessed is 1\", () => pm.expect(body.applicantsProcessed).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] }
+          }
+        },
+        {
+          "name": "Replay Same Decision Event Is No-Op",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+          }
+        },
+        {
+          "name": "Get Session After Replay Still Shows One Processed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"applicantsProcessed unchanged by replay\", () => pm.expect(body.applicantsProcessed).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] }
+          }
+        },
+        {
+          "name": "Record Decision For Nonexistent Session Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"SESSION_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+          }
+        },
+        {
+          "name": "Record Decision For Unmatched Applicant Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is QUEUE_ENTRY_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"QUEUE_ENTRY_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+          }
+        },
+        {
+          "name": "Close Session With Processed Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"status is CLOSED\", () => pm.expect(body.status).to.eql(\"CLOSED\"));",
+                  "pm.test(\"summary applicantsProcessed is 1\", () => pm.expect(body.summary.applicantsProcessed).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/close", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "close"] }
           }
         }
       ]
