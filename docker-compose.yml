@@ -1,9 +1,10 @@
 # Common Docker Compose file for Team 19 (Student ID, Please).
 #
 # Points only at images already pushed to DockerHub - never at local Dockerfiles - per the CPR's
-# Lab 1 requirement. Currently wires up the two services owned by Diana
-# (server-rules-service, university-record-service); other members should append their own
-# service + database blocks here following the same pattern as their services come online.
+# Lab 1 requirement. Currently wires up the services owned by Diana (server-rules-service,
+# university-record-service) and Mihai (applicant-service, credential-service); other members
+# should append their own service + database blocks here following the same pattern as their
+# services come online.
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
@@ -47,6 +48,92 @@ services:
     volumes:
       - record-postgres-data:/var/lib/postgresql/data
 
+  applicant-service:
+    image: caramisca/applicant-service:0.2.0
+    ports:
+      - "8083:8083"
+    environment:
+      Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
+      Services__CredentialServiceMode: Http
+      Services__CredentialServiceUrl: http://credential-service:8084
+    depends_on:
+      applicant-seed:
+        condition: service_completed_successfully
+      credential-service:
+        condition: service_healthy
+
+  applicant-redis:
+    image: redis:7.4-alpine
+    # The password is expanded when the container starts, so it is not part of the container
+    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    volumes:
+      - applicant-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot job: loads the demo applicants of docs/db/applicant-service when Redis holds none.
+  applicant-seed:
+    image: redis:7.4-alpine
+    entrypoint: ["sh", "/seed/seed.sh"]
+    environment:
+      REDIS_HOST: applicant-redis
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    volumes:
+      - ./docs/db/applicant-service:/seed:ro
+    depends_on:
+      applicant-redis:
+        condition: service_healthy
+    restart: "no"
+
+  credential-service:
+    image: caramisca/credential-service:0.2.0
+    ports:
+      - "8084:8084"
+    environment:
+      Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
+      Services__UniversityRecordMode: Http
+      Services__UniversityRecordServiceUrl: http://university-record-service:8086
+    depends_on:
+      credential-seed:
+        condition: service_completed_successfully
+      university-record-service:
+        condition: service_started
+
+  credential-redis:
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    volumes:
+      - credential-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot job: loads the demo credential bundles of docs/db/credential-service when Redis holds none.
+  credential-seed:
+    image: redis:7.4-alpine
+    entrypoint: ["sh", "/seed/seed.sh"]
+    environment:
+      REDIS_HOST: credential-redis
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    volumes:
+      - ./docs/db/credential-service:/seed:ro
+    depends_on:
+      credential-redis:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   rules-mongo-data:
   record-postgres-data:
+  applicant-redis-data:
+  credential-redis-data:
