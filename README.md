@@ -1004,8 +1004,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
-| `moderation-service` | [`blinduandi/moderation-service`](https://hub.docker.com/r/blinduandi/moderation-service) | `ConnectionStrings__Moderation` (Npgsql connection string to PostgreSQL); `Downstream__<Name>__Mode` and `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README) |
-| `discord-dms-service` | [`blinduandi/discord-dms-service`](https://hub.docker.com/r/blinduandi/discord-dms-service) | `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`) |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) | `ConnectionStrings__Moderation` (Npgsql connection string to PostgreSQL); `Downstream__<Name>__Mode` and `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README) |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) | `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`) |
 
 Other services will be added here as their owners push images to DockerHub.
 
