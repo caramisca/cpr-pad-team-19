@@ -1,0 +1,1025 @@
+{
+  "info": {
+    "name": "moderation-service",
+    "description": "Decision endpoints for moderation-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on {{acceptDecisionId}} and {{rejectDecisionId}} captured from the Record Accept Decision and Record Reject Decision responses. Every run records its decisions in a new random session, so the collection can be run again without clearing the database. The credentials are the ones credential-service answers with in Mock mode: cccccccc-0000-4000-8000-00000000000N is issued to applicant aaaaaaaa-0000-4000-8000-00000000000N. The assertions hold whichever ruleset server-rules-service has active.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8087",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "moderatorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "acceptDecisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectDecisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectViolatedRules",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "unknownSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "errorSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "seededDecisionId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Get Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"service and database are healthy\", () => {",
+                  "  pm.expect(body.status).to.eql(\"Healthy\");",
+                  "  pm.expect(body.service).to.eql(\"moderation-service\");",
+                  "  pm.expect(body.checks.database).to.eql(\"Healthy\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Accept Decision",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Location points at the new decision\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/decisions/\" + body.id));",
+                  "pm.test(\"echoes the request\", () => {",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.applicantId).to.eql(\"aaaaaaaa-0000-4000-8000-000000000001\");",
+                  "  pm.expect(body.moderatorId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
+                  "  pm.expect(body.action).to.eql(\"ACCEPT\");",
+                  "  pm.expect(body.updatedAt).to.eql(null);",
+                  "});",
+                  "pm.test(\"the credential matches the registry record\", () => {",
+                  "  [\"CREDENTIAL_EXPIRED\", \"STUDENT_ID_MISSING\", \"RECORD_NOT_FOUND\", \"NAME_MISMATCH\", \"FACULTY_MISMATCH\", \"STUDY_YEAR_MISMATCH\", \"NOT_ENROLLED\"]",
+                  "    .forEach(code => pm.expect(body.verdict.violatedRules).to.not.include(code));",
+                  "});",
+                  "pm.test(\"ACCEPT is correct exactly when no rule is violated\", () => {",
+                  "  pm.expect(body.verdict.correct).to.eql(body.verdict.violatedRules.length === 0);",
+                  "  pm.expect(body.verdict.xpAwarded).to.eql(body.verdict.correct ? 10 : 0);",
+                  "  pm.expect(body.verdict.rulesetVersion).to.be.a(\"number\");",
+                  "  pm.expect(body.verdict.evaluatedAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.collectionVariables.set(\"acceptDecisionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000001\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Decision By Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns the recorded decision with its verdict\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"acceptDecisionId\"));",
+                  "  pm.expect(body.action).to.eql(\"ACCEPT\");",
+                  "  pm.expect(body.verdict).to.be.an(\"object\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{acceptDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{acceptDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Reject Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the applicant is missing from the registry\", () => pm.expect(body.verdict.violatedRules).to.include(\"RECORD_NOT_FOUND\"));",
+                  "pm.test(\"REJECT is correct unless the student is blacklisted\", () => {",
+                  "  pm.expect(body.verdict.correct).to.eql(!body.verdict.violatedRules.includes(\"BLACKLIST\"));",
+                  "  pm.expect(body.verdict.xpAwarded).to.eql(body.verdict.correct ? 10 : 0);",
+                  "});",
+                  "pm.collectionVariables.set(\"rejectDecisionId\", body.id);",
+                  "pm.collectionVariables.set(\"rejectViolatedRules\", JSON.stringify(body.verdict.violatedRules));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000006\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000006\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Amend Decision To Flag",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"action is amended and updatedAt is set\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"rejectDecisionId\"));",
+                  "  pm.expect(body.action).to.eql(\"FLAG\");",
+                  "  pm.expect(body.updatedAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"FLAG is correct because the applicant should not be accepted\", () => {",
+                  "  pm.expect(body.verdict.correct).to.eql(true);",
+                  "  pm.expect(body.verdict.xpAwarded).to.eql(5);",
+                  "});",
+                  "pm.test(\"violatedRules is unchanged\", () => pm.expect(JSON.stringify(body.verdict.violatedRules)).to.eql(pm.collectionVariables.get(\"rejectViolatedRules\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"FLAG\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{rejectDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{rejectDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Session Decisions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"lists both decisions, oldest first\", () => {",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.decisions.map(d => d.id)).to.eql([pm.collectionVariables.get(\"acceptDecisionId\"), pm.collectionVariables.get(\"rejectDecisionId\")]);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{{sessionId}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Void Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{acceptDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{acceptDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Voided Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DECISION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"DECISION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{acceptDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{acceptDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Session Decisions After Void",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"only the decision that is not void is listed\", () => pm.expect(body.decisions.map(d => d.id)).to.eql([pm.collectionVariables.get(\"rejectDecisionId\")]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{{sessionId}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision Again After Void",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the applicant can be decided again in the same session\", () => {",
+                  "  pm.expect(body.id).to.not.eql(pm.collectionVariables.get(\"acceptDecisionId\"));",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.applicantId).to.eql(\"aaaaaaaa-0000-4000-8000-000000000001\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000001\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Decisions Of Unknown Session",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"unknownSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns an empty list\", () => {",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"unknownSessionId\"));",
+                  "  pm.expect(body.decisions).to.have.lengthOf(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{{unknownSessionId}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{unknownSessionId}}",
+                "decisions"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Seed Decision For Duplicate Check",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"errorSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "if (!pm.collectionVariables.get(\"moderatorId\")) {",
+                  "  pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set(\"seededDecisionId\", pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000002\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Duplicate Decision Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DUPLICATE_DECISION\", () => pm.expect(body.error).to.eql(\"DUPLICATE_DECISION\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000002\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision Missing Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision With Unknown Action Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000003\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000003\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"APPROVE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision With Malformed Json Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is MALFORMED_REQUEST\", () => pm.expect(body.error).to.eql(\"MALFORMED_REQUEST\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"sessionId\": "
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision As Plain Text Returns 415",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is UNSUPPORTED_MEDIA_TYPE\", () => pm.expect(body.error).to.eql(\"UNSUPPORTED_MEDIA_TYPE\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "ACCEPT"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision With Unknown Credential Returns 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is CREDENTIAL_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"CREDENTIAL_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000099\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000099\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Decision With Mismatched Credential Returns 422",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422\", () => pm.response.to.have.status(422));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is CREDENTIAL_APPLICANT_MISMATCH\", () => pm.expect(body.error).to.eql(\"CREDENTIAL_APPLICANT_MISMATCH\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000003\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Amend Decision With Unknown Action Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{seededDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{seededDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Unknown Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DECISION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"DECISION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Amend Unknown Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DECISION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"DECISION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Void Unknown Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DECISION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"DECISION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Decision With Invalid Uuid Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "not-a-uuid"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Replace Decision With Put Returns 405",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is METHOD_NOT_ALLOWED\", () => pm.expect(body.error).to.eql(\"METHOD_NOT_ALLOWED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{seededDecisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{seededDecisionId}}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
