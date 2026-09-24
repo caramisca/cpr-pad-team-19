@@ -314,6 +314,11 @@ Response `200 OK`:
 }
 ```
 
+**`POST /internal/mock-events/decision-evaluated`** — no message broker is wired up yet, so this
+endpoint stands in for the `decision.evaluated` consumer above: same request body as the event
+payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
+replay. Will be replaced by a real broker listener without changing the underlying handler.
+
 #### `server-moderation-session-service`
 
 **`POST /sessions`** — open a new moderation shift.
@@ -397,6 +402,11 @@ the ruleset currently in force.
   "recordedAt": "string (ISO-8601 datetime)"
 }
 ```
+
+**`POST /internal/mock-events/decision-recorded`** — no message broker is wired up yet, so this
+endpoint stands in for the `decision.recorded` consumer above: same request body as the event
+payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
+replay. Will be replaced by a real broker listener without changing the underlying handler.
 
 **Publishes `session.started`:**
 ```json
@@ -823,6 +833,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`) |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) | `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`) |
 
 Other services will be added here as their owners push images to DockerHub.
 
