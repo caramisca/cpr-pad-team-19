@@ -770,6 +770,11 @@ Active GitHub Rulesets are configured on the repository to enforce policy at the
 Every pull request into `dev` or `main` must meet the following criteria before merging:
 
 1. **Review Requirement:** Must be reviewed and approved by at least one teammate other than the author.
+   - **Exception, private service repositories:** teammates cannot be added as collaborators on a
+     private repository (course rule), so the owner merges their own pull requests there without a
+     peer approval. Those pull requests still follow the branch, commit, template, and merge rules
+     on this page. The peer review happens here in the CPR: every contract change and every
+     submodule update of a service goes through a CPR pull request that needs a teammate's approval.
 2. **Review Scope:** Reviewers must verify:
    - Compliance with the published Communication Contract and Database-per-Service boundary.
    - Absence of hardcoded credentials, API tokens, `.env` files, or binary artifacts.
