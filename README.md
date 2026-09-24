@@ -56,10 +56,12 @@ Owner: Mihai — C# (.NET 8) — Redis / In-Memory
 - **Encapsulates:** generation and short-lived storage of applicant profiles — the people
   requesting entry to the Discord server. Name, faculty, study year, photo reference, and the
   intentional inconsistencies that make an applicant valid or invalid.
-- **Owns:** the ephemeral `applicant:{id}` keys, scoped to the lifetime of a session.
+- **Owns:** the ephemeral `applicant:{id}` keys, scoped to the lifetime of a session, and the
+  `session:{sessionId}:applicants` index of each session.
 - **Does not own:** the documents an applicant presents, nor whether the applicant is ultimately
   legitimate. Ground truth lives in `university-record-service`.
-- **Exposes:** `POST /applicants/generate`, `GET /applicants/{id}`.
+- **Exposes:** `POST /applicants/generate`, `GET /applicants/{id}`, `GET /applicants`,
+  `PUT /applicants/{id}`, `DELETE /applicants/{id}`.
 - **Calls:** `credential-service` to attach a credential bundle to a freshly generated applicant.
 
 ### 4. `credential-service`
@@ -72,7 +74,8 @@ Owner: Mihai — C# (.NET 8) — Redis / In-Memory
 - **Does not own:** the verdict on a credential. It reports what the document says; it does not
   decide whether the document is acceptable.
 - **Exposes:** `POST /credentials/issue`, `GET /credentials/{id}`,
-  `POST /credentials/{id}/verify-hash`.
+  `POST /credentials/{id}/verify-hash`, `GET /credentials`, `PUT /credentials/{id}`,
+  `DELETE /credentials/{id}`.
 - **Calls:** `university-record-service` to derive authentic field values for legitimate applicants.
 
 ### 5. `server-rules-service`
@@ -415,10 +418,10 @@ Request:
 ```json
 {
   "sessionId": "string (uuid)",
-  "difficulty": "string (EASY | MEDIUM | HARD) | null"
+  "difficulty": "string (EASY | MEDIUM | HARD, case-insensitive) | null (means MEDIUM)"
 }
 ```
-Response `201 Created`:
+Response `201 Created`, with a `Location: /applicants/{id}` header:
 ```json
 {
   "id": "string (uuid)",
@@ -436,11 +439,65 @@ Response `201 Created`:
 
 **`GET /applicants/{id}`** — fetch an applicant profile.
 
+`role` is the role the applicant claims, and `expiresAt` is 60 minutes after `createdAt` by
+default. The profile follows the credential the applicant holds; a dishonest applicant misrepresents
+itself in character (an outsider impersonating a student, another major claiming FAF, a graduate
+claiming enrollment), and the harder the session, the more applicants lie and the subtler the lies.
+The truth is kept with the applicant and never returned.
+Errors: `400 INVALID_SESSION_ID`, `400 INVALID_DIFFICULTY`, `400 MALFORMED_REQUEST`,
+`415 UNSUPPORTED_MEDIA_TYPE`, `503 CREDENTIAL_SERVICE_UNAVAILABLE` (nothing is stored),
+`503 STORAGE_UNAVAILABLE`.
+
+**`GET /applicants/{id}`** — fetch an applicant profile.
+
 Response `200 OK`: same shape as the `POST /applicants/generate` response.
 Response `404 Not Found`: standard error shape, also returned once the applicant has expired.
 
+**`GET /applicants?sessionId={uuid}`** — list applicants, oldest first; without `sessionId`, every
+applicant (at most 500).
+
+Response `200 OK`:
+```json
+{ "applicants": [ "object (same shape as POST /applicants/generate response)" ] }
+```
+Errors: `400 INVALID_SESSION_ID`.
+
+**`PUT /applicants/{id}`** — replace the profile. `id`, `credentialId`, `createdAt` and `expiresAt`
+never change.
+
+Request:
+```json
+{
+  "name": "string",
+  "studentId": "string | null",
+  "faculty": "string",
+  "year": "integer (1-6) | null",
+  "role": "string (STUDENT | OTHER_MAJOR | TA | STAFF | ALUMNUS | OUTSIDER, case-insensitive)",
+  "photoRef": "string (absolute http(s) url)"
+}
+```
+Response `200 OK`: same shape as the `POST /applicants/generate` response.
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 APPLICANT_NOT_FOUND`.
+
+**`DELETE /applicants/{id}`** — remove an applicant (its credential bundle is not touched).
+
+Response `204 No Content`, or `404 APPLICANT_NOT_FOUND`.
+
+**`GET /health`** — service and Redis health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is unreachable:
+```json
+{ "status": "Healthy", "service": "applicant-service", "version": "string", "checks": { "redis": "Healthy" } }
+```
+
+`404 APPLICANT_NOT_FOUND` is also returned for an id that is not a UUID. Unmatched routes return
+`404 NOT_FOUND`, wrong methods `405 METHOD_NOT_ALLOWED`, and unexpected failures `500 INTERNAL_ERROR`.
+
 **Calls:** `credential-service` (`POST /credentials/issue`) to attach a credential bundle to a freshly
-generated applicant.
+generated applicant. Only a `201 Created` with a bundle counts as success; any other answer, a
+timeout (5 s) or a refused connection returns `503 CREDENTIAL_SERVICE_UNAVAILABLE`. Until
+credential-service is reachable, `Services__CredentialServiceMode=Mock` issues contract-shaped
+bundles locally.
 
 #### `credential-service`
 
@@ -458,7 +515,9 @@ Request:
   }
 }
 ```
-Response `201 Created`:
+`seed` and each of its fields may be null; a seed without `studentId` is issued as a `STAFF_BADGE`.
+
+Response `201 Created`, with a `Location: /credentials/{id}` header:
 ```json
 {
   "id": "string (uuid)",
@@ -476,11 +535,21 @@ Response `201 Created`:
   "issuingAuthority": "string"
 }
 ```
+An authentic bundle (`isLegitimate: true`) prints the registry record of `seed.studentId`. A forged
+one prints what the applicant claims and carries at least one detectable forgery: fields that
+contradict the registry, an expired `expiresAt`, a fabricated `integrityHash` that fails
+`verify-hash`, an issuing authority that is not a university office, or a student document without
+a `studentId`. `integrityHash` is the SHA-256 of
+`v1|id|applicantId|documentType|fullName|studentId|faculty|year|issuedAt|expiresAt|issuingAuthority`.
+Errors: `400 INVALID_APPLICANT_ID`, `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`,
+`415 UNSUPPORTED_MEDIA_TYPE`, `503 UNIVERSITY_RECORD_SERVICE_UNAVAILABLE` (authentic bundles only;
+nothing is stored), `503 STORAGE_UNAVAILABLE`.
 
 **`GET /credentials/{id}`** — fetch a credential bundle.
 
 Response `200 OK`: same shape as the `POST /credentials/issue` response.
-Response `404 Not Found`: standard error shape.
+Response `404 Not Found`: `CREDENTIAL_NOT_FOUND`, also for an id that is not a UUID and for a bundle
+past its retention (60 minutes by default).
 
 **`POST /credentials/{id}/verify-hash`** — check whether a presented hash matches the stored one.
 
@@ -496,9 +565,56 @@ Response `200 OK`:
   "checkedAt": "string (ISO-8601 datetime)"
 }
 ```
+The comparison ignores case and runs in constant time.
+Errors: `400 INVALID_HASH` (not 64 hexadecimal characters), `400 MALFORMED_REQUEST`,
+`404 CREDENTIAL_NOT_FOUND`.
+
+**`GET /credentials?applicantId={uuid}`** — list bundles, oldest first; without `applicantId`, every
+bundle (at most 500).
+
+Response `200 OK`:
+```json
+{ "credentials": [ "object (same shape as POST /credentials/issue response)" ] }
+```
+Errors: `400 INVALID_APPLICANT_ID`.
+
+**`PUT /credentials/{id}`** — the registrar reissues a bundle with corrected fields: `issuedAt`
+becomes now, the authority is the official one, and the bundle is re-signed, so it verifies as
+authentic afterwards.
+
+Request:
+```json
+{
+  "documentType": "string (STUDENT_ID | ENROLLMENT_CONFIRMATION | STAFF_BADGE, case-insensitive)",
+  "fields": { "fullName": "string", "studentId": "string | null", "faculty": "string", "year": "integer (1-6) | null" },
+  "expiresAt": "string (ISO-8601 datetime, in the future)"
+}
+```
+Student documents require `fields.studentId`; a `STAFF_BADGE` must not carry one.
+Response `200 OK`: same shape as the `POST /credentials/issue` response.
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 CREDENTIAL_NOT_FOUND`.
+
+**`DELETE /credentials/{id}`** — revoke a bundle.
+
+Response `204 No Content`, or `404 CREDENTIAL_NOT_FOUND`.
+
+**`GET /health`** — service and Redis health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is unreachable:
+```json
+{ "status": "Healthy", "service": "credential-service", "version": "string", "checks": { "redis": "Healthy" } }
+```
+
+Unmatched routes return `404 NOT_FOUND`, wrong methods `405 METHOD_NOT_ALLOWED`, and unexpected
+failures `500 INTERNAL_ERROR`.
 
 **Calls:** `university-record-service` (`POST /records/students/lookup`) to derive authentic field
-values when `isLegitimate` is true.
+values when `isLegitimate` is true. The lookup sends only `studentId`; a `404` counts as no match,
+and a student missing from the registry is printed from the seed. Any other failure returns
+`503 UNIVERSITY_RECORD_SERVICE_UNAVAILABLE`; forged bundles are still issued without the registry.
+`Services__UniversityRecordMode=Mock` answers lookups locally: it knows the registry's demo students
+and derives an enrolled record for any 10-digit student ID with a valid Luhn check digit (second
+digit: faculty, third: study year), the encoding applicant-service uses for the IDs it generates.
 
 #### `server-rules-service`
 
@@ -823,6 +939,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
+| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
+| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Port `8084`. |
 
 Other services will be added here as their owners push images to DockerHub.
 
@@ -874,5 +992,36 @@ docker compose up
 `http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
 DB scripts are in `docs/db/`. See each service's own README (linked from the table above) for
 full endpoint contracts and error codes.
+
+### Running `applicant-service` and `credential-service`
+
+The same `docker-compose.yml` runs both services, each against its own Redis 7 (append-only
+persistence on the `applicant-redis-data` and `credential-redis-data` volumes), wired to each other
+and to `university-record-service` over HTTP:
+
+```text
+applicant-service :8083 --POST /credentials/issue--> credential-service :8084 --POST /records/students/lookup--> university-record-service :8086
+```
+
+Set `APPLICANT_REDIS_PASSWORD` and `CREDENTIAL_REDIS_PASSWORD` in `.env` (they must not contain `,`),
+then `docker compose up`. Before each service starts, the one-shot `applicant-seed` and
+`credential-seed` containers run `docs/db/<service>/seed.sh`, which loads six demo applicants and
+their six credential bundles when Redis is empty and does nothing otherwise. The demo applicants
+belong to the session `5e55a0e0-0000-4000-8000-000000000001` and cover one case each: an honest FAF
+student, another major claiming FAF, a graduate claiming enrollment, an impostor with a real
+student's ID, an honest teaching assistant, and an outsider with an invented ID.
+
+Test them with `docs/postman/applicant-service.postman_collection.json` and
+`docs/postman/credential-service.postman_collection.json`, from Postman or from the command line:
+
+```bash
+npx newman run docs/postman/credential-service.postman_collection.json
+npx newman run docs/postman/applicant-service.postman_collection.json
+```
+
+Both services also run on their own, without Docker or other services: each repository's
+`scripts/run.sh local` starts it with in-memory storage and its dependency mocked
+(`Services__CredentialServiceMode=Mock`, `Services__UniversityRecordMode=Mock`). Swagger UI is served
+at `/swagger` on both.
 
 
