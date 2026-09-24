@@ -1002,10 +1002,10 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
-| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) | `ConnectionStrings__Moderation` (Npgsql connection string to PostgreSQL); `Downstream__<Name>__Mode` and `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README) |
-| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) | `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`) |
 
 Other services will be added here as their owners push images to DockerHub.
 
@@ -1043,27 +1043,46 @@ git submodule update --remote --merge
 
 To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
 
-### Running the Services
+### Running `moderation-service` and `discord-dms-service`
 
-The root `docker-compose.yml` runs `server-rules-service`, `university-record-service`,
-`moderation-service`, and `discord-dms-service`, each against its own database (MongoDB, PostgreSQL,
-PostgreSQL, and Redis respectively), pulling their published DockerHub images rather than building
-locally:
+The root `docker-compose.yml` runs both services from their published DockerHub images, each
+against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
+`moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
+persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
+`MODERATION_POSTGRES_PASSWORD` (it must not contain `;`), and `DMS_REDIS_PASSWORD` (it must not
+contain `,`) in `.env`, then run `docker compose up`.
+
+`moderation-service` is reachable at `http://localhost:8087` and `discord-dms-service` at
+`http://localhost:8088`; their databases are not published to the host. `moderation-service` calls
+the real `server-rules-service` and `university-record-service` over HTTP, while its credential
+lookups stay mocked (`Downstream__Credential__Mode: Mock`), because its Postman collection records
+decisions against the demo credentials of the mock.
+
+Test them with `docs/postman/moderation-service.postman_collection.json` and
+`docs/postman/discord-dms-service.postman_collection.json`, from Postman or from the command line:
+
+```bash
+npx newman run docs/postman/moderation-service.postman_collection.json
+npx newman run docs/postman/discord-dms-service.postman_collection.json
+```
+
+`docs/db/moderation-service/schema.sql` is the PostgreSQL schema that `moderation-service` creates
+through its EF Core migrations when it starts, and `docs/db/discord-dms-service/` lists the Redis
+keys of `discord-dms-service`.
+
+### Running `server-rules-service` and `university-record-service`
+
+The root `docker-compose.yml` runs these two services against their real databases (MongoDB and
+PostgreSQL respectively), pulling their published DockerHub images rather than building locally:
 
 ```bash
 cp .env.example .env   # fill in real values - .env is gitignored, never commit it
 docker compose up
 ```
 
-| Service | URL |
-| :--- | :--- |
-| `server-rules-service` | `http://localhost:8085` |
-| `university-record-service` | `http://localhost:8086` |
-| `moderation-service` | `http://localhost:8087` |
-| `discord-dms-service` | `http://localhost:8088` |
+`server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
+`http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
+DB scripts are in `docs/db/`. See each service's own README (linked from the table above) for
+full endpoint contracts and error codes.
 
-The databases are not published to the host. `moderation-service` calls the real
-`server-rules-service` and `university-record-service`; `credential-service` has no published image
-yet, so its answers are mocked. Postman collections are in `docs/postman/`, and the underlying DB
-scripts are in `docs/db/`. See each service's own README (linked from the table above) for full
-endpoint contracts and error codes.
+
