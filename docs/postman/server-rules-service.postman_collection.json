@@ -26,6 +26,35 @@
       "name": "Happy Path",
       "item": [
         {
+          "name": "Health Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
+                  "pm.test(\"service name matches\", () => pm.expect(body.service).to.eql(\"server-rules-service\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
           "name": "Get Active Ruleset (Seeded)",
           "event": [
             {

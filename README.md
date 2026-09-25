@@ -630,6 +630,14 @@ digit: faculty, third: study year), the encoding applicant-service uses for the 
 
 #### `server-rules-service`
 
+**`GET /health`** — service and database health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when MongoDB is
+unreachable:
+```json
+{ "status": "Healthy", "service": "server-rules-service", "version": "string", "checks": { "database": "Healthy" } }
+```
+
 **`GET /rulesets/active`** — fetch the ruleset currently in force.
 
 Response `200 OK`:
@@ -714,6 +722,14 @@ Request: same shape as `POST /rulesets`. Response `200 OK`: same shape as `GET /
 | `INTERNAL_ERROR` | 500 | Unexpected server-side failure. |
 
 #### `university-record-service`
+
+**`GET /health`** — service and database health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when PostgreSQL is
+unreachable:
+```json
+{ "status": "Healthy", "service": "university-record-service", "version": "string", "checks": { "database": "Healthy" } }
+```
 
 **`GET /records/students/{studentId}`** — fetch the authoritative record for one student.
 
