@@ -19,6 +19,16 @@
       "key": "discordId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "decisionPlayerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionEventId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -326,6 +336,271 @@
               "host": ["{{baseUrl}}"],
               "path": ["players", "00000000-0000-0000-0000-000000000000"]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mock Events (Grade 9 — decision.evaluated)",
+      "item": [
+        {
+          "name": "Register Player For Mock Event",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"discordId\", \"discord-mockevent-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"starts at level 1 with 0 xp\", () => {",
+                  "  pm.expect(body.xp).to.eql(0);",
+                  "  pm.expect(body.level).to.eql(1);",
+                  "  pm.expect(body.rank).to.eql(\"RECRUIT\");",
+                  "});",
+                  "pm.collectionVariables.set(\"decisionPlayerId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"{{discordId}}\",\n  \"displayName\": \"Mock Event Moderator\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Fire Mock Decision Evaluated Event (correct, xp=250)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player After Mock Event Reflects Xp And Rank",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"xp/level/rank updated from the event\", () => {",
+                  "  pm.expect(body.xp).to.eql(250);",
+                  "  pm.expect(body.level).to.eql(3);",
+                  "  pm.expect(body.rank).to.eql(\"MODERATOR\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
+          }
+        },
+        {
+          "name": "Get Player Stats After Mock Event Reflects Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"correctDecisions incremented\", () => {",
+                  "  pm.expect(body.correctDecisions).to.eql(1);",
+                  "  pm.expect(body.incorrectDecisions).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}/stats", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Replay Same Event Id Is Deduped",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is still 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player After Replay Is Unchanged",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"xp did not double-award\", () => pm.expect(body.xp).to.eql(250));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
+          }
+        },
+        {
+          "name": "Fire Second Distinct Event (incorrect, xp=10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": false,\n  \"xpAwarded\": 10,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player Stats After Second Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"both correct and incorrect decisions tracked\", () => {",
+                  "  pm.expect(body.correctDecisions).to.eql(1);",
+                  "  pm.expect(body.incorrectDecisions).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}/stats", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Mock Event For Nonexistent Player Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is PLAYER_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"PLAYER_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"00000000-0000-0000-0000-000000000000\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 50,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Delete Mock Event Test Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
           }
         }
       ]
