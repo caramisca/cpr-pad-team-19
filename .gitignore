@@ -49,6 +49,9 @@ gradle-app.setting
 # C# / .NET (Services 2 & 4)
 bin/
 obj/
+*.dll
+*.pdb
+*.exe
 *.suo
 *.user
 *.userosscache
