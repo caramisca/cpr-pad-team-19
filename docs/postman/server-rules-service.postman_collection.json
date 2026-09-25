@@ -1,0 +1,565 @@
+{
+  "info": {
+    "name": "server-rules-service",
+    "description": "Ruleset CRUD + revision-history endpoints for server-rules-service (Team 19, Topic 3 \u2014 Student ID, Please). Run requests top to bottom, or use the Collection Runner \u2014 later requests depend on {{rulesetId}} captured from the Publish Ruleset Revision response. The service seeds one default ruleset on boot, so GET /rulesets/active always has data.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8085",
+      "type": "string"
+    },
+    {
+      "key": "rulesetId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rulesetVersion",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Get Active Ruleset (Seeded)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"has at least one rule\", () => pm.expect(body.rules.length).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "active"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Publish Ruleset Revision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"response has id and rules\", () => {",
+                  "  pm.expect(body.id).to.be.a(\"string\");",
+                  "  pm.expect(body.rules).to.have.lengthOf(2);",
+                  "});",
+                  "pm.collectionVariables.set(\"rulesetId\", body.id);",
+                  "pm.collectionVariables.set(\"rulesetVersion\", body.version);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"rules\": [\n    {\n      \"type\": \"ALLOWED_FACULTY\",\n      \"description\": \"Only FAF and FCIM applicants are accepted\",\n      \"params\": {\n        \"faculties\": [\n          \"FAF\",\n          \"FCIM\"\n        ]\n      }\n    },\n    {\n      \"type\": \"MIN_ENROLLMENT_YEARS\",\n      \"description\": \"Applicant must be enrolled at least 1 year\",\n      \"params\": {\n        \"minYears\": 1\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Ruleset By Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"id matches published ruleset\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"rulesetId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Active Ruleset After Publish",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"active ruleset is the one just published\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"rulesetId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "active"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Ruleset Revisions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"rulesetId echoes the requested id\", () => pm.expect(body.rulesetId).to.eql(pm.collectionVariables.get(\"rulesetId\")));",
+                  "pm.test(\"includes the latest revision\", () => {",
+                  "  const latest = body.revisions[body.revisions.length - 1];",
+                  "  pm.expect(String(latest.revisionNumber)).to.eql(String(pm.collectionVariables.get(\"rulesetVersion\")));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}/revisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}",
+                "revisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Ruleset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"rules were replaced\", () => pm.expect(body.rules).to.have.lengthOf(1));",
+                  "pm.test(\"id unchanged\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"rulesetId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"rules\": [\n    {\n      \"type\": \"ALLOWED_FACULTY\",\n      \"description\": \"Updated via PUT\",\n      \"params\": { \"faculties\": [\"FCIM\"] }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Ruleset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Get Ruleset With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Revisions For Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000/revisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000",
+                "revisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Publish Ruleset Missing Rules Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"2026-01-01T00:00:00Z\",\n  \"rules\": []\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Publish Ruleset Missing EffectiveFrom Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"rules\": [\n    {\n      \"type\": \"ALLOWED_FACULTY\",\n      \"description\": \"FAF only\",\n      \"params\": {\n        \"faculties\": [\n          \"FAF\"\n        ]\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Ruleset With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"rules\": [\n    { \"type\": \"ALLOWED_FACULTY\", \"description\": \"x\", \"params\": {} }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Ruleset With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Route Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/nonexistent-route",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nonexistent-route"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Wrong Method Returns 405",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is METHOD_NOT_ALLOWED\", () => pm.expect(body.error).to.eql(\"METHOD_NOT_ALLOWED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "active"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invalid JSON Body Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is MALFORMED_REQUEST_BODY\", () => pm.expect(body.error).to.eql(\"MALFORMED_REQUEST_BODY\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{not valid json"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -2,6 +2,9 @@
 Lab0/
 *.pdf
 
+# Personal local working notes (never shared, never pushed)
+.local/
+
 # Environment & Secrets (DO NOT COMMIT)
 .env
 .env.*
@@ -46,6 +49,9 @@ gradle-app.setting
 # C# / .NET (Services 2 & 4)
 bin/
 obj/
+*.dll
+*.pdb
+*.exe
 *.suo
 *.user
 *.userosscache

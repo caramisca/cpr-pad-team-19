@@ -1,0 +1,817 @@
+{
+  "info": {
+    "name": "applicant-service",
+    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 - Student ID, Please). Runs against the shared docker-compose.yml, whose applicant-seed job loads six demo applicants into the session 5e55a0e0-0000-4000-8000-000000000001; the Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8083",
+      "type": "string"
+    },
+    {
+      "key": "credentialBaseUrl",
+      "value": "http://localhost:8084",
+      "type": "string"
+    },
+    {
+      "key": "demoSessionId",
+      "value": "5e55a0e0-0000-4000-8000-000000000001",
+      "type": "string"
+    },
+    {
+      "key": "seededImpersonatorId",
+      "value": "a0000000-0000-4000-8000-000000000004",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "applicantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "credentialId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"service is healthy\", () => {",
+                  "  pm.expect(body.status).to.eql(\"Healthy\");",
+                  "  pm.expect(body.service).to.eql(\"applicant-service\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Seeded Demo Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const names = pm.response.json().applicants.map(a => a.name);",
+                  "pm.test(\"includes the six demo applicants\", () => pm.expect(names).to.include.members([\"Diana Popescu\", \"Andrei Munteanu\", \"Elena Rusu\", \"Victor Ceban\", \"Irina Cojocaru\", \"Marius Lungu\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants?sessionId={{demoSessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants"
+              ],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{demoSessionId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Seeded Impersonator",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"has the contract shape\", () => pm.expect(Object.keys(body)).to.eql([\"id\",\"name\",\"studentId\",\"faculty\",\"year\",\"role\",\"photoRef\",\"credentialId\",\"createdAt\",\"expiresAt\"]));",
+                  "pm.test(\"claims Diana's student ID under another name\", () => {",
+                  "  pm.expect(body.name).to.eql(\"Victor Ceban\");",
+                  "  pm.expect(body.studentId).to.eql(\"1234567890\");",
+                  "  pm.expect(body.credentialId).to.eql(\"c0000000-0000-4000-8000-000000000004\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{seededImpersonatorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{seededImpersonatorId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Generate Applicant",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"has the contract shape\", () => pm.expect(Object.keys(body)).to.eql([\"id\",\"name\",\"studentId\",\"faculty\",\"year\",\"role\",\"photoRef\",\"credentialId\",\"createdAt\",\"expiresAt\"]));",
+                  "pm.test(\"points Location at the applicant\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(`/applicants/${body.id}`));",
+                  "pm.test(\"claims a known role\", () => pm.expect([\"STUDENT\", \"OTHER_MAJOR\", \"TA\", \"STAFF\", \"ALUMNUS\", \"OUTSIDER\"]).to.include(body.role));",
+                  "pm.test(\"lives for the session (60 minutes)\", () => pm.expect(new Date(body.expiresAt) - new Date(body.createdAt)).to.eql(60 * 60 * 1000));",
+                  "pm.collectionVariables.set(\"applicantId\", body.id);",
+                  "pm.collectionVariables.set(\"credentialId\", body.credentialId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"difficulty\": \"MEDIUM\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Generate Applicant Without Difficulty",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"difficulty\": null\n}"
+            }
+          }
+        },
+        {
+          "name": "Fetch Generated Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is the generated applicant\", () => pm.expect(pm.response.json().credentialId).to.eql(pm.collectionVariables.get(\"credentialId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{applicantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{applicantId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Session Applicants",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"lists both applicants of the session\", () => pm.expect(pm.response.json().applicants).to.have.lengthOf(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants?sessionId={{sessionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants"
+              ],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "{{sessionId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"replaces the profile\", () => {",
+                  "  pm.expect(body.name).to.eql(\"Alex Mercer\");",
+                  "  pm.expect(body.year).to.eql(2);",
+                  "});",
+                  "pm.test(\"keeps the credential\", () => pm.expect(body.credentialId).to.eql(pm.collectionVariables.get(\"credentialId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{applicantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{applicantId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alex Mercer\",\n  \"studentId\": \"1234567890\",\n  \"faculty\": \"FAF\",\n  \"year\": 2,\n  \"role\": \"STUDENT\",\n  \"photoRef\": \"https://assets.campus.local/photos/alex.png\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Remove Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{applicantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{applicantId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fetch Removed Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is APPLICANT_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"APPLICANT_NOT_FOUND\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{applicantId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{applicantId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Integration",
+      "item": [
+        {
+          "name": "Generate Applicant For Integration",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set(\"applicantId\", body.id);",
+                  "pm.collectionVariables.set(\"credentialId\", body.credentialId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"difficulty\": \"HARD\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Attached Credential Belongs To The Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"was issued for the applicant\", () => pm.expect(pm.response.json().applicantId).to.eql(pm.collectionVariables.get(\"applicantId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{credentialBaseUrl}}/credentials/{{credentialId}}",
+              "host": [
+                "{{credentialBaseUrl}}"
+              ],
+              "path": [
+                "credentials",
+                "{{credentialId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Generate With Invalid Session Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is INVALID_SESSION_ID\", () => pm.expect(body.error).to.eql(\"INVALID_SESSION_ID\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"uses the contract message\", () => pm.expect(body.message).to.eql(\"Session ID must be a valid non-empty UUID.\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"not-a-uuid\",\n  \"difficulty\": \"EASY\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Generate With Invalid Difficulty",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is INVALID_DIFFICULTY\", () => pm.expect(body.error).to.eql(\"INVALID_DIFFICULTY\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"a3f5b720-8912-4c6e-bf22-789a01bcde45\",\n  \"difficulty\": \"INSANE\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Generate With Malformed Json",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is MALFORMED_REQUEST\", () => pm.expect(body.error).to.eql(\"MALFORMED_REQUEST\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"sessionId\": "
+            }
+          }
+        },
+        {
+          "name": "Generate With Wrong Content Type",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is UNSUPPORTED_MEDIA_TYPE\", () => pm.expect(body.error).to.eql(\"UNSUPPORTED_MEDIA_TYPE\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/generate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "generate"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "sessionId=1"
+            }
+          }
+        },
+        {
+          "name": "Get Unknown Applicant",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is APPLICANT_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"APPLICANT_NOT_FOUND\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"uses the contract message\", () => pm.expect(body.message).to.eql(\"Applicant with ID '00000000-0000-4000-8000-000000000999' was not found or has expired.\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/00000000-0000-4000-8000-000000000999",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "00000000-0000-4000-8000-000000000999"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update With Invalid Role",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{seededImpersonatorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{seededImpersonatorId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Victor Ceban\",\n  \"studentId\": \"1234567890\",\n  \"faculty\": \"FAF\",\n  \"year\": 3,\n  \"role\": \"WIZARD\",\n  \"photoRef\": \"https://assets.campus.local/photos/victor.png\"\n}"
+            }
+          }
+        },
+        {
+          "name": "List With Invalid Session Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is INVALID_SESSION_ID\", () => pm.expect(body.error).to.eql(\"INVALID_SESSION_ID\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants?sessionId=nope",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants"
+              ],
+              "query": [
+                {
+                  "key": "sessionId",
+                  "value": "nope"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Route",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/nothing-here",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nothing-here"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unsupported Method",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error is METHOD_NOT_ALLOWED\", () => pm.expect(body.error).to.eql(\"METHOD_NOT_ALLOWED\"));",
+                  "pm.test(\"has a message\", () => pm.expect(body.message).to.be.a(\"string\").and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/applicants/{{seededImpersonatorId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "applicants",
+                "{{seededImpersonatorId}}"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
