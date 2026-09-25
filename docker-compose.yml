@@ -1,16 +1,75 @@
 # Common Docker Compose file for Team 19 (Student ID, Please).
 #
 # Points only at images already pushed to DockerHub - never at local Dockerfiles - per the CPR's
-# Lab 1 requirement. Currently wires up the services owned by Diana (server-rules-service,
-# university-record-service) and Daria (player-service, server-moderation-session-service);
-# other members should append their own service + database blocks here following the same
-# pattern as their services come online.
+# Lab 1 requirement. Wires up all 8 services: server-rules-service/university-record-service
+# (Diana), applicant-service/credential-service (Mihai), moderation-service/discord-dms-service
+# (Andi), player-service/server-moderation-session-service (Daria).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
 #   docker compose up
 
 services:
+  moderation-service:
+    image: andiblindu1/moderation-service:0.2.0
+    ports:
+      - "8087:8087"
+    environment:
+      ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
+      Downstream__Rules__Mode: Http
+      Downstream__Rules__BaseUrl: http://server-rules-service:8085
+      Downstream__Records__Mode: Http
+      Downstream__Records__BaseUrl: http://university-record-service:8086
+      # Stays mocked: the moderation-service Postman collection records its decisions against the
+      # demo credentials of the mock.
+      Downstream__Credential__Mode: Mock
+    depends_on:
+      moderation-postgres:
+        condition: service_healthy
+      server-rules-service:
+        condition: service_started
+      university-record-service:
+        condition: service_started
+
+  moderation-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: moderation
+      POSTGRES_USER: ${MODERATION_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${MODERATION_POSTGRES_PASSWORD}
+    volumes:
+      - moderation-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  discord-dms-service:
+    image: andiblindu1/discord-dms-service:0.2.0
+    ports:
+      - "8088:8088"
+    environment:
+      ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
+    depends_on:
+      dms-redis:
+        condition: service_healthy
+
+  dms-redis:
+    image: redis:7.4-alpine
+    # The password is expanded when the container starts, so it is not part of the container
+    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${DMS_REDIS_PASSWORD}
+    volumes:
+      - dms-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   server-rules-service:
     image: diana7376/server-rules-service:0.2.0
     ports:
@@ -47,6 +106,90 @@ services:
       POSTGRES_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
     volumes:
       - record-postgres-data:/var/lib/postgresql/data
+
+  applicant-service:
+    image: caramisca/applicant-service:0.2.0
+    ports:
+      - "8083:8083"
+    environment:
+      Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
+      Services__CredentialServiceMode: Http
+      Services__CredentialServiceUrl: http://credential-service:8084
+    depends_on:
+      applicant-seed:
+        condition: service_completed_successfully
+      credential-service:
+        condition: service_healthy
+
+  applicant-redis:
+    image: redis:7.4-alpine
+    # The password is expanded when the container starts, so it is not part of the container
+    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    volumes:
+      - applicant-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot job: loads the demo applicants of docs/db/applicant-service when Redis holds none.
+  applicant-seed:
+    image: redis:7.4-alpine
+    entrypoint: ["sh", "/seed/seed.sh"]
+    environment:
+      REDIS_HOST: applicant-redis
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    volumes:
+      - ./docs/db/applicant-service:/seed:ro
+    depends_on:
+      applicant-redis:
+        condition: service_healthy
+    restart: "no"
+
+  credential-service:
+    image: caramisca/credential-service:0.2.0
+    ports:
+      - "8084:8084"
+    environment:
+      Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
+      Services__UniversityRecordMode: Http
+      Services__UniversityRecordServiceUrl: http://university-record-service:8086
+    depends_on:
+      credential-seed:
+        condition: service_completed_successfully
+      university-record-service:
+        condition: service_started
+
+  credential-redis:
+    image: redis:7.4-alpine
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    volumes:
+      - credential-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # One-shot job: loads the demo credential bundles of docs/db/credential-service when Redis holds none.
+  credential-seed:
+    image: redis:7.4-alpine
+    entrypoint: ["sh", "/seed/seed.sh"]
+    environment:
+      REDIS_HOST: credential-redis
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    volumes:
+      - ./docs/db/credential-service:/seed:ro
+    depends_on:
+      credential-redis:
+        condition: service_healthy
+    restart: "no"
 
   player-service:
     image: drateeva/player-service:0.2.0
@@ -101,7 +244,11 @@ services:
       retries: 12
 
 volumes:
+  moderation-postgres-data:
+  dms-redis-data:
   rules-mongo-data:
   record-postgres-data:
+  applicant-redis-data:
+  credential-redis-data:
   player-postgres-data:
   session-postgres-data:
