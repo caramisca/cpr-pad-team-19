@@ -451,8 +451,6 @@ Response `201 Created`, with a `Location: /applicants/{id}` header:
 }
 ```
 
-**`GET /applicants/{id}`** — fetch an applicant profile.
-
 `role` is the role the applicant claims, and `expiresAt` is 60 minutes after `createdAt` by
 default. The profile follows the credential the applicant holds; a dishonest applicant misrepresents
 itself in character (an outsider impersonating a student, another major claiming FAF, a graduate
