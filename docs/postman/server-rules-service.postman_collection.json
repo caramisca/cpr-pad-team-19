@@ -188,6 +188,73 @@
               ]
             }
           }
+        },
+        {
+          "name": "Update Ruleset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"rules were replaced\", () => pm.expect(body.rules).to.have.lengthOf(1));",
+                  "pm.test(\"id unchanged\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"rulesetId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"rules\": [\n    {\n      \"type\": \"ALLOWED_FACULTY\",\n      \"description\": \"Updated via PUT\",\n      \"params\": { \"faculties\": [\"FCIM\"] }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Ruleset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/{{rulesetId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "{{rulesetId}}"
+              ]
+            }
+          }
         }
       ]
     },
@@ -317,6 +384,169 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"rules\": [\n    {\n      \"type\": \"ALLOWED_FACULTY\",\n      \"description\": \"FAF only\",\n      \"params\": {\n        \"faculties\": [\n          \"FAF\"\n        ]\n      }\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Ruleset With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"rules\": [\n    { \"type\": \"ALLOWED_FACULTY\", \"description\": \"x\", \"params\": {} }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Ruleset With Unknown Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is RULESET_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"RULESET_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Route Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/nonexistent-route",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nonexistent-route"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Wrong Method Returns 405",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is METHOD_NOT_ALLOWED\", () => pm.expect(body.error).to.eql(\"METHOD_NOT_ALLOWED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "url": {
+              "raw": "{{baseUrl}}/rulesets/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "rulesets",
+                "active"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Invalid JSON Body Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is MALFORMED_REQUEST_BODY\", () => pm.expect(body.error).to.eql(\"MALFORMED_REQUEST_BODY\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{not valid json"
             },
             "url": {
               "raw": "{{baseUrl}}/rulesets",

@@ -554,6 +554,13 @@ Response `200 OK`:
 }
 ```
 
+**`PUT /rulesets/{id}`** — update an existing ruleset's rules/effective date in place (does not
+bump its version or write a revision entry — use `POST /rulesets` to publish a new version).
+
+Request: same shape as `POST /rulesets`. Response `200 OK`: same shape as `GET /rulesets/active`.
+
+**`DELETE /rulesets/{id}`** — permanently delete a ruleset. Response `204 No Content`.
+
 **Publishes `ruleset.updated`:**
 ```json
 {
@@ -564,6 +571,19 @@ Response `200 OK`:
   "changedFields": ["string"]
 }
 ```
+
+**Error codes:**
+
+| Code | HTTP Status | When |
+| :--- | :--- | :--- |
+| `RULESET_NOT_FOUND` | 404 | `GET`/`PUT`/`DELETE /rulesets/{id}` or `GET /rulesets/{id}/revisions` with an unknown `id`. |
+| `NO_ACTIVE_RULESET` | 404 | `GET /rulesets/active` before any ruleset has ever been published. |
+| `ROUTE_NOT_FOUND` | 404 | Request path doesn't match any endpoint on this service. |
+| `METHOD_NOT_ALLOWED` | 405 | Request uses an HTTP method the matched path doesn't support. |
+| `MALFORMED_REQUEST_BODY` | 400 | Request body is missing or is not valid JSON. |
+| `VALIDATION_ERROR` | 400 | `POST`/`PUT /rulesets` with a missing/invalid `effectiveFrom` or empty/invalid `rules`. |
+| `DATABASE_UNAVAILABLE` | 503 | MongoDB is unreachable (fails fast within ~3s rather than hanging). |
+| `INTERNAL_ERROR` | 500 | Unexpected server-side failure. |
 
 #### `university-record-service`
 
@@ -615,6 +635,37 @@ Response `200 OK`:
 ```json
 { "faculties": [ { "code": "string", "name": "string" } ] }
 ```
+
+**`PUT /records/students/{studentId}`** — update an existing student's record.
+
+Request:
+```json
+{
+  "fullName": "string",
+  "faculty": "string",
+  "groupName": "string",
+  "studyYear": "integer",
+  "enrolmentStatus": "string (ENROLLED | GRADUATED | EXPELLED | ON_LEAVE)",
+  "academicStanding": "string (GOOD | PROBATION)"
+}
+```
+Response `200 OK`: same shape as `GET /records/students/{studentId}`.
+
+**`DELETE /records/students/{studentId}`** — permanently delete a student's record. Response
+`204 No Content`.
+
+**Error codes:**
+
+| Code | HTTP Status | When |
+| :--- | :--- | :--- |
+| `STUDENT_NOT_FOUND` | 404 | `GET`/`PUT`/`DELETE /records/students/{studentId}` with an unknown `studentId`. |
+| `INVALID_LOOKUP_REQUEST` | 400 | `POST /records/students/lookup` with all of `studentId`/`fullName`/`faculty` empty. |
+| `ROUTE_NOT_FOUND` | 404 | Request path doesn't match any endpoint on this service. |
+| `METHOD_NOT_ALLOWED` | 405 | Request uses an HTTP method the matched path doesn't support. |
+| `MALFORMED_REQUEST_BODY` | 400 | Request body is missing or is not valid JSON. |
+| `VALIDATION_ERROR` | 400 | Request body fails bean validation. |
+| `DATABASE_UNAVAILABLE` | 503 | PostgreSQL is unreachable (fails fast within ~3s rather than hanging). |
+| `INTERNAL_ERROR` | 500 | Unexpected server-side failure. |
 
 #### `moderation-service`
 
@@ -872,7 +923,8 @@ docker compose up
 
 `server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
 `http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
-DB scripts are in `docs/db/`. See each service's own README (linked from the table above) for
-full endpoint contracts and error codes.
+DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are inlined above
+under [Endpoint Contracts](#endpoint-contracts) — both service repos are private, so this CPR copy
+is the only one teammates without repo access can actually read.
 
 
