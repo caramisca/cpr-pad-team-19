@@ -13,7 +13,7 @@ The team works in **2 languages**, split by member pair (4 microservices per pai
 | **Daria** | `player-service`<br>`server-moderation-session-service` | Java (Spring Boot) | PostgreSQL |
 | **Mihai** | `applicant-service`<br>`credential-service` | C# (.NET 8) | Redis / In-Memory |
 | **Diana** | `server-rules-service`<br>`university-record-service` | Java (Spring Boot) | MongoDB / PostgreSQL |
-| **Andi** | `moderation-service`<br>`discord-dms-service` | C# (.NET 8) | PostgreSQL / In-Memory |
+| **Andi** | `moderation-service`<br>`discord-dms-service` | C# (.NET 8) | PostgreSQL / Redis |
 
 ## Service Boundaries
 
@@ -118,21 +118,25 @@ Owner: Andi — C# (.NET 8) — PostgreSQL
   made during every shift.
 - **Does not own:** the score derived from a verdict, the shift queue, or the outbound message.
   It publishes the evaluated outcome and lets the interested services react.
-- **Exposes:** `POST /decisions`, `GET /decisions/{id}`, `GET /sessions/{id}/decisions`.
+- **Exposes:** `POST /decisions`, `GET /decisions/{id}`, `PATCH /decisions/{id}`,
+  `DELETE /decisions/{id}`, `GET /sessions/{id}/decisions`.
 - **Calls:** `credential-service`, `server-rules-service`, `university-record-service`.
-- **Publishes:** `decision.recorded`, `decision.evaluated`, `verdict.issued`.
+- **Publishes:** `decision.recorded`, `decision.evaluated`, `verdict.issued`, `decision.amended`,
+  `decision.voided`.
 
 ### 8. `discord-dms-service`
 
-Owner: Andi — C# (.NET 8) — In-Memory
+Owner: Andi — C# (.NET 8) — Redis
 
 - **Encapsulates:** all outbound communication toward Discord. Direct messages to applicants
   carrying their verdict, shift notifications to moderators, rule-change announcements, delivery
   retries, and rate limiting against the Discord API.
-- **Owns:** the in-memory outbox and delivery-status cache.
+- **Owns:** the Redis outbox: every notification with its delivery status, the delivery queue, the
+  ids of the events already processed, and the moderator of each open shift.
 - **Does not own:** any business decision. It is a pure delivery edge and never calls back into
   the domain services.
-- **Exposes:** `POST /notifications/dm`, `GET /notifications/{id}/status`.
+- **Exposes:** `POST /notifications/dm`, `GET /notifications/{id}/status`, `GET /notifications/{id}`,
+  `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`.
 - **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
 
 
@@ -151,7 +155,7 @@ most.
 | `university-record-service` | University Record | Java (Spring Boot) | REST for authoritative student/faculty/enrolment lookups | — (read-mostly system of record; no events published) |
 | `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service synchronously to attach documents | — |
 | `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service synchronously to derive authentic fields | — |
-| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record synchronously to gather everything a verdict needs | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume |
+| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record synchronously to gather everything a verdict needs | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume, and `decision.amended`/`decision.voided` when a call is corrected |
 | `discord-dms-service` | Discord DMs | C# (.NET 8) | WebSocket for real-time moderator ↔ junior-mod chat channels (`#enrollment-check`, `#faculty-check`, `#general-mod-chat`) | Purely event-driven for outbound notifications: consumes `verdict.issued`, `session.started`/`closed`, `ruleset.updated`; no service calls it synchronously |
 
 **Why this split:**
@@ -229,7 +233,7 @@ engine is picked per service based on the shape of the data it owns, not on team
 | `server-rules-service` | MongoDB | Rule shapes vary by rule type and change between revisions; document storage avoids rigid schemas. |
 | `university-record-service` | PostgreSQL | Enrolments and faculties need referential integrity as the system of record. |
 | `moderation-service` | PostgreSQL | Decisions/verdicts/violations form the permanent audit trail and must not be lost. |
-| `discord-dms-service` | In-Memory | The outbox only needs to survive long enough to retry a delivery. |
+| `discord-dms-service` | Redis | The outbox, the delivery queue, and the processed event ids must survive a restart so that retries continue and redelivered events are not sent twice; entries expire once they are no longer needed. |
 
 All cross-service data access happens exclusively over the contract published below:
 
@@ -734,48 +738,116 @@ Response `200 OK`:
 
 #### `moderation-service`
 
-**`POST /decisions`** — record a moderator's call on an applicant.
+**`POST /decisions`** — record a moderator's call on an applicant. The service reads the presented
+credential, the active ruleset, and the registry record, evaluates the call, and stores the
+decision together with its verdict.
 
 Request:
 ```json
 {
   "sessionId": "string (uuid)",
   "applicantId": "string (uuid)",
+  "credentialId": "string (uuid)",
   "moderatorId": "string (uuid)",
-  "action": "string (ACCEPT | REJECT | FLAG | BAN)"
+  "action": "string (ACCEPT | REJECT | FLAG | BAN, case-insensitive)"
 }
 ```
-Response `201 Created`:
+Response `201 Created`, with a `Location: /decisions/{id}` header:
 ```json
 {
   "id": "string (uuid)",
   "sessionId": "string (uuid)",
   "applicantId": "string (uuid)",
+  "credentialId": "string (uuid)",
   "moderatorId": "string (uuid)",
   "action": "string (ACCEPT | REJECT | FLAG | BAN)",
   "createdAt": "string (ISO-8601 datetime)",
+  "updatedAt": "string (ISO-8601 datetime) | null",
   "verdict": {
     "correct": "boolean",
     "violatedRules": ["string"],
+    "xpAwarded": "integer",
+    "rulesetVersion": "integer",
     "evaluatedAt": "string (ISO-8601 datetime)"
   }
 }
 ```
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `409 DUPLICATE_DECISION`,
+`415 UNSUPPORTED_MEDIA_TYPE`, `422 CREDENTIAL_NOT_FOUND`, `422 CREDENTIAL_APPLICANT_MISMATCH`,
+`503 NO_ACTIVE_RULESET`, `503 DEPENDENCY_UNAVAILABLE`.
 
 **`GET /decisions/{id}`** — fetch a single decision and its verdict.
 
 Response `200 OK`: same shape as the `POST /decisions` response.
-Response `404 Not Found`: standard error shape.
+Response `404 Not Found`: `DECISION_NOT_FOUND`.
 
-**`GET /sessions/{id}/decisions`** — list every decision made during a session.
+**`PATCH /decisions/{id}`** — amend the moderator's action. The verdict is re-scored against the
+evidence recorded with the decision, so `violatedRules` does not change.
+
+Request:
+```json
+{ "action": "string (ACCEPT | REJECT | FLAG | BAN, case-insensitive)" }
+```
+Response `200 OK`: same shape as the `POST /decisions` response, with `updatedAt` set. Sending the
+current action changes nothing.
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 DECISION_NOT_FOUND`,
+`415 UNSUPPORTED_MEDIA_TYPE`.
+
+**`DELETE /decisions/{id}`** — void a decision. It stays in the audit trail but is no longer
+returned, and the applicant can be decided again in the same session.
+
+Response `204 No Content`.
+Response `404 Not Found`: `DECISION_NOT_FOUND`, also for a decision that is already void.
+
+**`GET /sessions/{id}/decisions`** — list the decisions of a session that are not void, oldest
+first. An unknown session returns an empty list.
 
 Response `200 OK`:
 ```json
 { "sessionId": "string (uuid)", "decisions": [ "object (same shape as POST /decisions response)" ] }
 ```
 
+**`GET /health`** — service and database health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when PostgreSQL is
+unreachable:
+```json
+{ "status": "Healthy", "service": "moderation-service", "version": "string", "checks": { "database": "Healthy" } }
+```
+
+**Evaluation and scoring.** The expected action is `ACCEPT` when nothing is violated, `BAN` when the
+student is blacklisted, and `REJECT` otherwise. A call is correct when it equals the expected
+action; `FLAG` is also correct whenever the expected action is not `ACCEPT`. A correct call awards
+`ACCEPT` 10, `REJECT` 10, `FLAG` 5, or `BAN` 15 XP; an incorrect call awards 0. `violatedRules`
+holds the integrity checks `CREDENTIAL_EXPIRED`, `STUDENT_ID_MISSING`, `RECORD_NOT_FOUND`,
+`NAME_MISMATCH`, `FACULTY_MISMATCH`, `STUDY_YEAR_MISMATCH`, `NOT_ENROLLED`, followed by the `type`
+of each broken ruleset rule (`ALLOWED_FACULTY`, `MIN_ENROLLMENT_YEARS`, `BLACKLIST`).
+
+**Error codes:**
+
+| Status | `error` | Meaning |
+| :--- | :--- | :--- |
+| `400` | `VALIDATION_FAILED` | A field is missing, an id is not a non-empty UUID, or `action` is not one of the four values. The message lists every problem. |
+| `400` | `MALFORMED_REQUEST` | The body is missing or is not valid JSON for the endpoint. |
+| `404` | `DECISION_NOT_FOUND` | No decision that is not void has this id. |
+| `404` | `NOT_FOUND` | No endpoint matches the path. |
+| `405` | `METHOD_NOT_ALLOWED` | The path exists, but not for this method. |
+| `409` | `DUPLICATE_DECISION` | The applicant already has a decision in this session; amend it with `PATCH` instead. |
+| `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
+| `422` | `CREDENTIAL_NOT_FOUND` | `credential-service` does not know `credentialId`. |
+| `422` | `CREDENTIAL_APPLICANT_MISMATCH` | The credential belongs to a different applicant. |
+| `500` | `INTERNAL_ERROR` | Unexpected failure. |
+| `503` | `NO_ACTIVE_RULESET` | `server-rules-service` has no ruleset in force. Nothing was recorded. |
+| `503` | `DEPENDENCY_UNAVAILABLE` | A dependency timed out, could not be reached, or answered outside its contract. Nothing was recorded. |
+| `503` | `DATABASE_UNAVAILABLE` | PostgreSQL is unreachable. |
+
 **Calls:** `credential-service` (`GET /credentials/{id}`), `server-rules-service`
 (`GET /rulesets/active`), `university-record-service` (`GET /records/students/{studentId}`).
+A `404` from a dependency is treated as evidence (unknown credential, no active ruleset, student
+missing from the registry); any other failure returns `503 DEPENDENCY_UNAVAILABLE`.
+
+Events are written to a transactional outbox in the same transaction as the decision and delivered
+at least once, in order; consumers deduplicate on `eventId`. `playerId` is the `moderatorId`.
 
 **Publishes `decision.recorded`:**
 ```json
@@ -785,28 +857,38 @@ Response `200 OK`:
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "correct": "boolean", "xpAwarded": "integer", "evaluatedAt": "string (ISO-8601 datetime)" }
 ```
-**Publishes `verdict.issued`:**
+**Publishes `verdict.issued`** (after `POST` and after `PATCH`):
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "applicantId": "string (uuid)", "action": "string", "correct": "boolean", "violatedRules": ["string"], "issuedAt": "string (ISO-8601 datetime)" }
+```
+**Publishes `decision.amended`** (after `PATCH`; `decision.evaluated` is not repeated, so a score
+is adjusted by the difference instead of being counted twice):
+```json
+{ "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "applicantId": "string (uuid)", "previousAction": "string", "action": "string", "previousCorrect": "boolean", "correct": "boolean", "previousXpAwarded": "integer", "xpAwarded": "integer", "amendedAt": "string (ISO-8601 datetime)" }
+```
+**Publishes `decision.voided`** (after `DELETE`; the XP it awarded no longer counts):
+```json
+{ "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "applicantId": "string (uuid)", "correct": "boolean", "xpAwarded": "integer", "voidedAt": "string (ISO-8601 datetime)" }
 ```
 
 #### `discord-dms-service`
 
-**`POST /notifications/dm`** — queue an outbound notification.
+**`POST /notifications/dm`** — queue a direct message for delivery.
 
-Request:
+Request (`metadata` may be omitted):
 ```json
 {
   "recipientId": "string (uuid)",
-  "type": "string (VERDICT | SESSION_STARTED | SESSION_CLOSED | RULESET_UPDATED)",
-  "message": "string",
+  "type": "string (VERDICT | SESSION_STARTED | SESSION_CLOSED | RULESET_UPDATED, case-insensitive)",
+  "message": "string (not blank, at most 2000 characters)",
   "metadata": "object | null"
 }
 ```
-Response `202 Accepted`:
+Response `202 Accepted`, with a `Location: /notifications/{id}/status` header:
 ```json
 { "id": "string (uuid)", "status": "QUEUED", "createdAt": "string (ISO-8601 datetime)" }
 ```
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `415 UNSUPPORTED_MEDIA_TYPE`.
 
 **`GET /notifications/{id}/status`** — check delivery status.
 
@@ -819,11 +901,110 @@ Response `200 OK`:
   "lastAttemptAt": "string (ISO-8601 datetime) | null"
 }
 ```
+Response `404 Not Found`: `NOTIFICATION_NOT_FOUND`.
+
+**`GET /notifications/{id}`** — fetch a notification with its message and delivery details.
+
+Response `200 OK`:
+```json
+{
+  "id": "string (uuid)",
+  "recipientId": "string (uuid)",
+  "type": "string (VERDICT | SESSION_STARTED | SESSION_CLOSED | RULESET_UPDATED)",
+  "message": "string",
+  "metadata": "object | null",
+  "status": "string (QUEUED | SENT | FAILED | RATE_LIMITED)",
+  "attempts": "integer",
+  "createdAt": "string (ISO-8601 datetime)",
+  "lastAttemptAt": "string (ISO-8601 datetime) | null",
+  "nextAttemptAt": "string (ISO-8601 datetime) | null",
+  "lastError": "string | null"
+}
+```
+`nextAttemptAt` is when the next attempt is due, and is null once the notification is `SENT` or
+`FAILED`. `lastError` says why the last attempt did not deliver the message, and is null once it is
+`SENT`.
+Response `404 Not Found`: `NOTIFICATION_NOT_FOUND`.
+
+**`POST /notifications/{id}/retry`** — queue a `FAILED` notification again with a fresh attempt
+budget.
+
+Request: empty body.
+Response `202 Accepted`, with a `Location: /notifications/{id}/status` header: same shape as the
+`GET /notifications/{id}/status` response, with `status` `QUEUED` and `attempts` `0`.
+Errors: `404 NOTIFICATION_NOT_FOUND`, `409 NOTIFICATION_NOT_FAILED`.
+
+**`DELETE /notifications/{id}`** — delete a notification. One that has not been delivered yet is
+never sent.
+
+Response `204 No Content`.
+Response `404 Not Found`: `NOTIFICATION_NOT_FOUND`.
+
+**`GET /health`** — service and Redis health.
+
+Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is
+unreachable:
+```json
+{ "status": "Healthy", "service": "discord-dms-service", "version": "string", "checks": { "redis": "Healthy" } }
+```
+
+**Delivery.** A background worker sends due notifications to Discord, at most 5 per second so that
+the service stays under the Discord rate limit. `attempts` counts the calls made to Discord.
+
+| `status` | Meaning |
+| :--- | :--- |
+| `QUEUED` | Waiting for the first attempt, or for the retry after a failed one. |
+| `RATE_LIMITED` | Waiting for the rate limit: the service's own, which does not count as an attempt, or a `429` answer from Discord. |
+| `SENT` | Discord accepted the message. Final. |
+| `FAILED` | Discord refused the message for good, for example because the user does not accept direct messages, or 5 attempts failed. Final until `POST /notifications/{id}/retry`. |
+
+A failed attempt is retried after 2 s, and the wait doubles after each failure up to 60 s; after a
+`429`, the service waits as long as Discord asks. Delivery is at least once: an attempt that was
+interrupted before its outcome was saved is made again 30 s later. A notification stays available
+for 7 days after it becomes `SENT` or `FAILED`.
 
 **Consumes `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`** — each event is
 mapped to a `POST /notifications/dm`-shaped message and enqueued for delivery to the relevant
 applicant or moderator; the service never calls back into any domain service.
 
+| Event | Recipient | `type` | Message |
+| :--- | :--- | :--- | :--- |
+| `verdict.issued` | `applicantId` | `VERDICT` | The decision and, unless it is `ACCEPT`, a reason for each code in `violatedRules`. `correct` is accepted but not shown to the applicant. |
+| `session.started` | `moderatorId` | `SESSION_STARTED` | The shift has started. |
+| `session.closed` | The `moderatorId` of the session's `session.started` | `SESSION_CLOSED` | The applicants processed and the score. |
+| `ruleset.updated` | Every moderator with an open session, once each | `RULESET_UPDATED` | The new version, when it applies, and the changed fields. |
+
+The `metadata` of each message carries the `eventType`, the `eventId`, and the details of the event,
+such as its `decisionId`, `sessionId`, or `rulesetId`, so a message can be traced back to its cause.
+A session is open from its `session.started` until its `session.closed`, for at most 24 hours.
+
+Until the team message broker exists, an event is delivered by sending its payload, exactly as the
+publisher documents it in this contract, to **`POST /internal/events/{eventType}`**, for example
+`POST /internal/events/verdict.issued`. Each `eventId` is processed once and remembered for 7 days.
+
+Response `202 Accepted` for the first delivery, or `200 OK` with `"duplicate": true` for a
+redelivery, which changes nothing and returns the notifications of the first delivery:
+```json
+{ "eventId": "string (uuid)", "duplicate": "boolean", "notificationIds": ["string (uuid)"] }
+```
+`notificationIds` is empty when there is nobody to notify: a `session.closed` whose
+`session.started` was never received, or a `ruleset.updated` while no session is open.
+Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 NOT_FOUND` for an unknown event
+type, `415 UNSUPPORTED_MEDIA_TYPE`.
+
+**Error codes:**
+
+| Status | `error` | Meaning |
+| :--- | :--- | :--- |
+| `400` | `VALIDATION_FAILED` | A required field is missing or out of range: an id is the all-zero UUID, `type` or `action` is not one of its values, `message` is blank or longer than 2000 characters, `metadata` is not an object, `version` is below 1, or `summary.applicantsProcessed` is negative. The message lists every problem. |
+| `400` | `MALFORMED_REQUEST` | The body is missing or is not valid JSON for the endpoint, for example an id that is not a UUID string or a timestamp that is not an ISO-8601 string. |
+| `404` | `NOTIFICATION_NOT_FOUND` | No notification has this id: it never existed, was deleted, or has expired. |
+| `404` | `NOT_FOUND` | No endpoint matches the path, including an `{id}` that is not a UUID. |
+| `405` | `METHOD_NOT_ALLOWED` | The path exists, but not for this method. |
+| `409` | `NOTIFICATION_NOT_FAILED` | Only a `FAILED` notification can be retried. |
+| `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
+| `500` | `INTERNAL_ERROR` | Unexpected failure. |
+| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications or events until it is back. |
 
 ## Contribution Workflow & GitHub Rules
 
@@ -942,6 +1123,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
@@ -982,6 +1165,33 @@ git submodule update --remote --merge
 ```
 
 To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+
+### Running `moderation-service` and `discord-dms-service`
+
+The root `docker-compose.yml` runs both services from their published DockerHub images, each
+against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
+`moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
+persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
+`MODERATION_POSTGRES_PASSWORD` (it must not contain `;`), and `DMS_REDIS_PASSWORD` (it must not
+contain `,`) in `.env`, then run `docker compose up`.
+
+`moderation-service` is reachable at `http://localhost:8087` and `discord-dms-service` at
+`http://localhost:8088`; their databases are not published to the host. `moderation-service` calls
+the real `server-rules-service` and `university-record-service` over HTTP, while its credential
+lookups stay mocked (`Downstream__Credential__Mode: Mock`), because its Postman collection records
+decisions against the demo credentials of the mock.
+
+Test them with `docs/postman/moderation-service.postman_collection.json` and
+`docs/postman/discord-dms-service.postman_collection.json`, from Postman or from the command line:
+
+```bash
+npx newman run docs/postman/moderation-service.postman_collection.json
+npx newman run docs/postman/discord-dms-service.postman_collection.json
+```
+
+`docs/db/moderation-service/schema.sql` is the PostgreSQL schema that `moderation-service` creates
+through its EF Core migrations when it starts, and `docs/db/discord-dms-service/` lists the Redis
+keys of `discord-dms-service`.
 
 ### Running `server-rules-service` and `university-record-service`
 
