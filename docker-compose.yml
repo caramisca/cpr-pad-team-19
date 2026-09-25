@@ -1,10 +1,9 @@
 # Common Docker Compose file for Team 19 (Student ID, Please).
 #
 # Points only at images already pushed to DockerHub - never at local Dockerfiles - per the CPR's
-# Lab 1 requirement. Currently wires up the services owned by Diana (server-rules-service,
-# university-record-service) and Mihai (applicant-service, credential-service); other members
-# should append their own service + database blocks here following the same pattern as their
-# services come online.
+# Lab 1 requirement. Wires up all 8 services: server-rules-service/university-record-service
+# (Diana), applicant-service/credential-service (Mihai), moderation-service/discord-dms-service
+# (Andi), player-service/server-moderation-session-service (Daria).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
@@ -192,6 +191,58 @@ services:
         condition: service_healthy
     restart: "no"
 
+  player-service:
+    image: drateeva/player-service:0.2.0
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
+      SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
+    depends_on:
+      player-postgres:
+        condition: service_healthy
+
+  player-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: playerdb
+      POSTGRES_USER: ${PLAYER_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
+    volumes:
+      - player-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  server-moderation-session-service:
+    image: drateeva/server-moderation-session-service:0.2.0
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
+      SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
+    depends_on:
+      session-postgres:
+        condition: service_healthy
+
+  session-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sessiondb
+      POSTGRES_USER: ${SESSION_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
+    volumes:
+      - session-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
 volumes:
   moderation-postgres-data:
   dms-redis-data:
@@ -199,3 +250,5 @@ volumes:
   record-postgres-data:
   applicant-redis-data:
   credential-redis-data:
+  player-postgres-data:
+  session-postgres-data:
