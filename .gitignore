@@ -2,9 +2,6 @@
 Lab0/
 *.pdf
 
-# Personal local working notes (never shared, never pushed)
-.local/
-
 # Environment & Secrets (DO NOT COMMIT)
 .env
 .env.*
