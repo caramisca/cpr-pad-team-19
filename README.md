@@ -321,6 +321,11 @@ Response `200 OK`:
 }
 ```
 
+**`POST /internal/mock-events/decision-evaluated`** — no message broker is wired up yet, so this
+endpoint stands in for the `decision.evaluated` consumer above: same request body as the event
+payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
+replay. Will be replaced by a real broker listener without changing the underlying handler.
+
 #### `server-moderation-session-service`
 
 **`POST /sessions`** — open a new moderation shift.
@@ -404,6 +409,11 @@ the ruleset currently in force.
   "recordedAt": "string (ISO-8601 datetime)"
 }
 ```
+
+**`POST /internal/mock-events/decision-recorded`** — no message broker is wired up yet, so this
+endpoint stands in for the `decision.recorded` consumer above: same request body as the event
+payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
+replay. Will be replaced by a real broker listener without changing the underlying handler.
 
 **Publishes `session.started`:**
 ```json
@@ -1129,6 +1139,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Port `8084`. |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8081`. |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8082`. |
 
 Other services will be added here as their owners push images to DockerHub.
 
