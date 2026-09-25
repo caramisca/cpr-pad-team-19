@@ -192,13 +192,19 @@ services:
     restart: "no"
 
   player-service:
-    image: drateeva/player-service:0.2.0
+    image: drateeva/player-service:0.2.1
     ports:
       - "8081:8081"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       player-postgres:
         condition: service_healthy
@@ -218,13 +224,19 @@ services:
       retries: 12
 
   server-moderation-session-service:
-    image: drateeva/server-moderation-session-service:0.2.0
+    image: drateeva/server-moderation-session-service:0.2.1
     ports:
       - "8082:8082"
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       session-postgres:
         condition: service_healthy
