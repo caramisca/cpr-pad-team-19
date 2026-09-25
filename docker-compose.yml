@@ -11,6 +11,66 @@
 #   docker compose up
 
 services:
+  moderation-service:
+    image: andiblindu1/moderation-service:0.2.0
+    ports:
+      - "8087:8087"
+    environment:
+      ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
+      Downstream__Rules__Mode: Http
+      Downstream__Rules__BaseUrl: http://server-rules-service:8085
+      Downstream__Records__Mode: Http
+      Downstream__Records__BaseUrl: http://university-record-service:8086
+      # Stays mocked: the moderation-service Postman collection records its decisions against the
+      # demo credentials of the mock.
+      Downstream__Credential__Mode: Mock
+    depends_on:
+      moderation-postgres:
+        condition: service_healthy
+      server-rules-service:
+        condition: service_started
+      university-record-service:
+        condition: service_started
+
+  moderation-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: moderation
+      POSTGRES_USER: ${MODERATION_POSTGRES_USER}
+      POSTGRES_PASSWORD: ${MODERATION_POSTGRES_PASSWORD}
+    volumes:
+      - moderation-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  discord-dms-service:
+    image: andiblindu1/discord-dms-service:0.2.0
+    ports:
+      - "8088:8088"
+    environment:
+      ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
+    depends_on:
+      dms-redis:
+        condition: service_healthy
+
+  dms-redis:
+    image: redis:7.4-alpine
+    # The password is expanded when the container starts, so it is not part of the container
+    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
+    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    environment:
+      REDISCLI_AUTH: ${DMS_REDIS_PASSWORD}
+    volumes:
+      - dms-redis-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   server-rules-service:
     image: diana7376/server-rules-service:0.2.0
     ports:
@@ -133,6 +193,8 @@ services:
     restart: "no"
 
 volumes:
+  moderation-postgres-data:
+  dms-redis-data:
   rules-mongo-data:
   record-postgres-data:
   applicant-redis-data:
