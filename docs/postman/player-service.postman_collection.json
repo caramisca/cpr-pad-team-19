@@ -1,0 +1,609 @@
+{
+  "info": {
+    "name": "player-service",
+    "description": "CRUD + progression endpoints for player-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{playerId}} captured from the Register Player response.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8081",
+      "type": "string"
+    },
+    {
+      "key": "playerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "discordId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionPlayerId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionEventId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Register Player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"discordId\", \"discord-postman-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"response has id\", () => pm.expect(body.id).to.be.a(\"string\"));",
+                  "pm.test(\"discordId echoed back\", () => pm.expect(body.discordId).to.eql(pm.collectionVariables.get(\"discordId\")));",
+                  "pm.test(\"starts at level 1 with 0 xp\", () => {",
+                  "  pm.expect(body.xp).to.eql(0);",
+                  "  pm.expect(body.level).to.eql(1);",
+                  "});",
+                  "pm.collectionVariables.set(\"playerId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"{{discordId}}\",\n  \"displayName\": \"Postman Moderator\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Get Player By Id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"id matches requested player\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"playerId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}"] }
+          }
+        },
+        {
+          "name": "Update Player Display Name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"displayName updated\", () => pm.expect(body.displayName).to.eql(\"Updated Moderator Name\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"Updated Moderator Name\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}"] }
+          }
+        },
+        {
+          "name": "Get Player Stats",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"fresh player has zeroed stats\", () => {",
+                  "  pm.expect(body.totalShifts).to.eql(0);",
+                  "  pm.expect(body.accuracyScore).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}/stats", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Get Player Rank",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"percentile is between 0 and 100\", () => {",
+                  "  pm.expect(body.percentile).to.be.at.least(0);",
+                  "  pm.expect(body.percentile).to.be.at.most(100);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}/rank", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}", "rank"] }
+          }
+        },
+        {
+          "name": "Delete Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}"] }
+          }
+        },
+        {
+          "name": "Get Deleted Player Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404 after delete\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is PLAYER_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"PLAYER_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{playerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{playerId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Seed Player For Duplicate Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"seed player created or already exists\", () => {",
+                  "  pm.expect([201, 409]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"discord-duplicate-seed\",\n  \"displayName\": \"Seed Moderator\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Register Duplicate Discord Id Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is DUPLICATE_DISCORD_ID\", () => pm.expect(body.error).to.eql(\"DUPLICATE_DISCORD_ID\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"discord-duplicate-seed\",\n  \"displayName\": \"Another Name\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Register Player Missing DiscordId Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"displayName\": \"No Discord Id\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Get Player With Invalid Uuid Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is INVALID_PATH_VARIABLE\", () => pm.expect(body.error).to.eql(\"INVALID_PATH_VARIABLE\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/not-a-uuid", "host": ["{{baseUrl}}"], "path": ["players", "not-a-uuid"] }
+          }
+        },
+        {
+          "name": "Get Nonexistent Player Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is PLAYER_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"PLAYER_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/players/00000000-0000-0000-0000-000000000000",
+              "host": ["{{baseUrl}}"],
+              "path": ["players", "00000000-0000-0000-0000-000000000000"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Mock Events (Grade 9 — decision.evaluated)",
+      "item": [
+        {
+          "name": "Register Player For Mock Event",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"discordId\", \"discord-mockevent-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"starts at level 1 with 0 xp\", () => {",
+                  "  pm.expect(body.xp).to.eql(0);",
+                  "  pm.expect(body.level).to.eql(1);",
+                  "  pm.expect(body.rank).to.eql(\"RECRUIT\");",
+                  "});",
+                  "pm.collectionVariables.set(\"decisionPlayerId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"{{discordId}}\",\n  \"displayName\": \"Mock Event Moderator\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/players", "host": ["{{baseUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Fire Mock Decision Evaluated Event (correct, xp=250)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player After Mock Event Reflects Xp And Rank",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"xp/level/rank updated from the event\", () => {",
+                  "  pm.expect(body.xp).to.eql(250);",
+                  "  pm.expect(body.level).to.eql(3);",
+                  "  pm.expect(body.rank).to.eql(\"MODERATOR\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
+          }
+        },
+        {
+          "name": "Get Player Stats After Mock Event Reflects Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"correctDecisions incremented\", () => {",
+                  "  pm.expect(body.correctDecisions).to.eql(1);",
+                  "  pm.expect(body.incorrectDecisions).to.eql(0);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}/stats", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Replay Same Event Id Is Deduped",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is still 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player After Replay Is Unchanged",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"xp did not double-award\", () => pm.expect(body.xp).to.eql(250));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
+          }
+        },
+        {
+          "name": "Fire Second Distinct Event (incorrect, xp=10)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": false,\n  \"xpAwarded\": 10,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Get Player Stats After Second Event",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"both correct and incorrect decisions tracked\", () => {",
+                  "  pm.expect(body.correctDecisions).to.eql(1);",
+                  "  pm.expect(body.incorrectDecisions).to.eql(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}/stats", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Mock Event For Nonexistent Player Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is PLAYER_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"PLAYER_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"00000000-0000-0000-0000-000000000000\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 50,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
+        },
+        {
+          "name": "Delete Mock Event Test Player",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/players/{{decisionPlayerId}}", "host": ["{{baseUrl}}"], "path": ["players", "{{decisionPlayerId}}"] }
+          }
+        }
+      ]
+    }
+  ]
+}
