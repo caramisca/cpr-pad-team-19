@@ -1,0 +1,1324 @@
+{
+  "info": {
+    "name": "discord-dms-service",
+    "description": "Notification endpoints for discord-dms-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder plays one shift through POST /internal/events/{eventType}, which delivers the consumed events until the message broker exists.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8088",
+      "type": "string"
+    },
+    {
+      "key": "recipientId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "failedNotificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionStartedEventId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "moderatorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionStartedNotificationIds",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionStartedNotificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "applicantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "verdictNotificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionClosedNotificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "longMessage",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "seededNotificationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Get Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"service and Redis are healthy\", () => {",
+                  "  pm.expect(body.status).to.eql(\"Healthy\");",
+                  "  pm.expect(body.service).to.eql(\"discord-dms-service\");",
+                  "  pm.expect(body.checks.redis).to.eql(\"Healthy\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"recipientId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"notification is queued\", () => {",
+                  "  pm.expect(body.id).to.be.a(\"string\");",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.createdAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"Location points at the delivery status\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/notifications/\" + body.id + \"/status\"));",
+                  "pm.collectionVariables.set(\"notificationId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{recipientId}}\",\n  \"type\": \"VERDICT\",\n  \"message\": \"Your application to join the server was accepted.\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Notification Status",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reports the delivery status\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"notificationId\"));",
+                  "  pm.expect([\"QUEUED\", \"RATE_LIMITED\", \"SENT\"]).to.include(body.status);",
+                  "  pm.expect(body.attempts).to.be.a(\"number\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notificationId}}",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns the queued message\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"notificationId\"));",
+                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"recipientId\"));",
+                  "  pm.expect(body.type).to.eql(\"VERDICT\");",
+                  "  pm.expect(body.message).to.eql(\"Your application to join the server was accepted.\");",
+                  "  pm.expect(body.metadata).to.eql({ source: \"postman\" });",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message To Recipient With Closed DMs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"notification is queued\", () => {",
+                  "  pm.expect(body.id).to.be.a(\"string\");",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.createdAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"Location points at the delivery status\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/notifications/\" + body.id + \"/status\"));",
+                  "pm.collectionVariables.set(\"failedNotificationId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"00000000-0000-0000-0000-000000000403\",\n  \"type\": \"VERDICT\",\n  \"message\": \"Your application to join the server was accepted.\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Failed Notification",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Give the delivery worker time to make its first attempt.",
+                  "setTimeout(() => {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Discord refused the message for good\", () => {",
+                  "  pm.expect(body.status).to.eql(\"FAILED\");",
+                  "  pm.expect(body.attempts).to.eql(1);",
+                  "  pm.expect(body.nextAttemptAt).to.eql(null);",
+                  "  pm.expect(body.lastError).to.include(\"403\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{failedNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{failedNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Retry Failed Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"queued again with a fresh attempt budget\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"failedNotificationId\"));",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.attempts).to.eql(0);",
+                  "});",
+                  "pm.test(\"Location points at the delivery status\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/notifications/\" + body.id + \"/status\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{failedNotificationId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{failedNotificationId}}",
+                "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{failedNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{failedNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Deleted Notification Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{failedNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{failedNotificationId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Event Delivery",
+      "item": [
+        {
+          "name": "Deliver Session Started",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionStartedEventId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"sessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"one notification is queued for the moderator\", () => {",
+                  "  pm.expect(body.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
+                  "  pm.expect(body.duplicate).to.eql(false);",
+                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
+                  "});",
+                  "pm.collectionVariables.set(\"sessionStartedNotificationIds\", JSON.stringify(body.notificationIds));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{sessionStartedEventId}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"startedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/session.started",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session.started"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Redeliver Session Started",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the redelivery is recognised and changes nothing\", () => {",
+                  "  pm.expect(body.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
+                  "  pm.expect(body.duplicate).to.eql(true);",
+                  "  pm.expect(JSON.stringify(body.notificationIds)).to.eql(pm.collectionVariables.get(\"sessionStartedNotificationIds\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{sessionStartedEventId}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"startedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/session.started",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session.started"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Session Started Notification",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionStartedNotificationId\", JSON.parse(pm.collectionVariables.get(\"sessionStartedNotificationIds\"))[0]);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the moderator is told the shift has started\", () => {",
+                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
+                  "  pm.expect(body.type).to.eql(\"SESSION_STARTED\");",
+                  "  pm.expect(body.message).to.include(\"has started\");",
+                  "});",
+                  "pm.test(\"metadata traces the message back to the event\", () => {",
+                  "  pm.expect(body.metadata.eventType).to.eql(\"session.started\");",
+                  "  pm.expect(body.metadata.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
+                  "  pm.expect(body.metadata.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{sessionStartedNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{sessionStartedNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Verdict Issued",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"applicantId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"decisionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"one notification is queued for the applicant\", () => {",
+                  "  pm.expect(body.duplicate).to.eql(false);",
+                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
+                  "});",
+                  "pm.collectionVariables.set(\"verdictNotificationId\", body.notificationIds[0]);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{decisionId}}\",\n  \"applicantId\": \"{{applicantId}}\",\n  \"action\": \"REJECT\",\n  \"correct\": true,\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/verdict.issued",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "verdict.issued"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Verdict Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the applicant is told the decision and the reason\", () => {",
+                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"applicantId\"));",
+                  "  pm.expect(body.type).to.eql(\"VERDICT\");",
+                  "  pm.expect(body.message).to.include(\"rejected\");",
+                  "  pm.expect(body.message).to.include(\"Reasons:\");",
+                  "});",
+                  "pm.test(\"metadata traces the message back to the event\", () => {",
+                  "  pm.expect(body.metadata.eventType).to.eql(\"verdict.issued\");",
+                  "  pm.expect(body.metadata.decisionId).to.eql(pm.collectionVariables.get(\"decisionId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{verdictNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{verdictNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Ruleset Updated",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"one notification is queued for each moderator with an open shift\", () => {",
+                  "  pm.expect(body.duplicate).to.eql(false);",
+                  "  pm.expect(body.notificationIds.length).to.be.at.least(1);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"rulesetId\": \"{{$guid}}\",\n  \"version\": 2,\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"changedFields\": [\n    \"ALLOWED_FACULTY\"\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/ruleset.updated",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "ruleset.updated"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Session Closed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"one notification is queued for the moderator of the session\", () => {",
+                  "  pm.expect(body.duplicate).to.eql(false);",
+                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
+                  "});",
+                  "pm.collectionVariables.set(\"sessionClosedNotificationId\", body.notificationIds[0]);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"closedAt\": \"{{$isoTimestamp}}\",\n  \"summary\": {\n    \"applicantsProcessed\": 2,\n    \"score\": 25\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/session.closed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session.closed"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Session Closed Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the moderator of the session gets the summary\", () => {",
+                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
+                  "  pm.expect(body.type).to.eql(\"SESSION_CLOSED\");",
+                  "  pm.expect(body.message).to.include(\"You processed 2 applicants\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{sessionClosedNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{sessionClosedNotificationId}}"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Queue Direct Message Missing Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"Hello\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message With Unknown Type Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{$guid}}\",\n  \"type\": \"ANNOUNCEMENT\",\n  \"message\": \"Your application to join the server was accepted.\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message Longer Than 2000 Characters Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"longMessage\", \"x\".repeat(2001));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{$guid}}\",\n  \"type\": \"VERDICT\",\n  \"message\": \"{{longMessage}}\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message With Malformed Json Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is MALFORMED_REQUEST\", () => pm.expect(body.error).to.eql(\"MALFORMED_REQUEST\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"recipientId\": "
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Direct Message As Plain Text Returns 415",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is UNSUPPORTED_MEDIA_TYPE\", () => pm.expect(body.error).to.eql(\"UNSUPPORTED_MEDIA_TYPE\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "text/plain"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "Hello"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Unknown Notification Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Seed Notification For Retry Check",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"notification is queued\", () => {",
+                  "  pm.expect(body.id).to.be.a(\"string\");",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.createdAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"Location points at the delivery status\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/notifications/\" + body.id + \"/status\"));",
+                  "pm.collectionVariables.set(\"seededNotificationId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{$guid}}\",\n  \"type\": \"VERDICT\",\n  \"message\": \"Your application to join the server was accepted.\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Retry Notification That Has Not Failed Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FAILED\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{seededNotificationId}}/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{seededNotificationId}}",
+                "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Retry Unknown Notification Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/00000000-0000-0000-0000-000000000000/retry",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "00000000-0000-0000-0000-000000000000",
+                "retry"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Unknown Notification Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Notification With Invalid Uuid Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "not-a-uuid"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Unknown Event Type Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/applicant.arrived",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "applicant.arrived"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Deliver Event Missing Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/events/session.started",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "events",
+                "session.started"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Replace Direct Message With Put Returns 405",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is METHOD_NOT_ALLOWED\", () => pm.expect(body.error).to.eql(\"METHOD_NOT_ALLOWED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"recipientId\": \"{{$guid}}\",\n  \"type\": \"VERDICT\",\n  \"message\": \"Your application to join the server was accepted.\",\n  \"metadata\": {\n    \"source\": \"postman\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/notifications/dm",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "dm"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
