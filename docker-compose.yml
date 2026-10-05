@@ -3,7 +3,8 @@
 # Points only at images already pushed to DockerHub - never at local Dockerfiles - per the CPR's
 # Lab 1 requirement. Wires up all 8 services: server-rules-service/university-record-service
 # (Diana), applicant-service/credential-service (Mihai), moderation-service/discord-dms-service
-# (Andi), player-service/server-moderation-session-service (Daria).
+# (Andi), player-service/server-moderation-session-service (Daria), plus gateway-service, the
+# single entry point on port 8080 (Lab 2).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
@@ -254,6 +255,48 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
+
+  # Single entry point of the system (Lab 2). Clients call http://localhost:8080 with the paths from
+  # the communication contract, and the gateway forwards each request to the service that owns it.
+  gateway-service:
+    image: drateeva/gateway-service:lab2
+    ports:
+      - "8080:8080"
+    environment:
+      PLAYER_SERVICE_URL: http://player-service:8081
+      SESSION_SERVICE_URL: http://server-moderation-session-service:8082
+      APPLICANT_SERVICE_URL: http://applicant-service:8083
+      CREDENTIAL_SERVICE_URL: http://credential-service:8084
+      RULES_SERVICE_URL: http://server-rules-service:8085
+      RECORD_SERVICE_URL: http://university-record-service:8086
+      MODERATION_SERVICE_URL: http://moderation-service:8087
+      DMS_SERVICE_URL: http://discord-dms-service:8088
+    # The image has no curl, so the healthcheck uses Python, which it does have.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # Started, not healthy: the gateway only connects to a service when a request for it arrives,
+    # and answers 502 UPSTREAM_UNAVAILABLE while that service is still starting.
+    depends_on:
+      player-service:
+        condition: service_started
+      server-moderation-session-service:
+        condition: service_started
+      applicant-service:
+        condition: service_started
+      credential-service:
+        condition: service_started
+      server-rules-service:
+        condition: service_started
+      university-record-service:
+        condition: service_started
+      moderation-service:
+        condition: service_started
+      discord-dms-service:
+        condition: service_started
 
 volumes:
   moderation-postgres-data:
