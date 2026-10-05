@@ -1,0 +1,123 @@
+@startuml
+skinparam defaultFontName Arial
+skinparam roundcorner 8
+skinparam shadowing false
+skinparam packageTitleFontStyle bold
+skinparam componentStyle uml2
+
+title Student ID, Please — Distributed Microservices Architecture (Team 19) — Lab 2
+
+' Color Definitions matching architecture-diagram-2.png and Lab 2 additions
+!define JAVA_COLOR #A1D929
+!define CSHARP_COLOR #C490E4
+!define PYTHON_COLOR #FFDE59
+!define DB_COLOR #E0E0E0
+!define BROKER_COLOR #FFDAB9
+
+package "Client Layer" as client_layer {
+    actor "Junior Mod Chat" as junior_mod
+    actor "Moderator UI" as mod_ui
+}
+
+package "Edge & Ingress Layer (Banned Language: Python)" as edge_layer #FFFDE7 {
+    [gateway-service\n(Port 8080)] as gateway PYTHON_COLOR
+    note right of gateway
+      <b>API Gateway Responsibilities:</b>
+      * Central Reverse Proxy & Request Routing (Grades 5 & 6)
+      * Token Auth & Header Stripping (Grade 10)
+      * Task Timeout & Concurrency Limiting (Grade 8)
+      * WebSocket Connection Negotiation (Grade 7)
+    end note
+}
+
+package "Intake & Authority Layer" as intake_authority_layer {
+    package "Applicant Intake (Mihai)" as applicant_intake #F3E8FD {
+        [applicant-service] as applicant CSHARP_COLOR
+        database "Redis Cache\n(Applicant Data)" as redis_app DB_COLOR
+        applicant -right-> redis_app : ephemeral
+
+        [credential-service] as credential CSHARP_COLOR
+        database "Redis Cache\n(Credentials)" as redis_cred DB_COLOR
+        credential -right-> redis_cred : ephemeral
+    }
+
+    package "Rules & Records Authority (Diana)" as rules_authority #E8F8F5 {
+        [university-record-service] as records JAVA_COLOR
+        database "PostgreSQL\n(Registry DB)" as pg_rec DB_COLOR
+        records -right-> pg_rec : read-only
+
+        [server-rules-service] as rules JAVA_COLOR
+        database "MongoDB\n(Rulesets DB)" as mongo_rules DB_COLOR
+        rules -right-> mongo_rules : read/write
+    }
+}
+
+package "Session & Delivery Layer" as session_delivery_layer {
+    package "Decision Service (Andi)" as decision_service #F3E8FD {
+        [moderation-service] as moderation CSHARP_COLOR
+        database "PostgreSQL\n(Audit DB)" as pg_mod DB_COLOR
+        moderation -right-> pg_mod : read/write
+    }
+
+    package "Discord DMs (Andi)" as discord_dms #F3E8FD {
+        [discord-dms-service] as dms CSHARP_COLOR
+        database "In-Memory\n(Outbox Cache)" as mem_dms DB_COLOR
+        dms -right-> mem_dms : queue
+    }
+
+    package "Session Service (Daria)" as session_service #E8F8F5 {
+        [server-moderation-session-service] as session JAVA_COLOR
+        database "PostgreSQL\n(Session DB)" as pg_sess DB_COLOR
+        session -right-> pg_sess : read/write
+    }
+}
+
+package "Progression & Ranking (Daria)" as player_service_pkg #E8F8F5 {
+    [player-service] as player JAVA_COLOR
+    database "PostgreSQL\n(Player DB)" as pg_player DB_COLOR
+    player -right-> pg_player : read/write
+}
+
+queue "Message Broker\n(RabbitMQ / Redis PubSub)" as broker BROKER_COLOR
+
+' 1. External Client Interactions
+mod_ui --> gateway : 1. Submit Decisions, Shift Actions, Stats (REST)
+junior_mod --> gateway : 1. POST /api/v1/ws/negotiate
+junior_mod ..> dms : 2. Direct WebSockets Live Chat\n(ws://localhost:8088/ws/chat?ticket=...)
+
+' 2. Client-to-Service Forwarding via Gateway
+gateway --> session : forward /sessions
+gateway --> moderation : forward /decisions
+gateway --> player : forward /players
+
+' 3. Service-to-Service REST Requests via Gateway (Grade 6)
+session --> gateway : GET /applicants/next\nGET /rulesets/active
+applicant --> gateway : POST /credentials/issue
+credential --> gateway : POST /records/students/lookup
+moderation --> gateway : GET /credentials/{id}\nGET /rulesets/active\nGET /records/students/{id}
+
+gateway --> applicant : route to /applicants
+gateway --> credential : route to /credentials
+gateway --> rules : route to /rulesets
+gateway --> records : route to /records
+
+' 4. Asynchronous Domain Events (Broker)
+moderation ..> broker : Publish:\n- decision.recorded\n- decision.evaluated\n- verdict.issued
+session ..> broker : Publish:\n- session.started\n- session.closed
+rules ..> broker : Publish:\n- ruleset.updated
+
+broker ..> session : Consume decision.recorded\n(Advance queue)
+broker ..> player : Consume decision.evaluated\n(Update XP & Rank)
+broker ..> dms : Consume verdict.issued &\nsession announcements
+
+legend bottom right
+|= Color |= Description |
+|<#A1D929>| Java 17 (Spring Boot 3) — Daria & Diana |
+|<#C490E4>| C# (.NET 8 / ASP.NET Core) — Mihai & Andi |
+|<#FFDE59>| Python 3.12 (FastAPI) — Banned Language / API Gateway |
+|<#E0E0E0>| Dedicated Database Entity (Database-per-Service) |
+|<#FFDAB9>| Message Broker (Async Event Bus) |
+|-->| Synchronous REST Request (via Gateway) |
+|..>| Asynchronous Domain Event / Direct WebSocket |
+endlegend
+@enduml
