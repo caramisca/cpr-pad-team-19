@@ -2,11 +2,11 @@
 
 Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (FAF.PAD21.1, Autumn 2026).
 
-A distributed system of 8 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
+A distributed system of 9 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
 ## Team Definition & Microservice Allocation
 
-The team works in **2 languages**, split by member pair (4 microservices per pair, 2 microservices per member):
+The team works in **2 polyglot backend languages** (Java and C#) for domain services, with an **API Gateway** implemented in Python (the previously banned language) as required by Laboratory 2:
 
 | Member | Assigned Service | Tech Stack | Storage Engine |
 | :--- | :--- | :--- | :--- |
@@ -14,6 +14,7 @@ The team works in **2 languages**, split by member pair (4 microservices per pai
 | **Mihai** | `applicant-service`<br>`credential-service` | C# (.NET 8) | Redis / In-Memory |
 | **Diana** | `server-rules-service`<br>`university-record-service` | Java (Spring Boot) | MongoDB / PostgreSQL |
 | **Andi** | `moderation-service`<br>`discord-dms-service` | C# (.NET 8) | PostgreSQL / Redis |
+| **Team 19 (All)** | `gateway-service` (API Gateway) | Python 3.12 (FastAPI) | In-Memory / Stateless |
 
 ## Service Boundaries
 
@@ -139,6 +140,19 @@ Owner: Andi — C# (.NET 8) — Redis
   `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`.
 - **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
 
+### 9. `gateway-service` (API Gateway)
+
+Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
+
+- **Encapsulates:** the single unified ingress point and reverse proxy for the distributed system. Central
+  reverse proxying, client-to-service and service-to-service routing, token authorization and header
+  stripping, request timeout enforcement, concurrency limiting, and WebSocket connection ticket negotiation.
+- **Owns:** the dynamic routing table, rate limiting semaphores, and short-lived connection tickets.
+- **Does not own:** any domain business logic, persistent application datastores, or direct background
+  event broker subscriptions.
+- **Exposes:** `/api/v1/**` (proxied to downstream services), `POST /api/v1/ws/negotiate`, `GET /health`.
+- **Calls:** all downstream services over HTTP.
+
 
 ## Technologies & Communication Patterns
 
@@ -149,17 +163,23 @@ most.
 
 | Repo | Service | Language / Framework | Sync communication | Async communication |
 |---|---|---|---|---|
+| `gateway-service` | API Gateway | Python 3.12 (FastAPI / Uvicorn) | Central reverse proxy for all client-to-service and service-to-service REST requests; WebSocket ticket negotiation (`POST /api/v1/ws/negotiate`) | — |
 | `player-service` | Player | Java (Spring Boot) | REST CRUD (profile, rank, stats lookup) | Consumes `decision.evaluated` to update score/rank/penalties |
 | `server-moderation-session-service` | Session | Java (Spring Boot) | REST to open/close a shift, pull next applicant, assign moderator/junior-mod roles | Publishes `session.started`/`session.closed`; consumes `decision.recorded` to advance the queue |
 | `server-rules-service` | Server Rules | Java (Spring Boot) | REST to read active ruleset/revisions | Publishes `ruleset.updated` for services that need to react to mid-shift rule changes |
 | `university-record-service` | University Record | Java (Spring Boot) | REST for authoritative student/faculty/enrolment lookups | — (read-mostly system of record; no events published) |
-| `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service synchronously to attach documents | — |
-| `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service synchronously to derive authentic fields | — |
-| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record synchronously to gather everything a verdict needs | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume, and `decision.amended`/`decision.voided` when a call is corrected |
+| `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service via Gateway to attach documents | — |
+| `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service via Gateway to derive authentic fields | — |
+| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record via Gateway | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume, and `decision.amended`/`decision.voided` when a call is corrected |
 | `discord-dms-service` | Discord DMs | C# (.NET 8) | WebSocket for real-time moderator ↔ junior-mod chat channels (`#enrollment-check`, `#faculty-check`, `#general-mod-chat`) | Purely event-driven for outbound notifications: consumes `verdict.issued`, `session.started`/`closed`, `ruleset.updated`; no service calls it synchronously |
 
 **Why this split:**
 
+- **Python 3.12 (FastAPI / Uvicorn)** for `gateway-service`: implemented in the previously banned language
+  per Laboratory 2 Grade 5 requirements (*"Initialize the new service – Gateway – which will serve as a
+  point of entry in your system. Use the banned language for that"*). FastAPI was selected for its
+  high-performance asynchronous ASGI event loop, lightweight non-blocking HTTP proxying via `httpx`,
+  and clean middleware architecture for request timeouts, concurrency throttling, and token authorization.
 - **Java (Spring Boot)** for Player, Session, Rules, University Record: these hold the most
   structured, long-lived, relational domain data (player progression, shift/queue state, versioned
   rulesets, the authoritative enrolment registry) and benefit from Spring's mature ecosystem for
@@ -171,12 +191,9 @@ most.
   Moderation is the single most latency-sensitive call in the system (a moderator's accept/deny
   should never feel slow), and Discord DMs is a connection-heavy delivery/chat edge where .NET's
   async I/O and lower per-instance overhead are a good fit.
-- **Python was excluded** across both stacks to keep the codebase statically typed end-to-end,
-  which matters for a system where a type error in credential or verdict handling would be a
-  correctness bug, not just a runtime inconvenience.
 - **WebSockets** are used specifically for `discord-dms-service`'s moderator ↔ junior-mod chat,
-  since that interaction is inherently real-time and bidirectional — REST elsewhere, since most
-  other operations are simple request/response.
+  since that interaction is inherently real-time and bidirectional — negotiated via Gateway, but connected
+  directly to prevent Gateway thread starvation.
 - **Async events** are used wherever a service shouldn't block on, or depend on the availability
   of, a downstream consumer — most notably after a verdict is produced in Moderation Service
   (scoring, queue advancement, and Discord delivery all react independently) and for rule changes
@@ -185,32 +202,40 @@ most.
 
 ## Architecture Diagram
 
-Solid arrows are synchronous REST calls in the request path. Dashed arrows are asynchronous domain
-events delivered through the message broker.
+Solid arrows represent synchronous REST requests in the request path (all routed via the API Gateway).
+Dashed arrows represent asynchronous domain events delivered through the message broker. The dotted
+arrow denotes direct client WebSocket streaming following Gateway ticket negotiation.
 
-![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram-2.png)
+![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram-3.png)
 
 ### Communication Matrix
 
 | Caller | Callee | Style | Purpose |
 | :--- | :--- | :--- | :--- |
-| `server-moderation-session-service` | `applicant-service` | Sync REST | Pull the next applicant for the shift queue |
-| `server-moderation-session-service` | `server-rules-service` | Sync REST | Read the ruleset in force for the session |
-| `applicant-service` | `credential-service` | Sync REST | Attach a credential bundle to a generated applicant |
-| `credential-service` | `university-record-service` | Sync REST | Derive authentic field values for legitimate applicants |
-| `moderation-service` | `credential-service` | Sync REST | Read the credential presented by the applicant |
-| `moderation-service` | `server-rules-service` | Sync REST | Read the rules the decision is judged against |
-| `moderation-service` | `university-record-service` | Sync REST | Cross-check the applicant against the registry |
-| `moderation-service` | `server-moderation-session-service` | Async event | `decision.recorded` advances the shift queue |
+| `Moderator UI` | `gateway-service` | Sync REST | External ingress for shift operations, decisions, and player stats |
+| `Junior Mod Chat` | `gateway-service` | Sync REST | Request WebSocket ticket negotiation (`POST /api/v1/ws/negotiate`) |
+| `Junior Mod Chat` | `discord-dms-service` | WebSocket | Direct real-time chat connection using negotiated ticket (`/ws/chat?ticket=...`) |
+| `gateway-service` | `server-moderation-session-service` | Sync REST | Forward shift lifecycle requests (`/api/v1/sessions/**`) |
+| `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/api/v1/decisions/**`) |
+| `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/api/v1/players/**`) |
+| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift |
+| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Fetch active ruleset in force for current session |
+| `applicant-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Attach issued credential bundle to generated applicant |
+| `credential-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Cross-reference student registry for authentic credentials |
+| `moderation-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Read applicant credential bundle for evaluation |
+| `moderation-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Read ruleset to evaluate decision against |
+| `moderation-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Verify registry enrollment standing for verdict |
+| `moderation-service` | `server-moderation-session-service` | Async event | `decision.recorded` advances shift queue |
 | `moderation-service` | `player-service` | Async event | `decision.evaluated` updates score, rank, penalties |
 | `moderation-service` | `discord-dms-service` | Async event | `verdict.issued` delivers the DM to the applicant |
 | `server-moderation-session-service` | `discord-dms-service` | Async event | `session.started` and `session.closed` notify moderators |
 | `server-rules-service` | `discord-dms-service` | Async event | `ruleset.updated` announces a mid-shift rule change |
 
-Synchronous REST is used only where the caller cannot proceed without the answer: the decision path
-needs the credential, the rules, and the record before a verdict exists. Everything downstream of a
-verdict is asynchronous, so that scoring, queue progression, and Discord delivery cannot slow down
-or fail a moderator's decision.
+Synchronous REST is routed centrally through the API Gateway, ensuring unified access logging, task
+timeouts, concurrency limiting, and authorization enforcement with header stripping. The Gateway also
+mediates WebSocket handshake requests, returning direct connection tickets so that high-throughput
+bidirectional streams do not burden the Gateway process. Everything downstream of a verdict remains
+asynchronous via the message broker.
 
 `player-service` and `discord-dms-service` are never called synchronously by another service, and
 `discord-dms-service` never calls back into the domain. These two boundaries are deliberately kept
@@ -234,6 +259,7 @@ engine is picked per service based on the shape of the data it owns, not on team
 | `university-record-service` | PostgreSQL | Enrolments and faculties need referential integrity as the system of record. |
 | `moderation-service` | PostgreSQL | Decisions/verdicts/violations form the permanent audit trail and must not be lost. |
 | `discord-dms-service` | Redis | The outbox, the delivery queue, and the processed event ids must survive a restart so that retries continue and redelivered events are not sent twice; entries expire once they are no longer needed. |
+| `gateway-service` | In-Memory / Stateless | Routing table, concurrency control semaphores, and short-lived connection tickets; zero persistent storage required. |
 
 All cross-service data access happens exclusively over the contract published below:
 
