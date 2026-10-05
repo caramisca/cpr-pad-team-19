@@ -29,3 +29,6 @@
 [submodule "services/discord-dms-service"]
 	path = services/discord-dms-service
 	url = https://github.com/blinduandi/discord-dms-service.git
+[submodule "services/gateway-service"]
+	path = services/gateway-service
+	url = https://github.com/diana7376/gateway-service
