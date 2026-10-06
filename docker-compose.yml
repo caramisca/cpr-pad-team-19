@@ -75,6 +75,8 @@ services:
     image: diana7376/server-rules-service:0.3.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
+      MAX_THREADS: ${RULES_MAX_THREADS:-200}
+      REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
       - rules-mongo
 
@@ -92,6 +94,8 @@ services:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
       DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
+      MAX_THREADS: ${RECORD_MAX_THREADS:-200}
+      REQUEST_TIMEOUT_MS: ${RECORD_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
       - record-postgres
 
