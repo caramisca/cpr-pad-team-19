@@ -1227,7 +1227,7 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
 | `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL` (see `docker-compose.yml`). Port `8080`. |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL` (see `docker-compose.yml`). Port `8080`. |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI` (see the service's `.env.example`). Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
@@ -1308,11 +1308,13 @@ cp .env.example .env   # fill in real values - .env is gitignored, never commit 
 docker compose up
 ```
 
-`server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
-`http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
-DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are inlined above
-under [Endpoint Contracts](#endpoint-contracts) — both service repos are private, so this CPR copy
-is the only one teammates without repo access can actually read.
+Both services are only reachable through the API Gateway at `http://localhost:8080` — their internal
+ports (`8085`, `8086`) are not published to the host. Use the endpoint paths from the contract
+section above, prefixed with the gateway address: for example `GET http://localhost:8080/rulesets/active`
+or `GET http://localhost:8080/records/faculties`. Postman collections for both are in `docs/postman/`,
+and the underlying DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both
+are inlined above under [Endpoint Contracts](#endpoint-contracts) — both service repos are private,
+so this CPR copy is the only one teammates without repo access can actually read.
 
 ### Running `applicant-service` and `credential-service`
 
