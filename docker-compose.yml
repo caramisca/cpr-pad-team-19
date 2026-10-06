@@ -255,7 +255,7 @@ services:
   # Single entry point of the system (Lab 2). Clients call http://localhost:8080 with the paths from
   # the communication contract, and the gateway forwards each request to the service that owns it.
   gateway-service:
-    image: drateeva/gateway-service:lab2
+    image: diana7376/gateway-service:0.3.0
     ports:
       - "8080:8080"
     environment:
