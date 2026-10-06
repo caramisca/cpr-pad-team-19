@@ -72,9 +72,7 @@ services:
       retries: 12
 
   server-rules-service:
-    image: diana7376/server-rules-service:0.2.0
-    ports:
-      - "8085:8085"
+    image: diana7376/server-rules-service:0.3.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
     depends_on:
@@ -89,9 +87,7 @@ services:
       - rules-mongo-data:/data/db
 
   university-record-service:
-    image: diana7376/university-record-service:0.2.0
-    ports:
-      - "8086:8086"
+    image: diana7376/university-record-service:0.3.0
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
