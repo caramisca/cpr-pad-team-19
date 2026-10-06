@@ -1141,6 +1141,7 @@ All branch names must follow one of these prefixes:
 - `fix/<scope>/<description>` — Bug fixes or schema corrections (e.g. `fix/rules/expiry-tolerance`).
 - `docs/<scope>/<description>` — Documentation, README updates, or diagrams (e.g. `docs/readme/contract-sync`).
 - `chore/<scope>/<description>` — Repository maintenance, gitignore, or submodule updates (e.g. `chore/submodule/link-services`).
+- `ci/<scope>/<description>` — CI/CD pipeline additions or changes (e.g. `ci/rules/dockerhub-push`).
 
 ### Branch Protection & GitHub Rulesets
 
