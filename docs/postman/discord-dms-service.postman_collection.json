@@ -1,13 +1,28 @@
 {
   "info": {
     "name": "discord-dms-service",
-    "description": "Notification endpoints for discord-dms-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder plays one shift through POST /internal/events/{eventType}, which delivers the consumed events until the message broker exists.",
+    "description": "Notification endpoints for discord-dms-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder plays one shift through POST /internal/events/{eventType}, which delivers the consumed events until the message broker exists. The Chat folder asks the gateway for a chat ticket through POST /ws/negotiate: open the url it returns with a WebSocket client before expiresAt to join the chat directly on discord-dms-service.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8088",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -79,14 +94,24 @@
       "key": "seededNotificationId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "chatSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "chatUrl",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
     {
-      "name": "Happy Path",
+      "name": "Health Check",
       "item": [
         {
-          "name": "Get Health",
+          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
           "event": [
             {
               "listen": "test",
@@ -95,11 +120,7 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"service and Redis are healthy\", () => {",
-                  "  pm.expect(body.status).to.eql(\"Healthy\");",
-                  "  pm.expect(body.service).to.eql(\"discord-dms-service\");",
-                  "  pm.expect(body.checks.redis).to.eql(\"Healthy\");",
-                  "});"
+                  "pm.test(\"status is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
                 ]
               }
             }
@@ -116,7 +137,12 @@
               ]
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Happy Path",
+      "item": [
         {
           "name": "Queue Direct Message",
           "event": [
@@ -788,6 +814,61 @@
       ]
     },
     {
+      "name": "Chat",
+      "item": [
+        {
+          "name": "Negotiate Chat Ticket",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"chatSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"url points directly at the chat of discord-dms-service\", () => pm.expect(body.url).to.match(/^wss?:\\/\\/[^/]+\\/ws\\/chat\\?ticket=[^&]+$/));",
+                  "pm.test(\"the ticket has not expired yet\", () => pm.expect(Date.parse(body.expiresAt)).to.be.above(Date.now()));",
+                  "pm.collectionVariables.set(\"chatUrl\", body.url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{chatSessionId}}\",\n  \"userId\": \"junior-mod-42\",\n  \"channel\": \"general-mod-chat\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ws/negotiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Error Cases",
       "item": [
         {
@@ -1274,6 +1355,46 @@
                 "internal",
                 "events",
                 "session.started"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Negotiate Chat Ticket With Unknown Channel Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{$guid}}\",\n  \"userId\": \"junior-mod-42\",\n  \"channel\": \"#general-mod-chat\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/ws/negotiate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ws",
+                "negotiate"
               ]
             }
           }
