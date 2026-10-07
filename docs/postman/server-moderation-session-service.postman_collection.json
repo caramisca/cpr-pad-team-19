@@ -460,7 +460,8 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"queuePosition is 3\", () => pm.expect(body.queuePosition).to.eql(3));"
+                  "pm.test(\"queuePosition is 3\", () => pm.expect(body.queuePosition).to.eql(3));",
+                  "pm.collectionVariables.set(\"lastQueuePosition\", body.queuePosition);"
                 ]
               }
             }
@@ -483,8 +484,9 @@
                   "if (pm.response.code === 200) {",
                   "  const pulls = Number(pm.collectionVariables.get(\"extraPulls\") || 0) + 1;",
                   "  pm.collectionVariables.set(\"extraPulls\", pulls);",
+                  "  pm.collectionVariables.set(\"lastQueuePosition\", pm.response.json().queuePosition);",
                   "  pm.test(\"queue empties within 20 extra pulls\", () => pm.expect(pulls).to.be.below(20));",
-                  "  if (pulls < 20) { postman.setNextRequest(pm.info.requestName); }",
+                  "  if (pulls < 20) { pm.execution.setNextRequest(pm.info.requestName); }",
                   "} else {",
                   "  pm.collectionVariables.set(\"extraPulls\", 0);",
                   "  pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
@@ -544,7 +546,8 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"queueLength is 2\", () => pm.expect(body.queueLength).to.eql(2));",
+                  "const pulled = Number(pm.collectionVariables.get(\"lastQueuePosition\"));",
+                  "pm.test(\"queueLength is every pulled applicant but the resolved one\", () => pm.expect(body.queueLength).to.eql(pulled - 1));",
                   "pm.test(\"applicantsProcessed is 1\", () => pm.expect(body.applicantsProcessed).to.eql(1));"
                 ]
               }
