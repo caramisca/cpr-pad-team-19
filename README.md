@@ -150,7 +150,7 @@ Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
 - **Owns:** the dynamic routing table, rate limiting semaphores, and short-lived connection tickets.
 - **Does not own:** any domain business logic, persistent application datastores, or direct background
   event broker subscriptions.
-- **Exposes:** `/api/v1/**` (proxied to downstream services), `POST /api/v1/ws/negotiate`, `GET /health`.
+- **Exposes:** all downstream service paths (proxied transparently — no prefix added), `GET /health`.
 - **Calls:** all downstream services over HTTP.
 
 
@@ -163,7 +163,7 @@ most.
 
 | Repo | Service | Language / Framework | Sync communication | Async communication |
 |---|---|---|---|---|
-| `gateway-service` | API Gateway | Python 3.12 (FastAPI / Uvicorn) | Central reverse proxy for all client-to-service and service-to-service REST requests; WebSocket ticket negotiation (`POST /api/v1/ws/negotiate`) | — |
+| `gateway-service` | API Gateway | Python 3.12 (FastAPI / Uvicorn) | Central reverse proxy for all client-to-service and service-to-service REST requests; transparent path forwarding with no prefix added | — |
 | `player-service` | Player | Java (Spring Boot) | REST CRUD (profile, rank, stats lookup) | Consumes `decision.evaluated` to update score/rank/penalties |
 | `server-moderation-session-service` | Session | Java (Spring Boot) | REST to open/close a shift, pull next applicant, assign moderator/junior-mod roles | Publishes `session.started`/`session.closed`; consumes `decision.recorded` to advance the queue |
 | `server-rules-service` | Server Rules | Java (Spring Boot) | REST to read active ruleset/revisions | Publishes `ruleset.updated` for services that need to react to mid-shift rule changes |
@@ -213,11 +213,11 @@ arrow denotes direct client WebSocket streaming following Gateway ticket negotia
 | Caller | Callee | Style | Purpose |
 | :--- | :--- | :--- | :--- |
 | `Moderator UI` | `gateway-service` | Sync REST | External ingress for shift operations, decisions, and player stats |
-| `Junior Mod Chat` | `gateway-service` | Sync REST | Request WebSocket ticket negotiation (`POST /api/v1/ws/negotiate`) |
+| `Junior Mod Chat` | `gateway-service` | Sync REST | Request WebSocket ticket negotiation |
 | `Junior Mod Chat` | `discord-dms-service` | WebSocket | Direct real-time chat connection using negotiated ticket (`/ws/chat?ticket=...`) |
-| `gateway-service` | `server-moderation-session-service` | Sync REST | Forward shift lifecycle requests (`/api/v1/sessions/**`) |
-| `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/api/v1/decisions/**`) |
-| `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/api/v1/players/**`) |
+| `gateway-service` | `server-moderation-session-service` | Sync REST | Forward shift lifecycle requests (`/sessions/**`) |
+| `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/decisions/**`) |
+| `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/players/**`) |
 | `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift |
 | `server-moderation-session-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Fetch active ruleset in force for current session |
 | `applicant-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Attach issued credential bundle to generated applicant |
@@ -1141,6 +1141,7 @@ All branch names must follow one of these prefixes:
 - `fix/<scope>/<description>` — Bug fixes or schema corrections (e.g. `fix/rules/expiry-tolerance`).
 - `docs/<scope>/<description>` — Documentation, README updates, or diagrams (e.g. `docs/readme/contract-sync`).
 - `chore/<scope>/<description>` — Repository maintenance, gitignore, or submodule updates (e.g. `chore/submodule/link-services`).
+- `ci/<scope>/<description>` — CI/CD pipeline additions or changes (e.g. `ci/rules/dockerhub-push`).
 
 ### Branch Protection & GitHub Rulesets
 
@@ -1226,15 +1227,14 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
 | `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL` (see `docker-compose.yml`). Port `8080`. |
-| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI` (see the service's `.env.example`). Port `8085` (internal only — route through gateway on `8080`). |
-| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`). Port `8086` (internal only — route through gateway on `8080`). |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL` (see `docker-compose.yml`). Port `8080`. |
+| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
+| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Port `8084`. |
 | `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8081`. |
 | `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8082`. |
 
-Other services will be added here as their owners push images to DockerHub.
 
 ## Getting Started
 
@@ -1307,11 +1307,13 @@ cp .env.example .env   # fill in real values - .env is gitignored, never commit 
 docker compose up
 ```
 
-`server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
-`http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
-DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are inlined above
-under [Endpoint Contracts](#endpoint-contracts) — both service repos are private, so this CPR copy
-is the only one teammates without repo access can actually read.
+Both services are only reachable through the API Gateway at `http://localhost:8080` — their internal
+ports (`8085`, `8086`) are not published to the host. Use the endpoint paths from the contract
+section above, prefixed with the gateway address: for example `GET http://localhost:8080/rulesets/active`
+or `GET http://localhost:8080/records/faculties`. Postman collections for both are in `docs/postman/`,
+and the underlying DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both
+are inlined above under [Endpoint Contracts](#endpoint-contracts) — both service repos are private,
+so this CPR copy is the only one teammates without repo access can actually read.
 
 ### Running `applicant-service` and `credential-service`
 
