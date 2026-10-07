@@ -109,18 +109,18 @@ services:
       - record-postgres-data:/var/lib/postgresql/data
 
   applicant-service:
-    image: caramisca/applicant-service:0.2.0
-    ports:
-      - "8083:8083"
+    image: caramisca/applicant-service:0.3.0
     environment:
       Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
       Services__CredentialServiceMode: Http
-      Services__CredentialServiceUrl: http://credential-service:8084
+      Services__CredentialServiceUrl: http://gateway-service:8080
+      MAX_THREADS: ${APPLICANT_MAX_THREADS:-200}
+      REQUEST_TIMEOUT_MS: ${APPLICANT_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
       applicant-seed:
         condition: service_completed_successfully
       credential-service:
-        condition: service_healthy
+        condition: service_started
 
   applicant-redis:
     image: redis:7.4-alpine
@@ -152,13 +152,13 @@ services:
     restart: "no"
 
   credential-service:
-    image: caramisca/credential-service:0.2.0
-    ports:
-      - "8084:8084"
+    image: caramisca/credential-service:0.3.0
     environment:
       Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
       Services__UniversityRecordMode: Http
-      Services__UniversityRecordServiceUrl: http://university-record-service:8086
+      Services__UniversityRecordServiceUrl: http://gateway-service:8080
+      MAX_THREADS: ${CREDENTIAL_MAX_THREADS:-200}
+      REQUEST_TIMEOUT_MS: ${CREDENTIAL_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
       credential-seed:
         condition: service_completed_successfully
