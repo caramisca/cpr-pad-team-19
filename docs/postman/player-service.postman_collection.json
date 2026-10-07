@@ -1,13 +1,24 @@
 {
   "info": {
     "name": "player-service",
-    "description": "CRUD + progression endpoints for player-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{playerId}} captured from the Register Player response.",
+    "description": "CRUD + progression endpoints for player-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{playerId}} captured from the Register Player response. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{apiKey}}", "type": "string" }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8081",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -36,7 +47,7 @@
       "name": "Health Check",
       "item": [
         {
-          "name": "Get Health Status",
+          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
           "event": [
             {
               "listen": "test",
@@ -52,7 +63,7 @@
           ],
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator", "health"] }
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
           }
         }
       ]

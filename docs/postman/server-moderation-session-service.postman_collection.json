@@ -1,13 +1,24 @@
 {
   "info": {
     "name": "server-moderation-session-service",
-    "description": "CRUD endpoints for server-moderation-session-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{sessionId}} captured from the Open Session response.",
+    "description": "CRUD endpoints for server-moderation-session-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{sessionId}} captured from the Open Session response. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{apiKey}}", "type": "string" }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8082",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -36,7 +47,7 @@
       "name": "Health Check",
       "item": [
         {
-          "name": "Get Health Status",
+          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
           "event": [
             {
               "listen": "test",
@@ -52,7 +63,7 @@
           ],
           "request": {
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/actuator/health", "host": ["{{baseUrl}}"], "path": ["actuator", "health"] }
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
           }
         }
       ]
@@ -460,16 +471,26 @@
           }
         },
         {
-          "name": "Pull Applicant 4 Returns 404 Queue Empty",
+          "name": "Pull Applicants Until The Shift Limit Returns 404 Queue Empty",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is QUEUE_EMPTY\", () => pm.expect(body.error).to.eql(\"QUEUE_EMPTY\"));"
+                  "// The shift limit is 3 with the mock applicant client and SESSION_MAX_APPLICANTS_PER_SHIFT (10) with the real one,",
+                  "// so this request repeats itself until the queue is empty, at most 20 times.",
+                  "if (pm.response.code === 200) {",
+                  "  const pulls = Number(pm.collectionVariables.get(\"extraPulls\") || 0) + 1;",
+                  "  pm.collectionVariables.set(\"extraPulls\", pulls);",
+                  "  pm.test(\"queue empties within 20 extra pulls\", () => pm.expect(pulls).to.be.below(20));",
+                  "  if (pulls < 20) { postman.setNextRequest(pm.info.requestName); }",
+                  "} else {",
+                  "  pm.collectionVariables.set(\"extraPulls\", 0);",
+                  "  pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "  const body = pm.response.json();",
+                  "  pm.test(\"error code is QUEUE_EMPTY\", () => pm.expect(body.error).to.eql(\"QUEUE_EMPTY\"));",
+                  "}"
                 ]
               }
             }
