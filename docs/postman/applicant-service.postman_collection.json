@@ -1,18 +1,33 @@
 {
   "info": {
     "name": "applicant-service",
-    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 - Student ID, Please). Runs against the shared docker-compose.yml, whose applicant-seed job loads six demo applicants into the session 5e55a0e0-0000-4000-8000-000000000001; the Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order.",
+    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 — Student ID, Please). Runs against the shared docker-compose.yml through the API Gateway (baseUrl http://localhost:8080) with collection-level Authorization: Bearer {{apiKey}}. The Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8083",
+      "value": "http://localhost:8080",
       "type": "string"
     },
     {
       "key": "credentialBaseUrl",
-      "value": "http://localhost:8084",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -46,7 +61,7 @@
       "name": "Happy Path",
       "item": [
         {
-          "name": "Health",
+          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
           "event": [
             {
               "listen": "test",
@@ -55,10 +70,7 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"service is healthy\", () => {",
-                  "  pm.expect(body.status).to.eql(\"Healthy\");",
-                  "  pm.expect(body.service).to.eql(\"applicant-service\");",
-                  "});"
+                  "pm.test(\"status is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
                 ]
               }
             }

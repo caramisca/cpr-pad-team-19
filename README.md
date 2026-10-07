@@ -1347,8 +1347,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
-| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
-| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Port `8084`. |
+| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
+| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
 | `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`). Port `8081` (internal only — route through the gateway on `8080`). |
 | `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
 
@@ -1482,12 +1482,23 @@ so this CPR copy is the only one teammates without repo access can actually read
 ### Running `applicant-service` and `credential-service`
 
 The same `docker-compose.yml` runs both services, each against its own Redis 7 (append-only
-persistence on the `applicant-redis-data` and `credential-redis-data` volumes), wired to each other
-and to `university-record-service` over HTTP:
+persistence on the `applicant-redis-data` and `credential-redis-data` volumes). As introduced in
+Laboratory 2, all inter-service REST communication is routed through the API Gateway, and neither
+service exposes its port directly to the host:
 
 ```text
-applicant-service :8083 --POST /credentials/issue--> credential-service :8084 --POST /records/students/lookup--> university-record-service :8086
+applicant-service --> gateway-service :8090 (/credentials/issue) --> credential-service
+credential-service --> gateway-service :8090 (/records/students/lookup) --> university-record-service
 ```
+
+Both services are only reachable from the host through the API Gateway at `http://localhost:8080` (e.g.
+`http://localhost:8080/applicants/...` and `http://localhost:8080/credentials/...`). Their internal ports
+(`8083`, `8084`) are private to the Docker network.
+
+Both services enforce request timeouts (returning `504 REQUEST_TIMEOUT`) and concurrent task throttling
+(returning `503 TOO_MANY_REQUESTS` with `Retry-After: 1`), configurable via environment variables in `.env`:
+`APPLICANT_MAX_THREADS`, `APPLICANT_REQUEST_TIMEOUT_MS`, `CREDENTIAL_MAX_THREADS`, `CREDENTIAL_REQUEST_TIMEOUT_MS`
+(defaulting to 200 threads and 5000 ms timeout).
 
 Set `APPLICANT_REDIS_PASSWORD` and `CREDENTIAL_REDIS_PASSWORD` in `.env` (they must not contain `,`),
 then `docker compose up`. Before each service starts, the one-shot `applicant-seed` and
@@ -1497,12 +1508,12 @@ belong to the session `5e55a0e0-0000-4000-8000-000000000001` and cover one case 
 student, another major claiming FAF, a graduate claiming enrollment, an impostor with a real
 student's ID, an honest teaching assistant, and an outsider with an invented ID.
 
-Test them with `docs/postman/applicant-service.postman_collection.json` and
+Test them through the gateway with `docs/postman/applicant-service.postman_collection.json` and
 `docs/postman/credential-service.postman_collection.json`, from Postman or from the command line:
 
 ```bash
-npx newman run docs/postman/credential-service.postman_collection.json
-npx newman run docs/postman/applicant-service.postman_collection.json
+npx newman run docs/postman/credential-service.postman_collection.json --env-var baseUrl=http://localhost:8080
+npx newman run docs/postman/applicant-service.postman_collection.json --env-var baseUrl=http://localhost:8080
 ```
 
 Both services also run on their own, without Docker or other services: each repository's
