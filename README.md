@@ -29,12 +29,12 @@ operations it exposes to the rest of the system.
 Owner: Daria — Java (Spring Boot) — PostgreSQL
 
 - **Encapsulates:** the identity and progression of a moderator (the player). Registration,
-  profile, rank, accuracy score, penalty history, and lifetime statistics.
-- **Owns:** `player`, `player_stats`, `player_penalty` tables.
+  profile, XP, level, rank, accuracy score, and lifetime statistics.
+- **Owns:** `players`, `player_stats`, `processed_events` tables.
 - **Does not own:** shift scheduling, decision correctness, or the rules a decision is judged
   against. It only consumes evaluated outcomes and projects them into a score.
-- **Exposes:** `GET /players/{id}`, `POST /players`, `GET /players/{id}/stats`,
-  `GET /players/{id}/rank`.
+- **Exposes:** `GET /players/{id}`, `POST /players`, `PATCH /players/{id}`, `DELETE /players/{id}`,
+  `GET /players/{id}/stats`, `GET /players/{id}/rank`.
 - **Consumes:** `decision.evaluated` events to recompute score and rank.
 
 ### 2. `server-moderation-session-service`
@@ -42,13 +42,17 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
 Owner: Daria — Java (Spring Boot) — PostgreSQL
 
 - **Encapsulates:** the lifecycle of a moderation shift. Opening and closing a session, the queue
-  of applicants presented during that shift, per-applicant timers, and the shift summary.
-- **Owns:** `session`, `session_queue_entry`, `session_summary` tables.
+  of applicants presented during that shift (when each was presented and resolved), and the shift
+  summary.
+- **Owns:** `sessions`, `session_junior_moderators`, `session_queue_entry`, `session_summary`,
+  `processed_events` tables.
 - **Does not own:** applicant generation, rule content, or verdict evaluation. It orchestrates the
   shift, it does not judge it.
 - **Exposes:** `POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/close`,
-  `GET /sessions/{id}/next-applicant`.
-- **Consumes:** `decision.recorded` events to advance the queue and stop the applicant timer.
+  `DELETE /sessions/{id}`, `GET /sessions/{id}/next-applicant`, and the live stream
+  `GET /sessions/{id}/events` (Server-Sent Events).
+- **Consumes:** `decision.recorded` events to resolve the applicant's queue entry and advance the
+  queue.
 
 ### 3. `applicant-service`
 
@@ -151,6 +155,10 @@ Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
 - **Does not own:** any domain business logic, persistent application datastores, or direct background
   event broker subscriptions.
 - **Exposes:** all downstream service paths (proxied transparently — no prefix added), `GET /health`.
+- **Authorization:** every client request on port `8080` needs `Authorization: Bearer <key>`; the
+  Gateway validates it and never forwards the header. The services call each other through its
+  internal port `8090` (no key, not published to the host). See
+  [`gateway-service` — authorization](#gateway-service--authorization).
 - **Calls:** all downstream services over HTTP.
 
 
@@ -278,6 +286,12 @@ All cross-service data access happens exclusively over the contract published be
 Unless noted otherwise, all endpoints accept and return `application/json`, and error responses share
 the shape `{ "error": "string (machine-readable code)", "message": "string (human-readable detail)" }`.
 
+From Lab 2 on, clients call every endpoint below **through the API Gateway** at
+`http://localhost:8080`, with the same paths and an API key (`Authorization: Bearer <key>`, see
+[`gateway-service` — authorization](#gateway-service--authorization)). The Gateway's own errors
+(`401`, `404 ROUTE_NOT_FOUND`, `502`, `503`, `504`) are listed there; everything else comes
+from the service unchanged.
+
 #### `player-service`
 
 **`POST /players`** — register a new player.
@@ -302,10 +316,26 @@ Response `201 Created`:
 }
 ```
 
+Response `400 Bad Request` (`VALIDATION_ERROR`): `discordId` or `displayName` is missing or blank.
+Response `409 Conflict` (`DUPLICATE_DISCORD_ID`): a player with that `discordId` already exists.
+
 **`GET /players/{id}`** — fetch a player profile.
 
 Response `200 OK`: same shape as the `POST /players` response.
-Response `404 Not Found`: standard error shape.
+Response `404 Not Found`: standard error shape (`PLAYER_NOT_FOUND`).
+
+**`PATCH /players/{id}`** — change the display name. Progression fields (`rank`, `xp`, `level`)
+are never client-writable; they only change through `decision.evaluated`.
+
+Request:
+```json
+{ "displayName": "string" }
+```
+Response `200 OK`: same shape as the `POST /players` response. Response `400 Bad Request`
+(`VALIDATION_ERROR`) or `404 Not Found` (`PLAYER_NOT_FOUND`).
+
+**`DELETE /players/{id}`** — remove a player account. Response `204 No Content`, or `404 Not Found`
+(`PLAYER_NOT_FOUND`).
 
 **`GET /players/{id}/stats`** — fetch lifetime moderation statistics.
 
@@ -334,7 +364,9 @@ Response `200 OK`:
 }
 ```
 
-**Consumes `decision.evaluated`** — recomputes score, rank, and penalties.
+**Consumes `decision.evaluated`** — adds `xpAwarded` to the player's XP (which recomputes level and
+rank) and counts the decision as correct or incorrect in the stats. Penalties are not applied yet:
+the event carries no penalty data.
 ```json
 {
   "eventId": "string (uuid)",
@@ -350,7 +382,19 @@ Response `200 OK`:
 **`POST /internal/mock-events/decision-evaluated`** — no message broker is wired up yet, so this
 endpoint stands in for the `decision.evaluated` consumer above: same request body as the event
 payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Will be replaced by a real broker listener without changing the underlying handler.
+replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing, `404 Not Found`
+(`PLAYER_NOT_FOUND`) when `playerId` is not a registered player. Will be replaced by a real broker
+listener without changing the underlying handler.
+
+**Common to every `player-service` endpoint:**
+- Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`).
+- **Task timeout and concurrent task limit** (Lab 2): a request that runs longer than `TASK_TIMEOUT`
+  (default `10s`) gets `504 Gateway Timeout` (`REQUEST_TIMEOUT`); a request while
+  `MAX_CONCURRENT_TASKS` (default `20`) are running gets `503 Service Unavailable` (`SERVICE_BUSY`)
+  with `Retry-After: 1`, straight away.
+- `GET /actuator/health` returns `{"status":"UP"}` for the Compose healthcheck. It is not routed
+  through the Gateway.
+- Makes no outgoing calls, and has nothing to push to clients live.
 
 #### `server-moderation-session-service`
 
@@ -419,12 +463,39 @@ Response `200 OK`:
   "presentedAt": "string (ISO-8601 datetime)"
 }
 ```
-Response `404 Not Found`: standard error shape, returned when the queue is empty.
+Response `404 Not Found` (`QUEUE_EMPTY`): the shift already presented
+`SESSION_MAX_APPLICANTS_PER_SHIFT` applicants (default `10`). Response `404 Not Found`
+(`SESSION_NOT_FOUND`). Response `409 Conflict` (`SESSION_ALREADY_CLOSED`). Response
+`503 Service Unavailable` (`DEPENDENCY_UNAVAILABLE`): `applicant-service` or `server-rules-service`
+could not be reached through the Gateway, timed out, or answered with an error; nothing is queued.
 
-**Calls:** `applicant-service` to fetch/generate the next applicant; `server-rules-service` to read
-the ruleset currently in force.
+**Calls (Lab 2: always through the Gateway's internal port, `GATEWAY_URL`):**
+`POST /applicants/generate` with `{ "sessionId", "difficulty" }` on `applicant-service` for the next
+applicant, and `GET /rulesets/active` on `server-rules-service` for the ruleset version in force
+(`404 NO_ACTIVE_RULESET` → the applicant is still presented, without a version).
 
-**Consumes `decision.recorded`** — advances the queue and stops the applicant timer.
+**`DELETE /sessions/{id}`** — cancel a shift and remove its record. Response `204 No Content`, or
+`404 Not Found` (`SESSION_NOT_FOUND`).
+
+**`GET /sessions/{id}/events`** — live updates of one shift as **Server-Sent Events** (Lab 2,
+`Content-Type: text/event-stream`, works with a browser `EventSource`). Each `data` is JSON:
+
+| Event | When | `data` |
+| :--- | :--- | :--- |
+| `state` | Right after connecting | Same shape as `GET /sessions/{id}` |
+| `applicant-presented` | After `next-applicant` | `{ "sessionId", "applicantId", "queuePosition", "presentedAt", "queueLength" }` |
+| `decision-recorded` | After a `decision.recorded` resolved an applicant | `{ "sessionId", "applicantId", "action", "recordedAt", "queueLength", "applicantsProcessed" }` |
+| `closed` | After `POST /sessions/{id}/close`; the stream then ends | Same shape as the close response |
+| `deleted` | After `DELETE /sessions/{id}`; the stream then ends | `{ "sessionId" }` |
+
+Events are sent only after the change is committed. A `:keep-alive` comment comes every `15s`; a
+stream lasts at most `30m`, then ends without an error (an `EventSource` reconnects and gets a fresh
+`state`). Errors, as JSON before the stream starts: `404 SESSION_NOT_FOUND`,
+`409 SESSION_ALREADY_CLOSED` (also stops an `EventSource` from reconnecting), and
+`503 SERVICE_BUSY` when `100` streams are already open.
+
+**Consumes `decision.recorded`** — resolves the applicant's queue entry (stores `action` and when it
+was resolved) and counts it in `applicantsProcessed`, which advances the queue.
 ```json
 {
   "eventId": "string (uuid)",
@@ -439,7 +510,9 @@ the ruleset currently in force.
 **`POST /internal/mock-events/decision-recorded`** — no message broker is wired up yet, so this
 endpoint stands in for the `decision.recorded` consumer above: same request body as the event
 payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Will be replaced by a real broker listener without changing the underlying handler.
+replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing; `404 Not Found`
+(`SESSION_NOT_FOUND`, or `QUEUE_ENTRY_NOT_FOUND` when no unresolved queue entry matches the
+applicant). Will be replaced by a real broker listener without changing the underlying handler.
 
 **Publishes `session.started`:**
 ```json
@@ -449,6 +522,23 @@ replay. Will be replaced by a real broker listener without changing the underlyi
 ```json
 { "eventId": "string (uuid)", "sessionId": "string (uuid)", "closedAt": "string (ISO-8601 datetime)", "summary": { "applicantsProcessed": "integer", "score": "number" } }
 ```
+Until the team has a broker, both events go to `discord-dms-service` as
+`POST /internal/events/session.started` / `POST /internal/events/session.closed` through the
+Gateway's internal port, after the commit and off the request thread. A connection error, timeout,
+`5xx` or `429` is retried with the same `eventId` (3 attempts in all). A client of this service
+never waits for or fails because of it.
+
+**Common to every `server-moderation-session-service` endpoint:**
+- Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`); a missing required
+  field: `400 Bad Request` (`VALIDATION_ERROR`).
+- **Task timeout and concurrent task limit** (Lab 2): `504 Gateway Timeout` (`REQUEST_TIMEOUT`)
+  after `TASK_TIMEOUT` (default `10s`); `503 Service Unavailable` (`SERVICE_BUSY`) with
+  `Retry-After: 1` while `MAX_CONCURRENT_TASKS` (default `20`) requests are running. The SSE stream
+  has its own limits (above).
+- `GET /actuator/health` returns `{"status":"UP"}` for the Compose healthcheck. It is not routed
+  through the Gateway.
+- Known gap: `correctDecisions`, `incorrectDecisions` and `score` in the summary stay `0`, because
+  `decision.recorded` carries no verdict; `applicantsProcessed` is counted correctly.
 
 #### `applicant-service`
 
@@ -1107,6 +1197,33 @@ type, `415 UNSUPPORTED_MEDIA_TYPE`.
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
 | `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications or events until it is back. |
 
+#### `gateway-service` — authorization
+
+Lab 2, Grade 10: authorization happens at the Gateway, and the `Authorization` header never reaches
+a service.
+
+- **Clients** (port `8080`, published) send `Authorization: Bearer <key>` on every request, with a
+  key from the Gateway's `AUTH_API_KEYS` (in the root `docker-compose.yml`: `GATEWAY_API_KEYS` from
+  `.env`). Only `GET /health` needs no key. The key is checked before routing, so a request without a
+  valid key never reaches a service.
+- **The header is never forwarded** to a service, on either port. Services don't check credentials
+  at all.
+- **Services** call each other through the internal port `8090` (`http://gateway-service:8090`),
+  which needs no key and is not published to the host, so only containers on the Compose network
+  can reach it.
+- **The broker stand-ins** (`/internal/mock-events/**`, `/internal/events/**`) need a key on port
+  `8080` like every other path, so a tester can fire them through the Gateway; the services send
+  theirs over the internal port.
+
+| Status | `error` | When |
+| :--- | :--- | :--- |
+| `401` | `UNAUTHORIZED` | Port `8080`: the `Authorization` header is missing, repeated, not `Bearer`, or the key is unknown. Sent with `WWW-Authenticate: Bearer realm="gateway-service"` |
+| `404` | `ROUTE_NOT_FOUND` | No service owns the path |
+| `502` | `UPSTREAM_UNAVAILABLE` | The service is unreachable |
+| `503` | `AUTHORIZATION_UNAVAILABLE` | Port `8080` while the Gateway has no API keys configured |
+| `503` | `TOO_MANY_REQUESTS` | The Gateway's concurrent request limit is reached (`Retry-After: 1`) |
+| `504` | `REQUEST_TIMEOUT` / `UPSTREAM_TIMEOUT` | The service didn't answer in time |
+
 ## Contribution Workflow & GitHub Rules
 
 To ensure code quality, predictable releases, and equal team collaboration, all contributions to the
@@ -1227,13 +1344,13 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
 | `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL` (see `docker-compose.yml`). Port `8080`. |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8081`. |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8082`. |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
 
 
 ## Getting Started
@@ -1269,6 +1386,53 @@ git submodule update --remote --merge
 ```
 
 To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+
+### Calling the system through the Gateway (Lab 2)
+
+Every request from outside Docker goes to the API Gateway at `http://localhost:8080` and needs an API
+key. Put one in `.env` (each key at least 32 bytes):
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # prints a new random key
+# .env:  GATEWAY_API_KEYS=postman:<the printed key>
+docker compose up -d
+curl -H "Authorization: Bearer <the printed key>" http://localhost:8080/players/00000000-0000-0000-0000-000000000000
+```
+
+Without the header the Gateway answers `401 UNAUTHORIZED`; without any key in `.env` it answers
+`503 AUTHORIZATION_UNAVAILABLE`. `GET http://localhost:8080/health` needs no key. The Postman
+collections for `player-service` and `server-moderation-session-service` send the key from their
+`apiKey` variable and use `baseUrl` `http://localhost:8080`.
+
+### Running `player-service` and `server-moderation-session-service`
+
+The root `docker-compose.yml` runs both from their DockerHub images (`0.3.0`), each against its own
+PostgreSQL 16 (`player-postgres` and `session-postgres`, on the `player-postgres-data` and
+`session-postgres-data` volumes). Set `PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD` and
+`SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD` in `.env`, then `docker compose up`. Each schema
+is created by the service's own Flyway migration (`docs/db/<service>/V1__init_schema.sql`).
+
+Neither service publishes its port: clients use `http://localhost:8080/players/...` and
+`http://localhost:8080/sessions/...` with an API key, as above. `server-moderation-session-service`
+calls `applicant-service`, `server-rules-service` and `discord-dms-service` through the Gateway's
+internal port (`GATEWAY_URL=http://gateway-service:8090`, all three `*_CLIENT_MODE=http`). Watch a
+shift live with:
+
+```bash
+curl -N -H "Authorization: Bearer <key>" http://localhost:8080/sessions/<session-id>/events
+```
+
+Test them with `docs/postman/player-service.postman_collection.json` and
+`docs/postman/server-moderation-session-service.postman_collection.json`, from Postman (set the
+collection variable `apiKey`) or from the command line:
+
+```bash
+npx newman run docs/postman/player-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/server-moderation-session-service.postman_collection.json --env-var apiKey=<key>
+```
+
+The services' own health endpoints (`/actuator/health`) are checked by Compose (`docker compose ps`
+shows `healthy`); they are not routed through the Gateway.
 
 ### Running `moderation-service` and `discord-dms-service`
 
@@ -1323,8 +1487,8 @@ Laboratory 2, all inter-service REST communication is routed through the API Gat
 service exposes its port directly to the host:
 
 ```text
-applicant-service --> gateway-service :8080 (/credentials/issue) --> credential-service
-credential-service --> gateway-service :8080 (/records/students/lookup) --> university-record-service
+applicant-service --> gateway-service :8090 (/credentials/issue) --> credential-service
+credential-service --> gateway-service :8090 (/records/students/lookup) --> university-record-service
 ```
 
 Both services are only reachable from the host through the API Gateway at `http://localhost:8080` (e.g.
