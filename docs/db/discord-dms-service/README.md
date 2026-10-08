@@ -1,8 +1,8 @@
 # discord-dms-service - DB scripts
 
 Redis has no schema, so there is no DDL script to publish here, and the service needs no seed
-data. It creates its keys as notifications are queued and events are consumed. Every key is
-prefixed with `dms:`:
+data. It creates its keys as notifications are queued, events are consumed, and chat tickets are
+used. Every key is prefixed with `dms:`:
 
 | Key | Type | Content |
 | :--- | :--- | :--- |
@@ -11,6 +11,10 @@ prefixed with `dms:`:
 | `dms:event:{eventId}` | String (JSON) | The notifications created for a consumed event, kept for 7 days to recognise a redelivery. |
 | `dms:session:{sessionId}` | String | The moderator of an open session, from `session.started` until `session.closed`, at most 24 hours. |
 | `dms:sessions:open` | Set | Ids of the open sessions, used to notify every moderator of a `ruleset.updated`. |
+| `dms:ws-ticket:{jti}` | String | The user id of a chat ticket that has opened a connection, so that it cannot open another. Expires 10 seconds after the ticket. |
+
+Chat messages are not stored: they pass between instances on the Redis pub/sub channel `dms:chat`,
+together with the notices that close the chat of a session.
 
 The shared `docker-compose.yml` runs Redis with append-only persistence on the `dms-redis-data`
 volume, so queued notifications, retries, and processed event ids survive a restart.

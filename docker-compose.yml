@@ -13,26 +13,32 @@
 #   docker compose up
 
 services:
+  # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
+  # credential-service, server-rules-service and university-record-service also go through the
+  # gateway, on the internal port. No depends_on the gateway: the gateway depends on this service,
+  # and the calls only happen once a request arrives.
   moderation-service:
-    image: andiblindu1/moderation-service:0.2.0
-    ports:
-      - "8087:8087"
+    image: andiblindu1/moderation-service:0.3.0
     environment:
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
       Downstream__Rules__Mode: Http
-      Downstream__Rules__BaseUrl: http://server-rules-service:8085
+      Downstream__Rules__BaseUrl: http://gateway-service:8090
       Downstream__Records__Mode: Http
-      Downstream__Records__BaseUrl: http://university-record-service:8086
-      # Stays mocked: the moderation-service Postman collection records its decisions against the
-      # demo credentials of the mock.
-      Downstream__Credential__Mode: Mock
+      Downstream__Records__BaseUrl: http://gateway-service:8090
+      Downstream__Credential__Mode: Http
+      Downstream__Credential__BaseUrl: http://gateway-service:8090
+      Limits__RequestTimeoutMs: ${MODERATION_REQUEST_TIMEOUT_MS:-8000}
+      Limits__MaxConcurrentRequests: ${MODERATION_MAX_CONCURRENT_REQUESTS:-100}
+    # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8087 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       moderation-postgres:
         condition: service_healthy
-      server-rules-service:
-        condition: service_started
-      university-record-service:
-        condition: service_started
 
   moderation-postgres:
     image: postgres:16
@@ -48,12 +54,26 @@ services:
       timeout: 5s
       retries: 12
 
+  # Its REST endpoints are called through the gateway (Lab 2). Port 8088 stays published for the
+  # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
+  # gateway returns.
   discord-dms-service:
-    image: andiblindu1/discord-dms-service:0.2.0
+    image: andiblindu1/discord-dms-service:0.3.0
     ports:
       - "8088:8088"
     environment:
       ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
+      # The gateway's WS_TICKET_SECRET: the chat accepts only the tickets the gateway signs with it.
+      Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
+      Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
+      Limits__MaxConcurrentRequests: ${DMS_MAX_CONCURRENT_REQUESTS:-100}
+    # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8088 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     depends_on:
       dms-redis:
         condition: service_healthy
@@ -289,6 +309,8 @@ services:
       RECORD_SERVICE_URL: http://university-record-service:8086
       MODERATION_SERVICE_URL: http://moderation-service:8087
       DMS_SERVICE_URL: http://discord-dms-service:8088
+      REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
+      MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-200}
     # The image has no curl, so the healthcheck uses Python, which it does have.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
