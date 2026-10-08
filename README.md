@@ -1657,10 +1657,8 @@ curl -H "Authorization: Bearer <the printed key>" http://localhost:8080/players/
 ```
 
 Without the header the Gateway answers `401 UNAUTHORIZED`; without any key in `.env` it answers
-`503 AUTHORIZATION_UNAVAILABLE`. `GET http://localhost:8080/health` needs no key. The Postman
-collections for `player-service`, `server-moderation-session-service`, `moderation-service`, and
-`discord-dms-service` send the key from their `apiKey` variable and use `baseUrl`
-`http://localhost:8080`.
+`503 AUTHORIZATION_UNAVAILABLE`. `GET http://localhost:8080/health` needs no key. Every Postman collection in `docs/postman/` sends the key from its `apiKey`
+variable and uses `baseUrl` `http://localhost:8080`.
 
 ### Running `player-service` and `server-moderation-session-service`
 
@@ -1747,11 +1745,19 @@ docker compose up
 
 Both services are only reachable through the API Gateway at `http://localhost:8080` — their internal
 ports (`8085`, `8086`) are not published to the host. Use the endpoint paths from the contract
-section above, prefixed with the gateway address: for example `GET http://localhost:8080/rulesets/active`
-or `GET http://localhost:8080/records/faculties`. Postman collections for both are in `docs/postman/`,
-and the underlying DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both
-are inlined above under [Endpoint Contracts](#endpoint-contracts) — both service repos are private,
+section above, prefixed with the gateway address and sent with an API key, as above: for example
+`GET http://localhost:8080/rulesets/active` or `GET http://localhost:8080/records/faculties`. The
+underlying DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are
+inlined above under [Endpoint Contracts](#endpoint-contracts) — both service repos are private,
 so this CPR copy is the only one teammates without repo access can actually read.
+
+Test them with `docs/postman/server-rules-service.postman_collection.json` and
+`docs/postman/university-record-service.postman_collection.json`, from Postman (set the collection
+variable `apiKey`) or from the command line:
+```
+npx newman run docs/postman/server-rules-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/university-record-service.postman_collection.json --env-var apiKey=<key>
+```
 
 ### Running `applicant-service` and `credential-service`
 
