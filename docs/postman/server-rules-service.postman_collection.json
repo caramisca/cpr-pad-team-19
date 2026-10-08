@@ -7,7 +7,12 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8085",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -21,12 +26,22 @@
       "type": "string"
     }
   ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
   "item": [
     {
       "name": "Happy Path",
       "item": [
         {
-          "name": "Health Check",
+          "name": "Get Gateway Health Status",
           "event": [
             {
               "listen": "test",
@@ -35,8 +50,7 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
-                  "pm.test(\"service name matches\", () => pm.expect(body.service).to.eql(\"server-rules-service\"));"
+                  "pm.test(\"status is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
                 ]
               }
             }
