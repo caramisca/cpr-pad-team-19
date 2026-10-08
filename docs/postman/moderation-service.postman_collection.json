@@ -1,13 +1,28 @@
 {
   "info": {
     "name": "moderation-service",
-    "description": "Decision endpoints for moderation-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on {{acceptDecisionId}} and {{rejectDecisionId}} captured from the Record Accept Decision and Record Reject Decision responses. Every run records its decisions in a new random session, so the collection can be run again without clearing the database. The credentials are the ones credential-service answers with in Mock mode: cccccccc-0000-4000-8000-00000000000N is issued to applicant aaaaaaaa-0000-4000-8000-00000000000N. The assertions hold whichever ruleset server-rules-service has active.",
+    "description": "Decision endpoints for moderation-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on {{acceptDecisionId}} and {{rejectDecisionId}} captured from the Record Accept Decision and Record Reject Decision responses. Every run records its decisions in a new random session, so the collection can be run again without clearing the database. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). The credentials are the demo bundles loaded by the seed of credential-service (docs/db/credential-service): c0000000-0000-4000-8000-00000000000N is issued to applicant a0000000-0000-4000-8000-00000000000N. The assertions hold whichever ruleset server-rules-service has active.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
   },
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8087",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
       "type": "string"
     },
     {
@@ -53,10 +68,10 @@
   ],
   "item": [
     {
-      "name": "Happy Path",
+      "name": "Health Check",
       "item": [
         {
-          "name": "Get Health",
+          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
           "event": [
             {
               "listen": "test",
@@ -65,11 +80,7 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"service and database are healthy\", () => {",
-                  "  pm.expect(body.status).to.eql(\"Healthy\");",
-                  "  pm.expect(body.service).to.eql(\"moderation-service\");",
-                  "  pm.expect(body.checks.database).to.eql(\"Healthy\");",
-                  "});"
+                  "pm.test(\"status is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
                 ]
               }
             }
@@ -86,7 +97,12 @@
               ]
             }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Happy Path",
+      "item": [
         {
           "name": "Record Accept Decision",
           "event": [
@@ -110,7 +126,7 @@
                   "pm.test(\"Location points at the new decision\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/decisions/\" + body.id));",
                   "pm.test(\"echoes the request\", () => {",
                   "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
-                  "  pm.expect(body.applicantId).to.eql(\"aaaaaaaa-0000-4000-8000-000000000001\");",
+                  "  pm.expect(body.applicantId).to.eql(\"a0000000-0000-4000-8000-000000000001\");",
                   "  pm.expect(body.moderatorId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
                   "  pm.expect(body.action).to.eql(\"ACCEPT\");",
                   "  pm.expect(body.updatedAt).to.eql(null);",
@@ -140,7 +156,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000001\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -217,7 +233,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000006\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000006\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000006\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000006\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -411,7 +427,7 @@
                   "pm.test(\"the applicant can be decided again in the same session\", () => {",
                   "  pm.expect(body.id).to.not.eql(pm.collectionVariables.get(\"acceptDecisionId\"));",
                   "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
-                  "  pm.expect(body.applicantId).to.eql(\"aaaaaaaa-0000-4000-8000-000000000001\");",
+                  "  pm.expect(body.applicantId).to.eql(\"a0000000-0000-4000-8000-000000000001\");",
                   "});"
                 ]
               }
@@ -427,7 +443,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000001\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -523,7 +539,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000002\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000002\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"REJECT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -562,7 +578,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000002\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000002\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000002\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -640,7 +656,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000003\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000003\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"APPROVE\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000003\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000003\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"APPROVE\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -757,7 +773,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000099\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000099\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000099\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000099\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",
@@ -796,7 +812,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"aaaaaaaa-0000-4000-8000-000000000003\",\n  \"credentialId\": \"cccccccc-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+              "raw": "{\n  \"sessionId\": \"{{errorSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000003\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
             "url": {
               "raw": "{{baseUrl}}/decisions",

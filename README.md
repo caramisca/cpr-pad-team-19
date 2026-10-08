@@ -2,11 +2,11 @@
 
 Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (FAF.PAD21.1, Autumn 2026).
 
-A distributed system of 8 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
+A distributed system of 9 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
 ## Team Definition & Microservice Allocation
 
-The team works in **2 languages**, split by member pair (4 microservices per pair, 2 microservices per member):
+The team works in **2 polyglot backend languages** (Java and C#) for domain services, with an **API Gateway** implemented in Python (the previously banned language) as required by Laboratory 2:
 
 | Member | Assigned Service | Tech Stack | Storage Engine |
 | :--- | :--- | :--- | :--- |
@@ -14,6 +14,7 @@ The team works in **2 languages**, split by member pair (4 microservices per pai
 | **Mihai** | `applicant-service`<br>`credential-service` | C# (.NET 8) | Redis / In-Memory |
 | **Diana** | `server-rules-service`<br>`university-record-service` | Java (Spring Boot) | MongoDB / PostgreSQL |
 | **Andi** | `moderation-service`<br>`discord-dms-service` | C# (.NET 8) | PostgreSQL / Redis |
+| **Team 19 (All)** | `gateway-service` (API Gateway) | Python 3.12 (FastAPI) | In-Memory / Stateless |
 
 ## Service Boundaries
 
@@ -28,12 +29,12 @@ operations it exposes to the rest of the system.
 Owner: Daria — Java (Spring Boot) — PostgreSQL
 
 - **Encapsulates:** the identity and progression of a moderator (the player). Registration,
-  profile, rank, accuracy score, penalty history, and lifetime statistics.
-- **Owns:** `player`, `player_stats`, `player_penalty` tables.
+  profile, XP, level, rank, accuracy score, and lifetime statistics.
+- **Owns:** `players`, `player_stats`, `processed_events` tables.
 - **Does not own:** shift scheduling, decision correctness, or the rules a decision is judged
   against. It only consumes evaluated outcomes and projects them into a score.
-- **Exposes:** `GET /players/{id}`, `POST /players`, `GET /players/{id}/stats`,
-  `GET /players/{id}/rank`.
+- **Exposes:** `GET /players/{id}`, `POST /players`, `PATCH /players/{id}`, `DELETE /players/{id}`,
+  `GET /players/{id}/stats`, `GET /players/{id}/rank`.
 - **Consumes:** `decision.evaluated` events to recompute score and rank.
 
 ### 2. `server-moderation-session-service`
@@ -41,13 +42,17 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
 Owner: Daria — Java (Spring Boot) — PostgreSQL
 
 - **Encapsulates:** the lifecycle of a moderation shift. Opening and closing a session, the queue
-  of applicants presented during that shift, per-applicant timers, and the shift summary.
-- **Owns:** `session`, `session_queue_entry`, `session_summary` tables.
+  of applicants presented during that shift (when each was presented and resolved), and the shift
+  summary.
+- **Owns:** `sessions`, `session_junior_moderators`, `session_queue_entry`, `session_summary`,
+  `processed_events` tables.
 - **Does not own:** applicant generation, rule content, or verdict evaluation. It orchestrates the
   shift, it does not judge it.
 - **Exposes:** `POST /sessions`, `GET /sessions/{id}`, `POST /sessions/{id}/close`,
-  `GET /sessions/{id}/next-applicant`.
-- **Consumes:** `decision.recorded` events to advance the queue and stop the applicant timer.
+  `DELETE /sessions/{id}`, `GET /sessions/{id}/next-applicant`, and the live stream
+  `GET /sessions/{id}/events` (Server-Sent Events).
+- **Consumes:** `decision.recorded` events to resolve the applicant's queue entry and advance the
+  queue.
 
 ### 3. `applicant-service`
 
@@ -130,14 +135,38 @@ Owner: Andi — C# (.NET 8) — Redis
 
 - **Encapsulates:** all outbound communication toward Discord. Direct messages to applicants
   carrying their verdict, shift notifications to moderators, rule-change announcements, delivery
-  retries, and rate limiting against the Discord API.
+  retries, and rate limiting against the Discord API. Also the real-time chat of each shift, where
+  moderators and junior mods talk in the `enrollment-check`, `faculty-check`, and
+  `general-mod-chat` channels over a WebSocket.
 - **Owns:** the Redis outbox: every notification with its delivery status, the delivery queue, the
-  ids of the events already processed, and the moderator of each open shift.
+  ids of the events already processed, and the moderator of each open shift. Chat messages are
+  relayed, not stored; only the ids of the chat tickets already used are kept.
 - **Does not own:** any business decision. It is a pure delivery edge and never calls back into
-  the domain services.
+  the domain services. Who may join which chat is settled by the gateway when it issues the ticket.
 - **Exposes:** `POST /notifications/dm`, `GET /notifications/{id}/status`, `GET /notifications/{id}`,
-  `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`.
+  `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`, and the chat WebSocket
+  `GET /ws/chat?ticket={ticket}`.
 - **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
+
+### 9. `gateway-service` (API Gateway)
+
+Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
+
+- **Encapsulates:** the single unified ingress point and reverse proxy for the distributed system. Central
+  reverse proxying, client-to-service and service-to-service routing, token authorization and header
+  stripping, request timeout enforcement, concurrency limiting, and WebSocket connection ticket negotiation.
+- **Owns:** the dynamic routing table, rate limiting semaphores, and short-lived connection tickets.
+- **Does not own:** any domain business logic, persistent application datastores, or direct background
+  event broker subscriptions.
+- **Exposes:** all downstream service paths (proxied transparently — no prefix added),
+  `GET /health`, and `POST /ws/negotiate`, which returns a short-lived ticket and the direct URL
+  of the `discord-dms-service` chat. See
+  [`gateway-service` — WebSocket negotiation](#gateway-service--websocket-negotiation).
+- **Authorization:** every client request on port `8080` needs `Authorization: Bearer <key>`; the
+  Gateway validates it and never forwards the header. The services call each other through its
+  internal port `8090` (no key, not published to the host). See
+  [`gateway-service` — authorization](#gateway-service--authorization).
+- **Calls:** all downstream services over HTTP.
 
 
 ## Technologies & Communication Patterns
@@ -149,17 +178,23 @@ most.
 
 | Repo | Service | Language / Framework | Sync communication | Async communication |
 |---|---|---|---|---|
+| `gateway-service` | API Gateway | Python 3.12 (FastAPI / Uvicorn) | Central reverse proxy for all client-to-service and service-to-service REST requests; transparent path forwarding with no prefix added | — |
 | `player-service` | Player | Java (Spring Boot) | REST CRUD (profile, rank, stats lookup) | Consumes `decision.evaluated` to update score/rank/penalties |
 | `server-moderation-session-service` | Session | Java (Spring Boot) | REST to open/close a shift, pull next applicant, assign moderator/junior-mod roles | Publishes `session.started`/`session.closed`; consumes `decision.recorded` to advance the queue |
 | `server-rules-service` | Server Rules | Java (Spring Boot) | REST to read active ruleset/revisions | Publishes `ruleset.updated` for services that need to react to mid-shift rule changes |
 | `university-record-service` | University Record | Java (Spring Boot) | REST for authoritative student/faculty/enrolment lookups | — (read-mostly system of record; no events published) |
-| `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service synchronously to attach documents | — |
-| `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service synchronously to derive authentic fields | — |
-| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record synchronously to gather everything a verdict needs | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume, and `decision.amended`/`decision.voided` when a call is corrected |
-| `discord-dms-service` | Discord DMs | C# (.NET 8) | WebSocket for real-time moderator ↔ junior-mod chat channels (`#enrollment-check`, `#faculty-check`, `#general-mod-chat`) | Purely event-driven for outbound notifications: consumes `verdict.issued`, `session.started`/`closed`, `ruleset.updated`; no service calls it synchronously |
+| `applicant-service` | Applicant | C# (.NET 8) | REST to generate/fetch an applicant; calls Credential Service via Gateway to attach documents | — |
+| `credential-service` | Credential | C# (.NET 8) | REST to issue/fetch/verify a credential; calls University Record Service via Gateway to derive authentic fields | — |
+| `moderation-service` | Moderation | C# (.NET 8) | REST for the accept/deny call; calls Credential, Rules, and University Record via Gateway | Publishes `decision.recorded`, `decision.evaluated`, `verdict.issued` for Session/Player/DMs to consume, and `decision.amended`/`decision.voided` when a call is corrected |
+| `discord-dms-service` | Discord DMs | C# (.NET 8) | WebSocket for real-time moderator ↔ junior-mod chat channels (`enrollment-check`, `faculty-check`, `general-mod-chat`) | Purely event-driven for outbound notifications: consumes `verdict.issued`, `session.started`/`closed`, `ruleset.updated`; no service calls it synchronously |
 
 **Why this split:**
 
+- **Python 3.12 (FastAPI / Uvicorn)** for `gateway-service`: implemented in the previously banned language
+  per Laboratory 2 Grade 5 requirements (*"Initialize the new service – Gateway – which will serve as a
+  point of entry in your system. Use the banned language for that"*). FastAPI was selected for its
+  high-performance asynchronous ASGI event loop, lightweight non-blocking HTTP proxying via `httpx`,
+  and clean middleware architecture for request timeouts, concurrency throttling, and token authorization.
 - **Java (Spring Boot)** for Player, Session, Rules, University Record: these hold the most
   structured, long-lived, relational domain data (player progression, shift/queue state, versioned
   rulesets, the authoritative enrolment registry) and benefit from Spring's mature ecosystem for
@@ -171,12 +206,9 @@ most.
   Moderation is the single most latency-sensitive call in the system (a moderator's accept/deny
   should never feel slow), and Discord DMs is a connection-heavy delivery/chat edge where .NET's
   async I/O and lower per-instance overhead are a good fit.
-- **Python was excluded** across both stacks to keep the codebase statically typed end-to-end,
-  which matters for a system where a type error in credential or verdict handling would be a
-  correctness bug, not just a runtime inconvenience.
 - **WebSockets** are used specifically for `discord-dms-service`'s moderator ↔ junior-mod chat,
-  since that interaction is inherently real-time and bidirectional — REST elsewhere, since most
-  other operations are simple request/response.
+  since that interaction is inherently real-time and bidirectional — negotiated via Gateway, but connected
+  directly to prevent Gateway thread starvation.
 - **Async events** are used wherever a service shouldn't block on, or depend on the availability
   of, a downstream consumer — most notably after a verdict is produced in Moderation Service
   (scoring, queue advancement, and Discord delivery all react independently) and for rule changes
@@ -185,32 +217,40 @@ most.
 
 ## Architecture Diagram
 
-Solid arrows are synchronous REST calls in the request path. Dashed arrows are asynchronous domain
-events delivered through the message broker.
+Solid arrows represent synchronous REST requests in the request path (all routed via the API Gateway).
+Dashed arrows represent asynchronous domain events delivered through the message broker. The dotted
+arrow denotes direct client WebSocket streaming following Gateway ticket negotiation.
 
-![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram-2.png)
+![Student ID, Please — Clean Layered Architecture diagram for Team 19](docs/images/architecture-diagram-3.png)
 
 ### Communication Matrix
 
 | Caller | Callee | Style | Purpose |
 | :--- | :--- | :--- | :--- |
-| `server-moderation-session-service` | `applicant-service` | Sync REST | Pull the next applicant for the shift queue |
-| `server-moderation-session-service` | `server-rules-service` | Sync REST | Read the ruleset in force for the session |
-| `applicant-service` | `credential-service` | Sync REST | Attach a credential bundle to a generated applicant |
-| `credential-service` | `university-record-service` | Sync REST | Derive authentic field values for legitimate applicants |
-| `moderation-service` | `credential-service` | Sync REST | Read the credential presented by the applicant |
-| `moderation-service` | `server-rules-service` | Sync REST | Read the rules the decision is judged against |
-| `moderation-service` | `university-record-service` | Sync REST | Cross-check the applicant against the registry |
-| `moderation-service` | `server-moderation-session-service` | Async event | `decision.recorded` advances the shift queue |
+| `Moderator UI` | `gateway-service` | Sync REST | External ingress for shift operations, decisions, and player stats |
+| `Junior Mod Chat` | `gateway-service` | Sync REST | Request WebSocket ticket negotiation (`POST /ws/negotiate`), answered with the direct chat URL |
+| `Junior Mod Chat` | `discord-dms-service` | WebSocket | Direct real-time chat connection using negotiated ticket (`/ws/chat?ticket=...`) |
+| `gateway-service` | `server-moderation-session-service` | Sync REST | Forward shift lifecycle requests (`/sessions/**`) |
+| `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/decisions/**`) |
+| `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/players/**`) |
+| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift |
+| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Fetch active ruleset in force for current session |
+| `applicant-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Attach issued credential bundle to generated applicant |
+| `credential-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Cross-reference student registry for authentic credentials |
+| `moderation-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Read applicant credential bundle for evaluation |
+| `moderation-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Read ruleset to evaluate decision against |
+| `moderation-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Verify registry enrollment standing for verdict |
+| `moderation-service` | `server-moderation-session-service` | Async event | `decision.recorded` advances shift queue |
 | `moderation-service` | `player-service` | Async event | `decision.evaluated` updates score, rank, penalties |
 | `moderation-service` | `discord-dms-service` | Async event | `verdict.issued` delivers the DM to the applicant |
 | `server-moderation-session-service` | `discord-dms-service` | Async event | `session.started` and `session.closed` notify moderators |
 | `server-rules-service` | `discord-dms-service` | Async event | `ruleset.updated` announces a mid-shift rule change |
 
-Synchronous REST is used only where the caller cannot proceed without the answer: the decision path
-needs the credential, the rules, and the record before a verdict exists. Everything downstream of a
-verdict is asynchronous, so that scoring, queue progression, and Discord delivery cannot slow down
-or fail a moderator's decision.
+Synchronous REST is routed centrally through the API Gateway, ensuring unified access logging, task
+timeouts, concurrency limiting, and authorization enforcement with header stripping. The Gateway also
+mediates WebSocket handshake requests, returning direct connection tickets so that high-throughput
+bidirectional streams do not burden the Gateway process. Everything downstream of a verdict remains
+asynchronous via the message broker.
 
 `player-service` and `discord-dms-service` are never called synchronously by another service, and
 `discord-dms-service` never calls back into the domain. These two boundaries are deliberately kept
@@ -234,6 +274,7 @@ engine is picked per service based on the shape of the data it owns, not on team
 | `university-record-service` | PostgreSQL | Enrolments and faculties need referential integrity as the system of record. |
 | `moderation-service` | PostgreSQL | Decisions/verdicts/violations form the permanent audit trail and must not be lost. |
 | `discord-dms-service` | Redis | The outbox, the delivery queue, and the processed event ids must survive a restart so that retries continue and redelivered events are not sent twice; entries expire once they are no longer needed. |
+| `gateway-service` | In-Memory / Stateless | Routing table, concurrency control semaphores, and short-lived connection tickets; zero persistent storage required. |
 
 All cross-service data access happens exclusively over the contract published below:
 
@@ -251,6 +292,12 @@ All cross-service data access happens exclusively over the contract published be
 
 Unless noted otherwise, all endpoints accept and return `application/json`, and error responses share
 the shape `{ "error": "string (machine-readable code)", "message": "string (human-readable detail)" }`.
+
+From Lab 2 on, clients call every endpoint below **through the API Gateway** at
+`http://localhost:8080`, with the same paths and an API key (`Authorization: Bearer <key>`, see
+[`gateway-service` — authorization](#gateway-service--authorization)). The Gateway's own errors
+(`401`, `404 ROUTE_NOT_FOUND`, `502`, `503`, `504`) are listed there; everything else comes
+from the service unchanged.
 
 #### `player-service`
 
@@ -276,10 +323,26 @@ Response `201 Created`:
 }
 ```
 
+Response `400 Bad Request` (`VALIDATION_ERROR`): `discordId` or `displayName` is missing or blank.
+Response `409 Conflict` (`DUPLICATE_DISCORD_ID`): a player with that `discordId` already exists.
+
 **`GET /players/{id}`** — fetch a player profile.
 
 Response `200 OK`: same shape as the `POST /players` response.
-Response `404 Not Found`: standard error shape.
+Response `404 Not Found`: standard error shape (`PLAYER_NOT_FOUND`).
+
+**`PATCH /players/{id}`** — change the display name. Progression fields (`rank`, `xp`, `level`)
+are never client-writable; they only change through `decision.evaluated`.
+
+Request:
+```json
+{ "displayName": "string" }
+```
+Response `200 OK`: same shape as the `POST /players` response. Response `400 Bad Request`
+(`VALIDATION_ERROR`) or `404 Not Found` (`PLAYER_NOT_FOUND`).
+
+**`DELETE /players/{id}`** — remove a player account. Response `204 No Content`, or `404 Not Found`
+(`PLAYER_NOT_FOUND`).
 
 **`GET /players/{id}/stats`** — fetch lifetime moderation statistics.
 
@@ -308,7 +371,9 @@ Response `200 OK`:
 }
 ```
 
-**Consumes `decision.evaluated`** — recomputes score, rank, and penalties.
+**Consumes `decision.evaluated`** — adds `xpAwarded` to the player's XP (which recomputes level and
+rank) and counts the decision as correct or incorrect in the stats. Penalties are not applied yet:
+the event carries no penalty data.
 ```json
 {
   "eventId": "string (uuid)",
@@ -324,7 +389,19 @@ Response `200 OK`:
 **`POST /internal/mock-events/decision-evaluated`** — no message broker is wired up yet, so this
 endpoint stands in for the `decision.evaluated` consumer above: same request body as the event
 payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Will be replaced by a real broker listener without changing the underlying handler.
+replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing, `404 Not Found`
+(`PLAYER_NOT_FOUND`) when `playerId` is not a registered player. Will be replaced by a real broker
+listener without changing the underlying handler.
+
+**Common to every `player-service` endpoint:**
+- Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`).
+- **Task timeout and concurrent task limit** (Lab 2): a request that runs longer than `TASK_TIMEOUT`
+  (default `10s`) gets `504 Gateway Timeout` (`REQUEST_TIMEOUT`); a request while
+  `MAX_CONCURRENT_TASKS` (default `20`) are running gets `503 Service Unavailable` (`SERVICE_BUSY`)
+  with `Retry-After: 1`, straight away.
+- `GET /actuator/health` returns `{"status":"UP"}` for the Compose healthcheck. It is not routed
+  through the Gateway.
+- Makes no outgoing calls, and has nothing to push to clients live.
 
 #### `server-moderation-session-service`
 
@@ -393,12 +470,39 @@ Response `200 OK`:
   "presentedAt": "string (ISO-8601 datetime)"
 }
 ```
-Response `404 Not Found`: standard error shape, returned when the queue is empty.
+Response `404 Not Found` (`QUEUE_EMPTY`): the shift already presented
+`SESSION_MAX_APPLICANTS_PER_SHIFT` applicants (default `10`). Response `404 Not Found`
+(`SESSION_NOT_FOUND`). Response `409 Conflict` (`SESSION_ALREADY_CLOSED`). Response
+`503 Service Unavailable` (`DEPENDENCY_UNAVAILABLE`): `applicant-service` or `server-rules-service`
+could not be reached through the Gateway, timed out, or answered with an error; nothing is queued.
 
-**Calls:** `applicant-service` to fetch/generate the next applicant; `server-rules-service` to read
-the ruleset currently in force.
+**Calls (Lab 2: always through the Gateway's internal port, `GATEWAY_URL`):**
+`POST /applicants/generate` with `{ "sessionId", "difficulty" }` on `applicant-service` for the next
+applicant, and `GET /rulesets/active` on `server-rules-service` for the ruleset version in force
+(`404 NO_ACTIVE_RULESET` → the applicant is still presented, without a version).
 
-**Consumes `decision.recorded`** — advances the queue and stops the applicant timer.
+**`DELETE /sessions/{id}`** — cancel a shift and remove its record. Response `204 No Content`, or
+`404 Not Found` (`SESSION_NOT_FOUND`).
+
+**`GET /sessions/{id}/events`** — live updates of one shift as **Server-Sent Events** (Lab 2,
+`Content-Type: text/event-stream`, works with a browser `EventSource`). Each `data` is JSON:
+
+| Event | When | `data` |
+| :--- | :--- | :--- |
+| `state` | Right after connecting | Same shape as `GET /sessions/{id}` |
+| `applicant-presented` | After `next-applicant` | `{ "sessionId", "applicantId", "queuePosition", "presentedAt", "queueLength" }` |
+| `decision-recorded` | After a `decision.recorded` resolved an applicant | `{ "sessionId", "applicantId", "action", "recordedAt", "queueLength", "applicantsProcessed" }` |
+| `closed` | After `POST /sessions/{id}/close`; the stream then ends | Same shape as the close response |
+| `deleted` | After `DELETE /sessions/{id}`; the stream then ends | `{ "sessionId" }` |
+
+Events are sent only after the change is committed. A `:keep-alive` comment comes every `15s`; a
+stream lasts at most `30m`, then ends without an error (an `EventSource` reconnects and gets a fresh
+`state`). Errors, as JSON before the stream starts: `404 SESSION_NOT_FOUND`,
+`409 SESSION_ALREADY_CLOSED` (also stops an `EventSource` from reconnecting), and
+`503 SERVICE_BUSY` when `100` streams are already open.
+
+**Consumes `decision.recorded`** — resolves the applicant's queue entry (stores `action` and when it
+was resolved) and counts it in `applicantsProcessed`, which advances the queue.
 ```json
 {
   "eventId": "string (uuid)",
@@ -413,7 +517,9 @@ the ruleset currently in force.
 **`POST /internal/mock-events/decision-recorded`** — no message broker is wired up yet, so this
 endpoint stands in for the `decision.recorded` consumer above: same request body as the event
 payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Will be replaced by a real broker listener without changing the underlying handler.
+replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing; `404 Not Found`
+(`SESSION_NOT_FOUND`, or `QUEUE_ENTRY_NOT_FOUND` when no unresolved queue entry matches the
+applicant). Will be replaced by a real broker listener without changing the underlying handler.
 
 **Publishes `session.started`:**
 ```json
@@ -423,6 +529,23 @@ replay. Will be replaced by a real broker listener without changing the underlyi
 ```json
 { "eventId": "string (uuid)", "sessionId": "string (uuid)", "closedAt": "string (ISO-8601 datetime)", "summary": { "applicantsProcessed": "integer", "score": "number" } }
 ```
+Until the team has a broker, both events go to `discord-dms-service` as
+`POST /internal/events/session.started` / `POST /internal/events/session.closed` through the
+Gateway's internal port, after the commit and off the request thread. A connection error, timeout,
+`5xx` or `429` is retried with the same `eventId` (3 attempts in all). A client of this service
+never waits for or fails because of it.
+
+**Common to every `server-moderation-session-service` endpoint:**
+- Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`); a missing required
+  field: `400 Bad Request` (`VALIDATION_ERROR`).
+- **Task timeout and concurrent task limit** (Lab 2): `504 Gateway Timeout` (`REQUEST_TIMEOUT`)
+  after `TASK_TIMEOUT` (default `10s`); `503 Service Unavailable` (`SERVICE_BUSY`) with
+  `Retry-After: 1` while `MAX_CONCURRENT_TASKS` (default `20`) requests are running. The SSE stream
+  has its own limits (above).
+- `GET /actuator/health` returns `{"status":"UP"}` for the Compose healthcheck. It is not routed
+  through the Gateway.
+- Known gap: `correctDecisions`, `incorrectDecisions` and `score` in the summary stay `0`, because
+  `decision.recorded` carries no verdict; `applicantsProcessed` is counted correctly.
 
 #### `applicant-service`
 
@@ -898,6 +1021,13 @@ holds the integrity checks `CREDENTIAL_EXPIRED`, `STUDENT_ID_MISSING`, `RECORD_N
 `NAME_MISMATCH`, `FACULTY_MISMATCH`, `STUDY_YEAR_MISMATCH`, `NOT_ENROLLED`, followed by the `type`
 of each broken ruleset rule (`ALLOWED_FACULTY`, `MIN_ENROLLMENT_YEARS`, `BLACKLIST`).
 
+**Timeout and concurrency limit.** Every endpoint except `GET /health` runs under both. A request
+still running after `Limits__RequestTimeoutMs` (8 seconds by default) is cancelled, together with
+its calls to dependencies, and answered with `504 REQUEST_TIMEOUT`. When
+`Limits__MaxConcurrentRequests` requests (100 by default) are already in progress, a new one is not
+processed: it is answered at once with `503 TOO_MANY_REQUESTS` and a `Retry-After: 1` header
+instead of waiting for a free slot.
+
 **Error codes:**
 
 | Status | `error` | Meaning |
@@ -915,11 +1045,15 @@ of each broken ruleset rule (`ALLOWED_FACULTY`, `MIN_ENROLLMENT_YEARS`, `BLACKLI
 | `503` | `NO_ACTIVE_RULESET` | `server-rules-service` has no ruleset in force. Nothing was recorded. |
 | `503` | `DEPENDENCY_UNAVAILABLE` | A dependency timed out, could not be reached, or answered outside its contract. Nothing was recorded. |
 | `503` | `DATABASE_UNAVAILABLE` | PostgreSQL is unreachable. |
+| `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached. The request was not processed; retry after the `Retry-After` delay. |
+| `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
 
 **Calls:** `credential-service` (`GET /credentials/{id}`), `server-rules-service`
-(`GET /rulesets/active`), `university-record-service` (`GET /records/students/{studentId}`).
-A `404` from a dependency is treated as evidence (unknown credential, no active ruleset, student
-missing from the registry); any other failure returns `503 DEPENDENCY_UNAVAILABLE`.
+(`GET /rulesets/active`) and `university-record-service` (`GET /records/students/{studentId}`), all
+through `gateway-service`. A `404` from a dependency is treated as evidence (unknown credential, no
+active ruleset, student missing from the registry). The exception is the gateway's own
+`404 ROUTE_NOT_FOUND`, which only means that no service handles the path: like any other failure, it
+returns `503 DEPENDENCY_UNAVAILABLE`.
 
 Events are written to a transactional outbox in the same transaction as the decision and delivered
 at least once, in order; consumers deduplicate on `eventId`. `playerId` is the `moderatorId`.
@@ -1052,6 +1186,8 @@ applicant or moderator; the service never calls back into any domain service.
 The `metadata` of each message carries the `eventType`, the `eventId`, and the details of the event,
 such as its `decisionId`, `sessionId`, or `rulesetId`, so a message can be traced back to its cause.
 A session is open from its `session.started` until its `session.closed`, for at most 24 hours.
+`session.closed` also ends the chat of the session: every instance closes its chat connections to
+that session, even when the event is a redelivery.
 
 Until the team message broker exists, an event is delivered by sending its payload, exactly as the
 publisher documents it in this contract, to **`POST /internal/events/{eventType}`**, for example
@@ -1067,19 +1203,283 @@ redelivery, which changes nothing and returns the notifications of the first del
 Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 NOT_FOUND` for an unknown event
 type, `415 UNSUPPORTED_MEDIA_TYPE`.
 
+**`GET /ws/chat?ticket={ticket}`** — join the chat of a session and channel over a WebSocket.
+
+A client first asks the gateway for a ticket at `POST /ws/negotiate`, then connects here directly
+with the URL the gateway returns, so the conversation does not pass through the gateway:
+
+```mermaid
+sequenceDiagram
+    participant C as Chat client
+    participant G as gateway-service
+    participant D as discord-dms-service
+    participant R as Redis
+    C->>G: POST /ws/negotiate { sessionId, userId, channel }
+    G-->>C: 200 { url, expiresAt }
+    C->>D: GET /ws/chat?ticket={ticket} (WebSocket upgrade)
+    D->>R: SET ws-ticket:{jti} NX
+    D-->>C: 101 Switching Protocols
+    C->>D: { "text": "..." }
+    D->>R: PUBLISH chat
+    R-->>D: the message, to every instance
+    D-->>C: message frame, to every participant in the session and channel
+```
+
+The ticket is a JWT signed with HS256 and `Chat__TicketSecret`, which must equal the gateway's
+`WS_TICKET_SECRET`; a ticket signed with another algorithm, or not signed, is refused. Its claims
+are checked as follows:
+
+| Claim | Requirement |
+| :--- | :--- |
+| `iss` | Must be `gateway-service`. |
+| `aud` | Must be `discord-dms-service`. |
+| `sub` | The user id, 1 to 64 characters. It is the `senderId` of every message sent on the connection. |
+| `sessionId` | The session id, a hyphenated UUID. |
+| `channel` | One of `enrollment-check`, `faculty-check`, or `general-mod-chat`. |
+| `exp` | Required. The ticket is accepted until 5 seconds after `exp`, to allow for clock skew; the gateway issues tickets valid for 30 seconds. |
+| `nbf` | Optional. When present, it must not be later than `exp` or more than 5 seconds in the future. |
+| `jti` | The ticket id. A ticket opens one connection only, on any instance. |
+
+Response `101 Switching Protocols` once the ticket is accepted. Every check runs before the
+upgrade, so a refused connection gets an ordinary HTTP response with the contract error shape:
+`400 WEBSOCKET_REQUIRED` for a request that is not a WebSocket upgrade, `401 INVALID_TICKET` for a
+ticket that is missing, invalid, expired, or already used, `503 WEBSOCKET_UNAVAILABLE` while the
+chat is switched off, `503 TOO_MANY_REQUESTS` with a `Retry-After: 1` header when the instance
+already has `Chat__MaxConnections` connections open, and `503 STORE_UNAVAILABLE` when Redis is
+unreachable. A ticket is used up only when its connection is accepted, so after
+`503 TOO_MANY_REQUESTS` the same URL can be retried while the ticket is still valid.
+
+Once connected, the client sends each message as a JSON text frame of at most 16384 bytes; fields
+other than `text` are ignored:
+```json
+{ "text": "string (not blank, at most 2000 characters)" }
+```
+
+Each message reaches every participant in its session and channel, the sender included, on
+whichever instance they are connected to, and all of them receive the messages in the same order:
+```json
+{
+  "type": "message",
+  "sessionId": "string (uuid)",
+  "channel": "string (enrollment-check | faculty-check | general-mod-chat)",
+  "senderId": "string",
+  "text": "string",
+  "sentAt": "string (ISO-8601 datetime)"
+}
+```
+`sessionId`, `channel`, and `senderId` come from the sender's ticket, never from the message.
+Messages are relayed, not stored: a participant receives only the messages sent while they are
+connected.
+
+A message that is not relayed is answered with an error frame, to its sender only, and the
+connection stays open:
+```json
+{
+  "type": "error",
+  "error": "string (machine-readable code)",
+  "message": "string (human-readable detail)"
+}
+```
+
+| `error` | Meaning |
+| :--- | :--- |
+| `MALFORMED_MESSAGE` | The frame is binary, is not a JSON object, or has a `text` that is not a string. |
+| `VALIDATION_FAILED` | `text` is missing, blank, or longer than 2000 characters. |
+| `STORE_UNAVAILABLE` | Redis is unreachable, so the message was not sent; send it again shortly. |
+
+The service closes a connection with:
+
+| Code | Reason | When |
+| :--- | :--- | :--- |
+| `1000` | `The session is closed.` | `session.closed` was received for the session. Every instance closes its connections to the session, in every channel. |
+| `1001` | `discord-dms-service is shutting down.` | The instance is stopping. |
+| `1009` | `Messages are limited to 16384 bytes.` | The client sent a message larger than 16384 bytes. |
+
+The frames already queued for the client are sent before the close frame, and the connection is
+dropped if the client has not answered with its own close frame within 5 seconds. A close frame
+from the client is answered with the same code. A client that stops reading is dropped without a
+close frame once 100 frames are waiting for it. A keep-alive frame is sent every 30 seconds, so
+proxies do not drop a quiet connection.
+
+**Timeout and concurrency limit.** Every endpoint except `GET /health` and `GET /ws/chat` runs
+under both. A request still running after `Limits__RequestTimeoutMs` (8 seconds by default) is
+cancelled, together with its wait for Redis, and answered with `504 REQUEST_TIMEOUT`. The default
+is longer than the 5-second command timeout of the Redis client, so a stalled Redis is reported as
+`503 STORE_UNAVAILABLE`, and shorter than the gateway's 10-second timeout; keep that order when
+changing it. Redis still carries out a write it has already received, so a timed-out request may
+have taken effect: an event can safely be sent again, since its `eventId` is processed once, but
+sending `POST /notifications/dm` again can queue the message twice. When
+`Limits__MaxConcurrentRequests` requests (100 by default) are already in progress, a new one is not
+processed: it is answered at once with `503 TOO_MANY_REQUESTS` and a `Retry-After: 1` header
+instead of waiting for a free slot. Both limits are separate from `Delivery__RateLimit__*`, which
+paces the delivery worker's calls to Discord. A chat connection stays open for the whole
+conversation, so `Chat__MaxConnections` (100 by default) caps the connections open on each instance
+instead: the next one is refused before the upgrade with `503 TOO_MANY_REQUESTS` and a
+`Retry-After: 1` header.
+
 **Error codes:**
 
 | Status | `error` | Meaning |
 | :--- | :--- | :--- |
 | `400` | `VALIDATION_FAILED` | A required field is missing or out of range: an id is the all-zero UUID, `type` or `action` is not one of its values, `message` is blank or longer than 2000 characters, `metadata` is not an object, `version` is below 1, or `summary.applicantsProcessed` is negative. The message lists every problem. |
 | `400` | `MALFORMED_REQUEST` | The body is missing or is not valid JSON for the endpoint, for example an id that is not a UUID string or a timestamp that is not an ISO-8601 string. |
+| `400` | `WEBSOCKET_REQUIRED` | `GET /ws/chat` was requested without a WebSocket upgrade. |
+| `401` | `INVALID_TICKET` | The chat ticket is missing, invalid, expired, or already used; negotiate a new one at the gateway (`POST /ws/negotiate`). |
 | `404` | `NOTIFICATION_NOT_FOUND` | No notification has this id: it never existed, was deleted, or has expired. |
 | `404` | `NOT_FOUND` | No endpoint matches the path, including an `{id}` that is not a UUID. |
 | `405` | `METHOD_NOT_ALLOWED` | The path exists, but not for this method. |
 | `409` | `NOTIFICATION_NOT_FAILED` | Only a `FAILED` notification can be retried. |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
-| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications or events until it is back. |
+| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications or events, and by `GET /ws/chat`, until it is back. |
+| `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached, or for `GET /ws/chat` the connection limit. The request was not processed; retry after the `Retry-After` delay. |
+| `503` | `WEBSOCKET_UNAVAILABLE` | The chat is switched off because `Chat__TicketSecret` is not set. |
+| `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
+
+#### `gateway-service` — WebSocket negotiation
+
+Lab 2, Grade 7: the WebSocket is negotiated through the Gateway, which returns a direct URL to
+`discord-dms-service`.
+
+The moderator of a session and its junior mods chat over a WebSocket on `discord-dms-service`. The
+Gateway never carries that connection. It gives the client a short-lived signed ticket and the
+direct URL, and the client connects to `discord-dms-service` itself.
+
+```mermaid
+sequenceDiagram
+    participant C as Client
+    participant G as gateway-service
+    participant D as discord-dms-service
+    C->>G: POST /ws/negotiate (sessionId, userId, channel)
+    Note over G: signs a ticket valid for WS_TICKET_TTL_SECONDS
+    G-->>C: 200 OK (url, expiresAt)
+    C->>D: WebSocket upgrade: GET /ws/chat?ticket=...
+    Note over D: checks the ticket and accepts it only once
+    D-->>C: 101 Switching Protocols
+    Note over C,D: the chat runs directly between them, not through the Gateway
+```
+
+**`POST /ws/negotiate`** request:
+```json
+{
+  "sessionId": "3f2b8c1e-0000-4000-8000-000000000001",
+  "userId": "junior-mod-42",
+  "channel": "general-mod-chat"
+}
+```
+
+| Field | Rule |
+| :--- | :--- |
+| `sessionId` | A UUID in the usual `8-4-4-4-12` hex form |
+| `userId` | A non-empty string of at most 64 characters |
+| `channel` | `enrollment-check`, `faculty-check` or `general-mod-chat`, without the `#` |
+
+Response `200 OK`:
+```json
+{
+  "url": "ws://localhost:8088/ws/chat?ticket=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3Mi...",
+  "expiresAt": "2026-10-07T10:00:30Z"
+}
+```
+
+`url` is `DMS_PUBLIC_WS_URL` followed by `/ws/chat?ticket=` and the ticket. `expiresAt` is the
+instant in the ticket's `exp` claim, in UTC to the second. The client has to open the WebSocket
+before then: it has `WS_TICKET_TTL_SECONDS` (30 by default) from the call.
+
+Errors, with the usual `{error, message}` body:
+- `401 UNAUTHORIZED`: no valid API key, as for every request on the public port.
+- `400 VALIDATION_ERROR`: the body is not a JSON object, or a field is missing or invalid. The
+  message names the field, for example `sessionId must be a UUID`.
+- `503 WEBSOCKET_UNAVAILABLE`: `WS_TICKET_SECRET` is not set. The rest of the Gateway works as usual.
+- `503 TOO_MANY_REQUESTS`: as for any other request, since the call counts toward the concurrent
+  task limit.
+
+**The ticket** is a JWT signed with HS256 and `WS_TICKET_SECRET`, with these claims:
+
+| Claim | Value |
+| :--- | :--- |
+| `iss` | `gateway-service` |
+| `aud` | `discord-dms-service` |
+| `sub` | The `userId` |
+| `sessionId` | The `sessionId`, in lowercase |
+| `channel` | The `channel` |
+| `iat` | When it was issued, in Unix seconds |
+| `exp` | `iat` + `WS_TICKET_TTL_SECONDS` |
+| `jti` | A random UUID, new for every ticket |
+
+`discord-dms-service` holds the same secret. Before it accepts the WebSocket, it checks that:
+- the signature is valid, accepting HS256 only;
+- `iss` is `gateway-service` and `aud` is `discord-dms-service`;
+- `exp` has not passed, with a few seconds of clock skew at most (.NET's default of 5 minutes
+  would keep a 30-second ticket usable for 5.5 minutes);
+- the `jti` has not been used before. It remembers each `jti` until its `exp`, so a ticket works
+  only once.
+
+It then joins the connection to `channel` in session `sessionId`, as user `sub`.
+
+The chat itself never passes through the Gateway, so an open chat does not hold one of the
+`MAX_CONCURRENT_REQUESTS` slots. Only the negotiation call does, while it is being answered.
+
+Try it, with `WS_TICKET_SECRET` set:
+
+```bash
+curl -i -X POST http://localhost:8080/ws/negotiate \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"sessionId": "3f2b8c1e-0000-4000-8000-000000000001", "userId": "junior-mod-42",
+       "channel": "general-mod-chat"}'
+```
+
+#### `gateway-service` — authorization
+
+Lab 2, Grade 10: authorization happens at the Gateway, and the `Authorization` header never reaches
+a service.
+
+- **Clients** (port `8080`, published) send `Authorization: Bearer <key>` on every request, with a
+  key from the Gateway's `AUTH_API_KEYS` (in the root `docker-compose.yml`: `GATEWAY_API_KEYS` from
+  `.env`). Only `GET /health` needs no key. The key is checked before routing, so a request without a
+  valid key never reaches a service.
+- **The header is never forwarded** to a service, on either port. Services don't check credentials
+  at all.
+- **Services** call each other through the internal port `8090` (`http://gateway-service:8090`),
+  which needs no key and is not published to the host, so only containers on the Compose network
+  can reach it.
+- **The broker stand-ins** (`/internal/mock-events/**`, `/internal/events/**`) need a key on port
+  `8080` like every other path, so a tester can fire them through the Gateway; the services send
+  theirs over the internal port.
+
+| Status | `error` | When |
+| :--- | :--- | :--- |
+| `400` | `VALIDATION_ERROR` | The body of `POST /ws/negotiate` is not a JSON object, or a field is missing or invalid. The message names the field |
+| `401` | `UNAUTHORIZED` | Port `8080`: the `Authorization` header is missing, repeated, not `Bearer`, or the key is unknown. Sent with `WWW-Authenticate: Bearer realm="gateway-service"` |
+| `404` | `ROUTE_NOT_FOUND` | No service owns the path |
+| `502` | `UPSTREAM_UNAVAILABLE` | The service is unreachable |
+| `503` | `AUTHORIZATION_UNAVAILABLE` | Port `8080` while the Gateway has no API keys configured |
+| `503` | `TOO_MANY_REQUESTS` | The Gateway's concurrent request limit is reached (`Retry-After: 1`) |
+| `503` | `WEBSOCKET_UNAVAILABLE` | `POST /ws/negotiate` while `WS_TICKET_SECRET` is not set |
+| `504` | `REQUEST_TIMEOUT` / `UPSTREAM_TIMEOUT` | The service didn't answer in time |
+
+#### `gateway-service` — timeouts and limits
+
+Lab 2, Grade 8: the Gateway enforces its own task timeout and concurrent task limit, in addition
+to those of each service.
+
+- **Task timeout.** A service has `REQUEST_TIMEOUT_SECONDS` (10 by default) to start answering: to
+  accept the connection, take the request and send back its status line and headers. If it doesn't,
+  the Gateway stops waiting and returns `504 REQUEST_TIMEOUT`. Once the answer has started, the
+  timeout no longer applies, so an event stream (`GET /rulesets/events`, `GET /sessions/{id}/events`)
+  stays open for as long as the service keeps sending. Only `UPSTREAM_READ_TIMEOUT_SECONDS` limits
+  the gap between two of its chunks.
+- **Concurrent task limit.** The Gateway handles at most `MAX_CONCURRENT_REQUESTS` (200 by default)
+  requests at once. A request over the limit is not queued: it gets `503 TOO_MANY_REQUESTS` with
+  `Retry-After: 1` straight away. A request keeps its slot until its response has been sent in full,
+  so every open event stream counts toward the limit. The connection pool to the services is as
+  large as the limit, so a request that was let in never waits for a connection.
+- **Exempt:** `GET /health` is subject to neither, so Compose still sees the Gateway as healthy while
+  it is full.
+
+Keep `REQUEST_TIMEOUT_SECONDS` above the services' own task timeouts. A slow service then reports
+its own error before the Gateway gives up on it, and the client learns which part was slow.
 
 ## Contribution Workflow & GitHub Rules
 
@@ -1115,6 +1515,7 @@ All branch names must follow one of these prefixes:
 - `fix/<scope>/<description>` — Bug fixes or schema corrections (e.g. `fix/rules/expiry-tolerance`).
 - `docs/<scope>/<description>` — Documentation, README updates, or diagrams (e.g. `docs/readme/contract-sync`).
 - `chore/<scope>/<description>` — Repository maintenance, gitignore, or submodule updates (e.g. `chore/submodule/link-services`).
+- `ci/<scope>/<description>` — CI/CD pipeline additions or changes (e.g. `ci/rules/dockerhub-push`).
 
 ### Branch Protection & GitHub Rulesets
 
@@ -1198,16 +1599,16 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
-| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README). Port `8087`. |
-| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). Port `8088`. |
-| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) | `MONGODB_URI` (see the service's `.env.example`) |
-| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) | `DB_URL`, `DB_USERNAME`, `DB_PASSWORD` (see the service's `.env.example`) |
-| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Port `8083`. |
-| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Port `8084`. |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8081`. |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD` (see the service's `.env.example`). Port `8082`. |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`). Port `8087` (internal only — route through the gateway on `8080`). |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
+| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
+| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
+| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
+| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
 
-Other services will be added here as their owners push images to DockerHub.
 
 ## Getting Started
 
@@ -1243,28 +1644,90 @@ git submodule update --remote --merge
 
 To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
 
+### Calling the system through the Gateway (Lab 2)
+
+Every request from outside Docker goes to the API Gateway at `http://localhost:8080` and needs an API
+key. Put one in `.env` (each key at least 32 bytes):
+
+```bash
+python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # prints a new random key
+# .env:  GATEWAY_API_KEYS=postman:<the printed key>
+docker compose up -d
+curl -H "Authorization: Bearer <the printed key>" http://localhost:8080/players/00000000-0000-0000-0000-000000000000
+```
+
+Without the header the Gateway answers `401 UNAUTHORIZED`; without any key in `.env` it answers
+`503 AUTHORIZATION_UNAVAILABLE`. `GET http://localhost:8080/health` needs no key. Every Postman collection in `docs/postman/` sends the key from its `apiKey`
+variable and uses `baseUrl` `http://localhost:8080`.
+
+### Running `player-service` and `server-moderation-session-service`
+
+The root `docker-compose.yml` runs both from their DockerHub images (`0.3.0`), each against its own
+PostgreSQL 16 (`player-postgres` and `session-postgres`, on the `player-postgres-data` and
+`session-postgres-data` volumes). Set `PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD` and
+`SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD` in `.env`, then `docker compose up`. Each schema
+is created by the service's own Flyway migration (`docs/db/<service>/V1__init_schema.sql`).
+
+Neither service publishes its port: clients use `http://localhost:8080/players/...` and
+`http://localhost:8080/sessions/...` with an API key, as above. `server-moderation-session-service`
+calls `applicant-service`, `server-rules-service` and `discord-dms-service` through the Gateway's
+internal port (`GATEWAY_URL=http://gateway-service:8090`, all three `*_CLIENT_MODE=http`). Watch a
+shift live with:
+
+```bash
+curl -N -H "Authorization: Bearer <key>" http://localhost:8080/sessions/<session-id>/events
+```
+
+Test them with `docs/postman/player-service.postman_collection.json` and
+`docs/postman/server-moderation-session-service.postman_collection.json`, from Postman (set the
+collection variable `apiKey`) or from the command line:
+
+```bash
+npx newman run docs/postman/player-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/server-moderation-session-service.postman_collection.json --env-var apiKey=<key>
+```
+
+The services' own health endpoints (`/actuator/health`) are checked by Compose (`docker compose ps`
+shows `healthy`); they are not routed through the Gateway.
+
 ### Running `moderation-service` and `discord-dms-service`
 
-The root `docker-compose.yml` runs both services from their published DockerHub images, each
+The root `docker-compose.yml` runs both services from their DockerHub images (`0.3.0`), each
 against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
 `moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
 persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
-`MODERATION_POSTGRES_PASSWORD` (it must not contain `;`), and `DMS_REDIS_PASSWORD` (it must not
-contain `,`) in `.env`, then run `docker compose up`.
+`MODERATION_POSTGRES_PASSWORD` (it must not contain `;`), `DMS_REDIS_PASSWORD` (it must not contain
+`,`), and `GATEWAY_WS_TICKET_SECRET` in `.env`, then run `docker compose up`.
 
-`moderation-service` is reachable at `http://localhost:8087` and `discord-dms-service` at
-`http://localhost:8088`; their databases are not published to the host. `moderation-service` calls
-the real `server-rules-service` and `university-record-service` over HTTP, while its credential
-lookups stay mocked (`Downstream__Credential__Mode: Mock`), because its Postman collection records
-decisions against the demo credentials of the mock.
+Clients reach both through the Gateway with an API key, as above, for example
+`http://localhost:8080/decisions/{id}` and `http://localhost:8080/notifications/{id}`; their
+databases are not published to the host. `moderation-service` publishes no port. It calls
+`credential-service`, `server-rules-service`, and `university-record-service` through the
+Gateway's internal port (`Downstream__<Name>__BaseUrl: http://gateway-service:8090`, all three in
+`Http` mode), so its Postman collection records decisions against the demo credentials loaded by
+the seed of `credential-service` (see below).
+
+`discord-dms-service` publishes `8088` only for the chat WebSocket. The Gateway signs chat tickets
+with `GATEWAY_WS_TICKET_SECRET` (at least 32 bytes), and `discord-dms-service` accepts only the
+tickets signed with the same value; while it is empty, the chat is switched off on both sides
+(`503 WEBSOCKET_UNAVAILABLE`). To join a chat, negotiate a ticket as shown in
+[`gateway-service` — WebSocket negotiation](#gateway-service--websocket-negotiation) and open the
+returned `url` with a WebSocket client before `expiresAt`.
 
 Test them with `docs/postman/moderation-service.postman_collection.json` and
-`docs/postman/discord-dms-service.postman_collection.json`, from Postman or from the command line:
+`docs/postman/discord-dms-service.postman_collection.json`, from Postman (set the collection
+variable `apiKey`) or from the command line:
 
 ```bash
-npx newman run docs/postman/moderation-service.postman_collection.json
-npx newman run docs/postman/discord-dms-service.postman_collection.json
+npx newman run docs/postman/moderation-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/discord-dms-service.postman_collection.json --env-var apiKey=<key>
 ```
+
+Both services enforce a request timeout (`504 REQUEST_TIMEOUT`) and a concurrency limit
+(`503 TOO_MANY_REQUESTS` with `Retry-After: 1`), set in `.env` with `MODERATION_REQUEST_TIMEOUT_MS`,
+`MODERATION_MAX_CONCURRENT_REQUESTS`, `DMS_REQUEST_TIMEOUT_MS`, and `DMS_MAX_CONCURRENT_REQUESTS`
+(8000 ms and 100 requests by default). Their own health endpoints (`/health`) are checked by
+Compose (`docker compose ps` shows `healthy`); they are not routed through the Gateway.
 
 `docs/db/moderation-service/schema.sql` is the PostgreSQL schema that `moderation-service` creates
 through its EF Core migrations when it starts, and `docs/db/discord-dms-service/` lists the Redis
@@ -1280,21 +1743,42 @@ cp .env.example .env   # fill in real values - .env is gitignored, never commit 
 docker compose up
 ```
 
-`server-rules-service` is reachable at `http://localhost:8085`, `university-record-service` at
-`http://localhost:8086`. Postman collections for both are in `docs/postman/`, and the underlying
-DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are inlined above
-under [Endpoint Contracts](#endpoint-contracts) — both service repos are private, so this CPR copy
-is the only one teammates without repo access can actually read.
+Both services are only reachable through the API Gateway at `http://localhost:8080` — their internal
+ports (`8085`, `8086`) are not published to the host. Use the endpoint paths from the contract
+section above, prefixed with the gateway address and sent with an API key, as above: for example
+`GET http://localhost:8080/rulesets/active` or `GET http://localhost:8080/records/faculties`. The
+underlying DB scripts are in `docs/db/`. Full endpoint contracts and error codes for both are
+inlined above under [Endpoint Contracts](#endpoint-contracts) — both service repos are private,
+so this CPR copy is the only one teammates without repo access can actually read.
+
+Test them with `docs/postman/server-rules-service.postman_collection.json` and
+`docs/postman/university-record-service.postman_collection.json`, from Postman (set the collection
+variable `apiKey`) or from the command line:
+```
+npx newman run docs/postman/server-rules-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/university-record-service.postman_collection.json --env-var apiKey=<key>
+```
 
 ### Running `applicant-service` and `credential-service`
 
 The same `docker-compose.yml` runs both services, each against its own Redis 7 (append-only
-persistence on the `applicant-redis-data` and `credential-redis-data` volumes), wired to each other
-and to `university-record-service` over HTTP:
+persistence on the `applicant-redis-data` and `credential-redis-data` volumes). As introduced in
+Laboratory 2, all inter-service REST communication is routed through the API Gateway, and neither
+service exposes its port directly to the host:
 
 ```text
-applicant-service :8083 --POST /credentials/issue--> credential-service :8084 --POST /records/students/lookup--> university-record-service :8086
+applicant-service --> gateway-service :8090 (/credentials/issue) --> credential-service
+credential-service --> gateway-service :8090 (/records/students/lookup) --> university-record-service
 ```
+
+Both services are only reachable from the host through the API Gateway at `http://localhost:8080` (e.g.
+`http://localhost:8080/applicants/...` and `http://localhost:8080/credentials/...`). Their internal ports
+(`8083`, `8084`) are private to the Docker network.
+
+Both services enforce request timeouts (returning `504 REQUEST_TIMEOUT`) and concurrent task throttling
+(returning `503 TOO_MANY_REQUESTS` with `Retry-After: 1`), configurable via environment variables in `.env`:
+`APPLICANT_MAX_THREADS`, `APPLICANT_REQUEST_TIMEOUT_MS`, `CREDENTIAL_MAX_THREADS`, `CREDENTIAL_REQUEST_TIMEOUT_MS`
+(defaulting to 200 threads and 5000 ms timeout).
 
 Set `APPLICANT_REDIS_PASSWORD` and `CREDENTIAL_REDIS_PASSWORD` in `.env` (they must not contain `,`),
 then `docker compose up`. Before each service starts, the one-shot `applicant-seed` and
@@ -1304,12 +1788,12 @@ belong to the session `5e55a0e0-0000-4000-8000-000000000001` and cover one case 
 student, another major claiming FAF, a graduate claiming enrollment, an impostor with a real
 student's ID, an honest teaching assistant, and an outsider with an invented ID.
 
-Test them with `docs/postman/applicant-service.postman_collection.json` and
+Test them through the gateway with `docs/postman/applicant-service.postman_collection.json` and
 `docs/postman/credential-service.postman_collection.json`, from Postman or from the command line:
 
 ```bash
-npx newman run docs/postman/credential-service.postman_collection.json
-npx newman run docs/postman/applicant-service.postman_collection.json
+npx newman run docs/postman/credential-service.postman_collection.json --env-var baseUrl=http://localhost:8080
+npx newman run docs/postman/applicant-service.postman_collection.json --env-var baseUrl=http://localhost:8080
 ```
 
 Both services also run on their own, without Docker or other services: each repository's
