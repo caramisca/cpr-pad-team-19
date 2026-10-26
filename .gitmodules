@@ -32,3 +32,6 @@
 [submodule "services/gateway-service"]
 	path = services/gateway-service
 	url = https://github.com/diana7376/gateway-service
+[submodule "services/service-discovery"]
+	path = services/service-discovery
+	url = https://github.com/DariaRateeva/service-discovery.git
