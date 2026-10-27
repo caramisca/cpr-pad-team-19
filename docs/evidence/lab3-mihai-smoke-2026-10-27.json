@@ -1,0 +1,14 @@
+{
+  "project": "pad-lab3-smoke-e183759d",
+  "version": "0.4.0",
+  "registry_dependency": "mocked",
+  "checks": [
+    "applicant-service: two unique healthy registered replicas",
+    "credential-service: two unique healthy registered replicas",
+    "public auth rejects missing key and accepts fixture key",
+    "real applicant-to-credential call, shared Redis reads, round-robin, and visible request/instance log IDs",
+    "dynamic scale 2 -> 3 -> 2 with registration/deregistration",
+    "heartbeat 404 triggers re-registration after SD restart",
+    "real dependency failures trip applicant circuit; recovery succeeds after restart"
+  ]
+}
