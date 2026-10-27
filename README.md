@@ -1487,6 +1487,23 @@ To ensure code quality, predictable releases, and equal team collaboration, all 
 Common Public Repository and the underlying microservices follow strict GitHub workflow rules. Direct
 pushes to protected branches are blocked by GitHub Rulesets.
 
+### Laboratory 2/3 common-service exceptions
+
+The Java/C# language restriction and professor-only collaborator rule apply to the eight
+individual domain-service repositories. The laboratory instructions explicitly require the
+shared **Gateway** (Lab 2) and **Service Discovery** (Lab 3) to use the team's previously banned
+language, Python, and to include the professor and all teammates as collaborators.
+These shared repositories are private but require peer review like the CPR; they do not use
+the individual-service owner-merge exception described below.
+
+Keep `main` and `dev` protected in each common repository. The Gateway owner must apply and
+verify the reviewed branch rules: committing ruleset JSON alone does not enable protections.
+Every feature begins from current `dev`, targets `dev` in a PR, uses Conventional Commits and
+includes Summary, Milestone / Grade Reference and Verification. The CPR PR template records
+these fields. A release is a separate `dev` to `main` PR using a merge commit, followed by the
+version tag and verified publishing CI. Lab 3 application image version is `0.4.0` for all ten
+application services; upstream database image versions are independent.
+
 ### Branching Strategy
 
 The repository employs a two-tier branch hierarchy:
