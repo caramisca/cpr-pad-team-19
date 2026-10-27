@@ -18,7 +18,7 @@ services:
   # gateway, on the internal port. No depends_on the gateway: the gateway depends on this service,
   # and the calls only happen once a request arrives.
   moderation-service:
-    image: andiblindu1/moderation-service:0.3.0
+    image: andiblindu1/moderation-service:0.4.0
     environment:
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
       Downstream__Rules__Mode: Http
@@ -58,7 +58,7 @@ services:
   # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
   # gateway returns.
   discord-dms-service:
-    image: andiblindu1/discord-dms-service:0.3.0
+    image: andiblindu1/discord-dms-service:0.4.0
     ports:
       - "8088:8088"
     environment:
@@ -94,7 +94,7 @@ services:
       retries: 12
 
   server-rules-service:
-    image: diana7376/server-rules-service:0.3.0
+    image: diana7376/server-rules-service:0.4.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
@@ -111,7 +111,7 @@ services:
       - rules-mongo-data:/data/db
 
   university-record-service:
-    image: diana7376/university-record-service:0.3.0
+    image: diana7376/university-record-service:0.4.0
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
@@ -131,14 +131,20 @@ services:
       - record-postgres-data:/var/lib/postgresql/data
 
   applicant-service:
-    image: caramisca/applicant-service:0.3.0
+    deploy:
+      replicas: ${APPLICANT_REPLICAS:-2}
+    image: caramisca/applicant-service:0.4.0
     environment:
+      Storage__Provider: Redis
+      ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
       Services__CredentialServiceMode: Http
       Services__CredentialServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${APPLICANT_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${APPLICANT_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       applicant-seed:
         condition: service_completed_successfully
       credential-service:
@@ -174,14 +180,20 @@ services:
     restart: "no"
 
   credential-service:
-    image: caramisca/credential-service:0.3.0
+    deploy:
+      replicas: ${CREDENTIAL_REPLICAS:-2}
+    image: caramisca/credential-service:0.4.0
     environment:
+      Storage__Provider: Redis
+      ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
       Services__UniversityRecordMode: Http
       Services__UniversityRecordServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${CREDENTIAL_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${CREDENTIAL_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       credential-seed:
         condition: service_completed_successfully
       university-record-service:
@@ -216,7 +228,7 @@ services:
 
   # Not published to the host: clients reach it only through the gateway (Lab 2).
   player-service:
-    image: drateeva/player-service:0.3.0
+    image: drateeva/player-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
@@ -252,7 +264,7 @@ services:
   # the internal port. No depends_on the gateway: the gateway depends on this service, and the calls
   # only happen once a request arrives.
   server-moderation-session-service:
-    image: drateeva/server-moderation-session-service:0.3.0
+    image: drateeva/server-moderation-session-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
@@ -293,10 +305,12 @@ services:
   # that owns it without the Authorization header. Port 8090 is the internal port for the services'
   # calls to each other (no key needed): it is deliberately not published to the host.
   gateway-service:
-    image: diana7376/gateway-service:0.3.0
+    image: diana7376/gateway-service:0.4.0
     ports:
       - "8080:8080"
     environment:
+      SD_URL: http://service-discovery:8089
+      SD_POLL_INTERVAL_SECONDS: ${GATEWAY_SD_POLL_INTERVAL_SECONDS:-5}
       AUTH_API_KEYS: ${GATEWAY_API_KEYS}
       GATEWAY_INTERNAL_PORT: 8090
       WS_TICKET_SECRET: ${GATEWAY_WS_TICKET_SECRET}
@@ -321,6 +335,8 @@ services:
     # Started, not healthy: the gateway only connects to a service when a request for it arrives,
     # and answers 502 UPSTREAM_UNAVAILABLE while that service is still starting.
     depends_on:
+      service-discovery:
+        condition: service_healthy
       player-service:
         condition: service_started
       server-moderation-session-service:
@@ -337,6 +353,23 @@ services:
         condition: service_started
       discord-dms-service:
         condition: service_started
+
+
+  # Control plane, private to this Compose network. One process: the registry is in memory.
+  service-discovery:
+    image: caramisca/service-discovery:0.4.0
+    environment:
+      DISCOVERY_PORT: 8089
+      INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}
+      POLL_INTERVAL_SECONDS: ${DISCOVERY_POLL_INTERVAL_SECONDS:-10}
+      MAX_CONCURRENT_REQUESTS: ${DISCOVERY_MAX_CONCURRENT_REQUESTS:-200}
+      REQUEST_TIMEOUT_SECONDS: ${DISCOVERY_REQUEST_TIMEOUT_SECONDS:-5}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8089/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
 volumes:
   moderation-postgres-data:

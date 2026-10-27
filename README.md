@@ -622,7 +622,7 @@ Response `204 No Content`, or `404 APPLICANT_NOT_FOUND`.
 
 Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is unreachable:
 ```json
-{ "status": "Healthy", "service": "applicant-service", "version": "string", "checks": { "redis": "Healthy" } }
+{ "status": "Healthy", "service": "applicant-service", "version": "0.4.0", "checks": { "redis": "Healthy" }, "instanceId": "container-hostname", "activeThreads": 0, "maxThreads": 200, "load": "NORMAL" }
 ```
 
 `404 APPLICANT_NOT_FOUND` is also returned for an id that is not a UUID. Unmatched routes return
@@ -737,7 +737,7 @@ Response `204 No Content`, or `404 CREDENTIAL_NOT_FOUND`.
 
 Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is unreachable:
 ```json
-{ "status": "Healthy", "service": "credential-service", "version": "string", "checks": { "redis": "Healthy" } }
+{ "status": "Healthy", "service": "credential-service", "version": "0.4.0", "checks": { "redis": "Healthy" }, "instanceId": "container-hostname", "activeThreads": 0, "maxThreads": 200, "load": "NORMAL" }
 ```
 
 Unmatched routes return `404 NOT_FOUND`, wrong methods `405 METHOD_NOT_ALLOWED`, and unexpected
@@ -1819,3 +1819,48 @@ Both services also run on their own, without Docker or other services: each repo
 at `/swagger` on both.
 
 
+
+## Laboratory 3 integration and release
+
+The Lab 3 Compose configuration targets **0.4.0 for all ten application images**, including
+Gateway and Service Discovery. PostgreSQL, Redis and MongoDB keep their upstream database
+versions. This configuration prepares the release; a versioned image reference is not evidence
+that the image is already published. Before the final release run:
+
+```powershell
+python scripts/check_lab3_release.py
+python scripts/check_lab3_release.py --require-published
+```
+
+The first check validates Compose, all application image tags, private control-plane ports and
+Mihai's replica settings. The publication check additionally requires unauthenticated public
+DockerHub access, linux/amd64 and linux/arm64 manifests, and a `latest` digest matching `0.4.0`
+for each image. It fails on missing images instead of substituting `0.3.0`. The release workflow
+runs the publication check on PRs to `main`; do not release while it is failing.
+
+Applicant and Credential start with two replicas (`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`),
+each advertising its own address and using its service's shared Redis. They register/heartbeat
+with the private Service Discovery at `http://service-discovery:8089`. Gateway discovers them
+using `SD_URL` and refreshes every five seconds by default in this Compose stack. Business HTTP
+calls continue through Gateway port 8090; registration/monitoring are private control-plane calls.
+Neither 8089 nor 8090 is published. The Gateway's public port remains 8080 with API-key validation.
+
+Other services remain single-instance until their owners' lifecycle/state changes are verified.
+In particular, scaling DMS without first solving its fixed public WebSocket port would break
+Lab 2 negotiation. Shared business state, event consumers and SSE/WS behavior must be checked
+by their owners before scaling them.
+
+Applicant/Credential `/health` now distinguishes storage health from load: active business
+requests versus capacity, `NORMAL` at most 50%, `HIGH` above 50% up to 80%, `CRITICAL` above 80%.
+It remains exempt from limits and includes the unique instance ID. Incoming/outgoing calls share
+`X-Request-Id`. Their singleton business-dependency circuits open on three failures within task
+timeout ? 3.5 (17.5 s with a five-second task timeout), admit one recovery probe, and never retry
+a business POST automatically. Physical-instance eviction remains Gateway's Grade 10 task.
+The shared Service Discovery/status contract is coordinated with Daria; see the registry's own
+README for its exact API until the common contract PR is merged.
+
+[Lab 3 runbook](docs/LAB_3_RUNBOOK.md) records integration order, PR dependencies, verification
+commands and remaining team requirements. `python scripts/lab3_smoke.py` tests locally available
+Lab 3 images in a unique temporary Compose project and cleans up only that project's resources.
+It covers Mihai's replicas, discovery and resilience; the university registry is mocked in that
+smoke test, so it does not replace the final full-team demonstration.
