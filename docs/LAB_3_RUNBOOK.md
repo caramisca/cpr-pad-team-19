@@ -9,12 +9,16 @@ not demonstrate the full team's SSE, WebSocket, notification and physical-instan
 |---|---|---|
 | Service Discovery | [#5: status/logs](https://github.com/DariaRateeva/service-discovery/pull/5) | Current registry/polling API |
 | Service Discovery | [#6: Docker and tested publishing](https://github.com/DariaRateeva/service-discovery/pull/6) | Owner configures DockerHub secrets and public repository |
+| Service Discovery | [#7: monitoring circuits and notifier handoff](https://github.com/DariaRateeva/service-discovery/pull/7) | Status timeout from #5; notifier implementation from Andi #3 |
 | Gateway | [#12: discovery integration](https://github.com/diana7376/gateway-service/pull/12) | Existing SD API; preserves hooks for Andi |
 | Gateway | [#13: branch protections](https://github.com/diana7376/gateway-service/pull/13) | Owner/admin applies the script; merging JSON alone is insufficient |
 | Gateway | [#14: 0.4.0 publication preparation](https://github.com/diana7376/gateway-service/pull/14) | Feature integration and reviewed `dev → main` release |
-| Applicant | [#9: replica lifecycle/resilience](https://github.com/caramisca/applicant-service/pull/9) | Private owner-merge exception; CPR peer review still required |
-| Credential | [#10: replica lifecycle/resilience](https://github.com/caramisca/credential-service/pull/10) | Same private-repository rule |
-| CPR | Discovery/replica Compose and version checks | Keep draft until required images are public and submodules point to reviewed releases |
+| Applicant | [#9 feature](https://github.com/caramisca/applicant-service/pull/9), [#10 release](https://github.com/caramisca/applicant-service/pull/10) | Merged; v0.4.0 and public multi-platform image verified |
+| Credential | [#10 feature](https://github.com/caramisca/credential-service/pull/10), [#11 release](https://github.com/caramisca/credential-service/pull/11) | Merged; v0.4.0 and public multi-platform image verified |
+| CPR | [#197: Compose, smoke and release checks](https://github.com/caramisca/cpr-pad-team-19/pull/197) | Draft until required public images and release pointers are verified |
+| CPR | [#198: workflow clarification](https://github.com/caramisca/cpr-pad-team-19/pull/198) | Peer approval |
+| CPR | [#199: actual private-service release pointers](https://github.com/caramisca/cpr-pad-team-19/pull/199) | Public images/manifests verified; peer approval |
+| CPR | [#200: all eight Gateway-health Postman checks](https://github.com/caramisca/cpr-pad-team-19/pull/200) | Gateway 0.4.0 release; 8 requests / 64 assertions passed |
 
 The common repositories require an approval by another teammate, conversation resolution,
 feature PRs into `dev`, and a reviewed release PR `dev → main`. Features normally squash into
@@ -22,7 +26,7 @@ feature PRs into `dev`, and a reviewed release PR `dev → main`. Features norma
 Individual Applicant/Credential repositories follow the explicit owner-merge exception in the
 CPR README because classmates must not be added as collaborators there.
 
-The status and Docker SD changes were tested together on a local validation branch; that branch
+All three SD changes were tested together (73 tests passed) on a local validation branch; that branch
 is not a substitute for peer approval or an integration-branch merge. The same applies to the
 Gateway discovery/version combination used for the smoke test.
 
@@ -32,7 +36,7 @@ The required code and reproducible smoke test are available for review. Diana's 
 round-robin and monitoring work can be validated against it. The shared stack is ready for her
 without local source access to private services only after:
 
-1. SD #5/#6 and Gateway #12/#14 are reviewed and merged into `dev`.
+1. SD #5/#6/#7 and Gateway #12/#14 are reviewed and merged into `dev`.
 2. SD has a public DockerHub repository and CI credentials with push permission for the configured
    namespace (`caramisca/service-discovery` in this delivery).
 3. Reviewed common-service releases publish `0.4.0`, and the other application owners publish
@@ -65,6 +69,12 @@ Different application images naturally have different digests.
 At the initial 27 October audit, the nine pre-existing images had public `0.3.0` tags, no public
 `0.4.0` tags were found, and SD had not been published. This is a dated observation, not current
 release proof; rerun the gate after the owners' publishing workflows finish.
+
+Later in the same session, Applicant and Credential were released through their own feature and
+milestone PRs. Their public `0.4.0` tags, amd64/arm64 platforms and matching `latest` digests were
+verified, with Git release tags fixed to the main merge commits. CPR #199 records the manifests
+and release pointers. The remaining eight application images still require their owners' release
+steps; a locally built common-service image is not counted as public publication.
 
 ## Running the release stack
 
@@ -127,8 +137,8 @@ verification and the final full-team stack.
   discovery hooks alone do not implement these tasks.
 - SD polling-to-notifier connection after the notification PR is rebased onto Diana's poller,
   including real-channel alert receipt with credentials kept local/secret.
-- Confirm ownership and required breaker behavior for SD's outbound monitoring calls; the PDF's
-  G7 language covers callers and this was not explicitly assigned in the initial split.
+- Merge SD #7 for outbound monitor circuit protection and the poller/notifier handoff; it was
+  verified together with #5/#6. Physical-instance business-routing eviction remains Gateway work.
 - Other owners' lifecycle/state changes, outbox/event consistency, shared rate limits and
   SSE/WS behavior across their replicas, followed by real full-team E2E.
 - ≥80% required coverage, clean staged diffs, current image manifests and release pointers,
