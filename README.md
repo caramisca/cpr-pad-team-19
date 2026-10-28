@@ -171,6 +171,10 @@ Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
   Gateway validates it and never forwards the header. The services call each other through its
   internal port `8090` (no key, not published to the host). See
   [`gateway-service` — authorization](#gateway-service--authorization).
+- **Circuit breaker:** 3 failed calls to a service within the task timeout x 3.5 trip its circuit,
+  and its requests get `503 CIRCUIT_OPEN` until a trial request succeeds. With the Service
+  Discovery, a discovered instance whose circuit trips is removed: it leaves the round-robin and is
+  deregistered. See [`gateway-service` — circuit breaker](#gateway-service--circuit-breaker).
 - **Calls:** all downstream services over HTTP.
 
 
@@ -1492,6 +1496,8 @@ a service.
 | `404` | `ROUTE_NOT_FOUND` | No service owns the path |
 | `502` | `UPSTREAM_UNAVAILABLE` | The service is unreachable |
 | `503` | `AUTHORIZATION_UNAVAILABLE` | Port `8080` while the Gateway has no API keys configured |
+| `503` | `CIRCUIT_OPEN` | The service's circuit is open: it failed too often lately, see [`gateway-service` — circuit breaker](#gateway-service--circuit-breaker). With the Service Discovery, only while every instance left in the rotation has its trial request on its way. Sent with `Retry-After`, the seconds until a request may get through again |
+| `503` | `NO_AVAILABLE_INSTANCES` | Every discovered instance of the service is removed for now, see [`gateway-service` — circuit breaker](#gateway-service--circuit-breaker) |
 | `503` | `TOO_MANY_REQUESTS` | The Gateway's concurrent request limit is reached (`Retry-After: 1`) |
 | `503` | `WEBSOCKET_UNAVAILABLE` | `POST /ws/negotiate` while `WS_TICKET_SECRET` is not set |
 | `504` | `REQUEST_TIMEOUT` / `UPSTREAM_TIMEOUT` | The service didn't answer in time |
@@ -1517,6 +1523,38 @@ to those of each service.
 
 Keep `REQUEST_TIMEOUT_SECONDS` above the services' own task timeouts. A slow service then reports
 its own error before the Gateway gives up on it, and the client learns which part was slow.
+
+#### `gateway-service` — circuit breaker
+
+Lab 3, Grades 7 and 10: the Gateway keeps one circuit per service address. A service that keeps
+failing gets a rest instead of more requests, and its clients get an answer at once instead of
+waiting out the task timeout every time.
+
+- **Failures:** `502 UPSTREAM_UNAVAILABLE`, `504 UPSTREAM_TIMEOUT`, `504 REQUEST_TIMEOUT`, and every
+  `5xx` the service answers. A `4xx` is the service doing its job, so it is not one.
+- **Closed,** the normal state: every request goes through. `CIRCUIT_BREAKER_FAILURES` (3) failed
+  calls within `CIRCUIT_BREAKER_WINDOW_SECONDS` (the task timeout x 3.5, so 35 s by default) trip
+  the circuit. Each failure is logged as a `WARNING` with the count so far, the trip as an `ERROR`.
+- **Open:** for `CIRCUIT_BREAKER_OPEN_SECONDS` (as long as the window by default), every request to
+  the service gets `503 CIRCUIT_OPEN` straight away, with `Retry-After` set to the seconds left. None
+  of them reaches the service.
+- **Half-open:** then the next request goes through as a trial. If the trial succeeds the circuit
+  closes; if it fails the circuit opens again for another `CIRCUIT_BREAKER_OPEN_SECONDS`.
+
+With the Service Discovery, the address is the instance the round-robin picked, so every instance of
+a service has its own circuit, and an instance whose circuit trips is removed:
+
+- It leaves the Gateway's round-robin at once, for `CIRCUIT_BREAKER_OPEN_SECONDS`, and the Gateway
+  deregisters it from the Service Discovery (`DELETE /instances/{serviceName}/{instanceId}`). The
+  request that tripped the circuit is answered as before (`502`, `504` or the service's `5xx`); the
+  ones after it go to the other instances.
+- An instance that is still alive registers again when its next heartbeat gets `404`. Once the open
+  period is over, its first request is the trial: success puts it back in the rotation, failure
+  removes it again.
+- With every instance of the service removed, its requests get `503 NO_AVAILABLE_INSTANCES` for the
+  open period; none is sent to a removed address.
+- An address the Service Discovery never listed (the static `*_SERVICE_URL` while no instance is
+  registered) has nothing to remove, so its circuit works as above, with `503 CIRCUIT_OPEN`.
 
 ## Contribution Workflow & GitHub Rules
 
@@ -1655,7 +1693,7 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | :--- | :--- | :--- |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8087` (internal only — route through the gateway on `8080`). |
 | `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
