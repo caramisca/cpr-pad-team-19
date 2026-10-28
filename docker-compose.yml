@@ -16,10 +16,14 @@ services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # credential-service, server-rules-service and university-record-service also go through the
   # gateway, on the internal port. No depends_on the gateway: the gateway depends on this service,
-  # and the calls only happen once a request arrives.
+  # and the calls only happen once a request arrives. Every replica registers with
+  # service-discovery under its container hostname, and the gateway finds the replicas there (Lab 3).
   moderation-service:
+    deploy:
+      replicas: ${MODERATION_REPLICAS:-2}
     image: andiblindu1/moderation-service:0.4.0
     environment:
+      ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
       Downstream__Rules__Mode: Http
       Downstream__Rules__BaseUrl: http://gateway-service:8090
@@ -37,6 +41,8 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       moderation-postgres:
         condition: service_healthy
 
@@ -56,27 +62,43 @@ services:
 
   # Its REST endpoints are called through the gateway (Lab 2). Port 8088 stays published for the
   # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
-  # gateway returns.
+  # gateway returns. Every instance registers with service-discovery under its container hostname,
+  # and the gateway finds the instances there (Lab 3).
   discord-dms-service:
     image: andiblindu1/discord-dms-service:0.4.0
     ports:
       - "8088:8088"
-    environment:
+    environment: &dms-environment
+      ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
       # The gateway's WS_TICKET_SECRET: the chat accepts only the tickets the gateway signs with it.
       Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
       Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
       Limits__MaxConcurrentRequests: ${DMS_MAX_CONCURRENT_REQUESTS:-100}
     # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
-    healthcheck:
+    healthcheck: &dms-healthcheck
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8088 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    depends_on:
+    depends_on: &dms-depends-on
+      service-discovery:
+        condition: service_healthy
       dms-redis:
         condition: service_healthy
+
+  # More instances of discord-dms-service, with the same image and settings. A host port belongs to
+  # one container, so only discord-dms-service publishes 8088 for the chat; these publish no port,
+  # as the gateway reaches them on the Compose network. Chat messages and session.closed pass
+  # between all instances over Redis, so the chats still reach every client.
+  discord-dms-service-replica:
+    deploy:
+      replicas: ${DMS_EXTRA_REPLICAS:-1}
+    image: andiblindu1/discord-dms-service:0.4.0
+    environment: *dms-environment
+    healthcheck: *dms-healthcheck
+    depends_on: *dms-depends-on
 
   dms-redis:
     image: redis:7.4-alpine
@@ -94,13 +116,20 @@ services:
       retries: 12
 
   server-rules-service:
+    deploy:
+      replicas: ${RULES_REPLICAS:-2}
     image: diana7376/server-rules-service:0.4.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
+      SERVICE_URL: http://server-rules-service:8085
     depends_on:
-      - rules-mongo
+      service-discovery:
+        condition: service_healthy
+      rules-mongo:
+        condition: service_started
 
   rules-mongo:
     image: mongo:7
@@ -111,6 +140,8 @@ services:
       - rules-mongo-data:/data/db
 
   university-record-service:
+    deploy:
+      replicas: ${RECORD_REPLICAS:-2}
     image: diana7376/university-record-service:0.4.0
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
@@ -118,8 +149,13 @@ services:
       DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
       MAX_THREADS: ${RECORD_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RECORD_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
+      SERVICE_URL: http://university-record-service:8086
     depends_on:
-      - record-postgres
+      service-discovery:
+        condition: service_healthy
+      record-postgres:
+        condition: service_started
 
   record-postgres:
     image: postgres:16
