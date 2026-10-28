@@ -116,13 +116,20 @@ services:
       retries: 12
 
   server-rules-service:
+    deploy:
+      replicas: ${RULES_REPLICAS:-2}
     image: diana7376/server-rules-service:0.4.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
+      SERVICE_URL: http://server-rules-service:8085
     depends_on:
-      - rules-mongo
+      service-discovery:
+        condition: service_healthy
+      rules-mongo:
+        condition: service_started
 
   rules-mongo:
     image: mongo:7
@@ -133,6 +140,8 @@ services:
       - rules-mongo-data:/data/db
 
   university-record-service:
+    deploy:
+      replicas: ${RECORD_REPLICAS:-2}
     image: diana7376/university-record-service:0.4.0
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
@@ -140,8 +149,13 @@ services:
       DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
       MAX_THREADS: ${RECORD_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RECORD_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
+      SERVICE_URL: http://university-record-service:8086
     depends_on:
-      - record-postgres
+      service-discovery:
+        condition: service_healthy
+      record-postgres:
+        condition: service_started
 
   record-postgres:
     image: postgres:16
