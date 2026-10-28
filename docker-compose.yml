@@ -400,6 +400,12 @@ services:
       POLL_INTERVAL_SECONDS: ${DISCOVERY_POLL_INTERVAL_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${DISCOVERY_MAX_CONCURRENT_REQUESTS:-200}
       REQUEST_TIMEOUT_SECONDS: ${DISCOVERY_REQUEST_TIMEOUT_SECONDS:-5}
+      # Health alerts to the developers (Lab 3 Grade 9). An empty value switches that channel off;
+      # with none set, the alerts are only logged.
+      ALERT_DISCORD_WEBHOOK_URL: ${DISCOVERY_ALERT_DISCORD_WEBHOOK_URL:-}
+      ALERT_TELEGRAM_BOT_TOKEN: ${DISCOVERY_ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${DISCOVERY_ALERT_TELEGRAM_CHAT_ID:-}
+      ALERT_COOLDOWN_SECONDS: ${DISCOVERY_ALERT_COOLDOWN_SECONDS:-300}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8089/health', timeout=2)"]
       interval: 10s
