@@ -125,9 +125,12 @@ Owner: Andi — C# (.NET 8) — PostgreSQL
   It publishes the evaluated outcome and lets the interested services react.
 - **Exposes:** `POST /decisions`, `GET /decisions/{id}`, `PATCH /decisions/{id}`,
   `DELETE /decisions/{id}`, `GET /sessions/{id}/decisions`.
-- **Calls:** `credential-service`, `server-rules-service`, `university-record-service`.
+- **Calls:** `credential-service`, `server-rules-service`, `university-record-service`, each
+  behind a circuit breaker ([see Circuit Breaker](#circuit-breaker)).
 - **Publishes:** `decision.recorded`, `decision.evaluated`, `verdict.issued`, `decision.amended`,
   `decision.voided`.
+- **Registers with:** `service-discovery`, which the Gateway reads to find the replicas
+  ([see Service Discovery](#service-discovery)).
 
 ### 8. `discord-dms-service`
 
@@ -147,6 +150,8 @@ Owner: Andi — C# (.NET 8) — Redis
   `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`, and the chat WebSocket
   `GET /ws/chat?ticket={ticket}`.
 - **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
+- **Registers with:** `service-discovery`, which the Gateway reads to find the replicas
+  ([see Service Discovery](#service-discovery)).
 
 ### 9. `gateway-service` (API Gateway)
 
@@ -1005,12 +1010,22 @@ Response `200 OK`:
 { "sessionId": "string (uuid)", "decisions": [ "object (same shape as POST /decisions response)" ] }
 ```
 
-**`GET /health`** — service and database health.
+**`GET /health`** — the status of this instance: service and database health, and load
+([see Status Endpoint](#status-endpoint)).
 
 Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when PostgreSQL is
 unreachable:
 ```json
-{ "status": "Healthy", "service": "moderation-service", "version": "string", "checks": { "database": "Healthy" } }
+{
+  "status": "Healthy",
+  "service": "moderation-service",
+  "version": "string",
+  "instanceId": "string",
+  "checks": { "database": "Healthy" },
+  "activeThreads": "integer",
+  "maxThreads": "integer",
+  "load": "string (NORMAL | HIGH | CRITICAL)"
+}
 ```
 
 **Evaluation and scoring.** The expected action is `ACCEPT` when nothing is violated, `BAN` when the
@@ -1028,6 +1043,12 @@ its calls to dependencies, and answered with `504 REQUEST_TIMEOUT`. When
 processed: it is answered at once with `503 TOO_MANY_REQUESTS` and a `Retry-After: 1` header
 instead of waiting for a free slot.
 
+**Request ID.** Every response, errors included, has an `X-Request-Id` header: the caller's
+`X-Request-Id` when it is usable (1 to 64 letters, digits, `.`, `_`, `:`, `-`, as `gateway-service`
+accepts it), otherwise a new UUID. The same ID is sent on the calls to the dependencies and written
+on every log line of the request, so one request can be followed through the logs of the Gateway,
+this service and its dependencies.
+
 **Error codes:**
 
 | Status | `error` | Meaning |
@@ -1043,7 +1064,7 @@ instead of waiting for a free slot.
 | `422` | `CREDENTIAL_APPLICANT_MISMATCH` | The credential belongs to a different applicant. |
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
 | `503` | `NO_ACTIVE_RULESET` | `server-rules-service` has no ruleset in force. Nothing was recorded. |
-| `503` | `DEPENDENCY_UNAVAILABLE` | A dependency timed out, could not be reached, or answered outside its contract. Nothing was recorded. |
+| `503` | `DEPENDENCY_UNAVAILABLE` | A dependency timed out, could not be reached, or answered outside its contract, or its circuit is open ([see Circuit Breaker](#circuit-breaker)). Nothing was recorded. |
 | `503` | `DATABASE_UNAVAILABLE` | PostgreSQL is unreachable. |
 | `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached. The request was not processed; retry after the `Retry-After` delay. |
 | `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
@@ -1149,12 +1170,22 @@ never sent.
 Response `204 No Content`.
 Response `404 Not Found`: `NOTIFICATION_NOT_FOUND`.
 
-**`GET /health`** — service and Redis health.
+**`GET /health`** — the status of this instance: service and Redis health, and load
+([see Status Endpoint](#status-endpoint)).
 
 Response `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when Redis is
 unreachable:
 ```json
-{ "status": "Healthy", "service": "discord-dms-service", "version": "string", "checks": { "redis": "Healthy" } }
+{
+  "status": "Healthy",
+  "service": "discord-dms-service",
+  "version": "string",
+  "instanceId": "string",
+  "checks": { "redis": "Healthy" },
+  "activeThreads": "integer",
+  "maxThreads": "integer",
+  "load": "string (NORMAL | HIGH | CRITICAL)"
+}
 ```
 
 **Delivery.** A background worker sends due notifications to Discord, at most 5 per second so that
@@ -1316,6 +1347,12 @@ paces the delivery worker's calls to Discord. A chat connection stays open for t
 conversation, so `Chat__MaxConnections` (100 by default) caps the connections open on each instance
 instead: the next one is refused before the upgrade with `503 TOO_MANY_REQUESTS` and a
 `Retry-After: 1` header.
+
+**Request ID.** Every response, errors included, has an `X-Request-Id` header: the caller's
+`X-Request-Id` when it is usable (1 to 64 letters, digits, `.`, `_`, `:`, `-`, as `gateway-service`
+accepts it), otherwise a new UUID. The same ID is written on every log line of the request, so a
+request can be followed from the logs of the Gateway into this service. A chat connection keeps the
+ID of its upgrade request, so its join and leave lines carry it too.
 
 **Error codes:**
 
@@ -1616,8 +1653,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
-| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`). Port `8087` (internal only — route through the gateway on `8080`). |
-| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 2: `0.3.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8087` (internal only — route through the gateway on `8080`). |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
 | `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`) | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`) | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`) | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
@@ -1709,7 +1746,7 @@ shows `healthy`); they are not routed through the Gateway.
 
 ### Running `moderation-service` and `discord-dms-service`
 
-The root `docker-compose.yml` runs both services from their DockerHub images (`0.3.0`), each
+The root `docker-compose.yml` runs both services from their DockerHub images (`0.4.0`), each
 against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
 `moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
 persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
@@ -1749,6 +1786,53 @@ Compose (`docker compose ps` shows `healthy`); they are not routed through the G
 `docs/db/moderation-service/schema.sql` is the PostgreSQL schema that `moderation-service` creates
 through its EF Core migrations when it starts, and `docs/db/discord-dms-service/` lists the Redis
 keys of `discord-dms-service`.
+
+#### Service Discovery
+
+Both services run as several instances, and every instance keeps itself in the `service-discovery`
+registry (`ServiceDiscovery__Url: http://service-discovery:8089`), where the Gateway finds the
+instances to send requests to. Once it listens, an instance registers with `POST /instances` under
+its container hostname and its own container address, sends a heartbeat at the interval the
+registry answers with, registers again when a heartbeat gets `404 INSTANCE_NOT_FOUND`, and
+deregisters with `DELETE` before it stops serving. While the registry cannot be reached, the
+instance keeps serving and retries.
+
+The instances keep no state of their own, so any of them answers any request: decisions and the
+outbox of `moderation-service` are in its PostgreSQL database, and the notifications, the Discord
+rate limit and the chat relay of `discord-dms-service` are in its Redis.
+
+- `moderation-service` runs `MODERATION_REPLICAS` replicas (`2` by default), none of them with a
+  published port.
+- `discord-dms-service` is one container that publishes `8088` for the chat, plus
+  `DMS_EXTRA_REPLICAS` more instances (`1` by default) in `discord-dms-service-replica`, with the
+  same image and settings and no port. A host port belongs to one container, so chat clients join
+  through `discord-dms-service`; chat messages and `session.closed` pass between all instances over
+  Redis, so every chat still reaches its clients. A client whose instance stops gets `1001` and can
+  join again with a new ticket from the Gateway.
+
+#### Status Endpoint
+
+`GET /health` of every instance reports its `instanceId` (the container hostname, the ID it
+registers with), `activeThreads` and `maxThreads`, and `load`: `NORMAL` up to half of the capacity
+in use, `HIGH` above half, `CRITICAL` above 80 %. For `moderation-service` the capacity is
+`Limits__MaxConcurrentRequests`; for `discord-dms-service` the load is that of the busier of
+`Limits__MaxConcurrentRequests` and `Chat__MaxConnections`. The endpoint is exempt from the request
+timeout and the concurrency limit, so Compose and `service-discovery` can read it while the
+instance is full. Each change of the load level is logged (`WARNING` when it becomes `CRITICAL`),
+and every log line names the instance and the request ID (`X-Request-Id`).
+
+#### Circuit Breaker
+
+`moderation-service` calls each of its dependencies (`credential-service`, `server-rules-service`,
+`university-record-service`) through a circuit of its own. A call fails when the dependency cannot
+be reached, does not answer within `Downstream__TimeoutSeconds`, answers with a `5xx`, or the
+Gateway answers `404 ROUTE_NOT_FOUND`; any other answer, a `4xx` included, never counts. The third
+failure within 28 s (`CircuitBreaker__Failures` within `CircuitBreaker__WindowSeconds`, by default
+the request timeout x 3.5) opens the circuit: for the next 28 s (`CircuitBreaker__OpenSeconds`) the
+dependency is not called, and a decision that needs it gets `503 DEPENDENCY_UNAVAILABLE` at once.
+The first call after that is a trial, which closes the circuit when it succeeds and opens it again
+when it fails. The circuits live in the memory of each replica, and cover a dependency, not one
+replica of it: taking a failing replica out of rotation is the Gateway's job.
 
 ### Running `server-rules-service` and `university-record-service`
 
