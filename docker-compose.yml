@@ -260,8 +260,12 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Not published to the host: clients reach it only through the gateway (Lab 2).
+  # Not published to the host: clients reach it only through the gateway (Lab 2). Every replica
+  # registers with service-discovery under its container hostname and its own container address,
+  # and the gateway finds the replicas there (Lab 3). All replicas share player-postgres.
   player-service:
+    deploy:
+      replicas: ${PLAYER_REPLICAS:-2}
     image: drateeva/player-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
@@ -269,6 +273,7 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
       TASK_TIMEOUT: ${PLAYER_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${PLAYER_MAX_CONCURRENT_TASKS:-20}
+      DISCOVERY_URL: http://service-discovery:8089
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
       interval: 10s
@@ -276,6 +281,8 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       player-postgres:
         condition: service_healthy
 
@@ -296,8 +303,13 @@ services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # applicant-service, server-rules-service and discord-dms-service also go through the gateway, on
   # the internal port. No depends_on the gateway: the gateway depends on this service, and the calls
-  # only happen once a request arrives.
+  # only happen once a request arrives. Every replica registers with service-discovery under its
+  # container hostname and its own container address (Lab 3). All replicas share session-postgres,
+  # which also carries the live updates between them (LISTEN/NOTIFY), so an SSE stream open on one
+  # replica gets the changes made on any other.
   server-moderation-session-service:
+    deploy:
+      replicas: ${SESSION_REPLICAS:-2}
     image: drateeva/server-moderation-session-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
@@ -310,6 +322,7 @@ services:
       SESSION_MAX_APPLICANTS_PER_SHIFT: ${SESSION_MAX_APPLICANTS_PER_SHIFT:-10}
       TASK_TIMEOUT: ${SESSION_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${SESSION_MAX_CONCURRENT_TASKS:-20}
+      DISCOVERY_URL: http://service-discovery:8089
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
       interval: 10s
@@ -317,6 +330,8 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       session-postgres:
         condition: service_healthy
 
