@@ -1967,10 +1967,12 @@ using `SD_URL` and refreshes every five seconds by default in this Compose stack
 calls continue through Gateway port 8090; registration/monitoring are private control-plane calls.
 Neither 8089 nor 8090 is published. The Gateway's public port remains 8080 with API-key validation.
 
-Other services remain single-instance until their owners' lifecycle/state changes are verified.
-In particular, scaling DMS without first solving its fixed public WebSocket port would break
-Lab 2 negotiation. Shared business state, event consumers and SSE/WS behavior must be checked
-by their owners before scaling them.
+Moderation, Server Rules and University Record also have two replicas configured. DMS has one
+instance publishing the WebSocket port plus one additional internal instance; its Redis relay
+shares chat state. Player and Session still need their owners' discovery/replica configuration.
+Every registered URL must identify one physical container, including for the Java services whose
+Compose `SERVICE_URL` currently names a shared service. Shared state, event consumers and SSE/WS
+behavior must be demonstrated across replicas before claiming full-team completion.
 
 Applicant/Credential `/health` now distinguishes storage health from load: active business
 requests versus capacity, `NORMAL` at most 50%, `HIGH` above 50% up to 80%, `CRITICAL` above 80%.
@@ -1978,11 +1980,15 @@ It remains exempt from limits and includes the unique instance ID. Incoming/outg
 `X-Request-Id`. Their singleton business-dependency circuits open on three failures within task
 timeout ? 3.5 (17.5 s with a five-second task timeout), admit one recovery probe, and never retry
 a business POST automatically. Physical-instance eviction remains Gateway's Grade 10 task.
-The shared Service Discovery/status contract is coordinated with Daria; see the registry's own
-README for its exact API until the common contract PR is merged.
+The shared [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md) documents registration,
+status, heartbeat, monitoring and the Gateway's responsibility for physical-instance removal.
 
 [Lab 3 runbook](docs/LAB_3_RUNBOOK.md) records integration order, PR dependencies, verification
 commands and remaining team requirements. `python scripts/lab3_smoke.py` tests locally available
 Lab 3 images in a unique temporary Compose project and cleans up only that project's resources.
-It covers Mihai's replicas, discovery and resilience; the university registry is mocked in that
-smoke test, so it does not replace the final full-team demonstration.
+It covers Mihai's replicas, discovery, resilience and physical-instance removal. `--real-registry`
+includes published University Record and PostgreSQL; otherwise that dependency is mocked. The
+failing instance and notification receiver are fixtures. These tests do not replace the final
+full-team demonstration or real developer-channel receipt.
+Explicit `--sd-image` and `--gateway-image` overrides allow testing local PR builds under separate
+tags while preserving the published release references in the root Compose file.
