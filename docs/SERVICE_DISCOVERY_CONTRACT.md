@@ -101,6 +101,12 @@ Storage checks determine `Healthy`/200 or `Unhealthy`/503 independently of load.
 and its own health does not fail because a monitored service is down. Status probes do not occupy
 business concurrency slots. Requests propagate `X-Request-Id`; logs identify the physical instance.
 
+A service may add fields of its own after `maxThreads`. SD reads only the HTTP status, `load` and,
+for the alert text, `activeThreads`/`maxThreads`. `server-moderation-session-service` adds its SSE
+streams, `openStreams` (open on this instance) and `maxStreams` (`SSE_MAX_CONNECTIONS`), and its
+`load` is the worse of the task load and the stream load: a replica full of streams reports
+`CRITICAL` (and is alerted) even while its `activeThreads` is low.
+
 ## Monitoring and developer notifications
 
 SD polls registered health endpoints at `POLL_INTERVAL_SECONDS` (default 10 seconds between
@@ -119,7 +125,7 @@ Credentials stay in ignored local environments or CI secrets. Notifications are 
 by cooldown and retried without making registration or polling wait for the external channel.
 Receiving a fixture alert in a test does not prove delivery to a developer's real channel.
 
-The monitoring fix proposed with this delivery confirms a failed health GET with at most two
+The monitoring fix proposed with this delivery (SD #8, not merged into SD `dev` yet) confirms a failed health GET with at most two
 additional probes within the same cycle. Each whole GET is bounded to `min(3 seconds, window / 4)`;
 the circuit still requires three actual failures within `REQUEST_TIMEOUT_SECONDS * 3.5`. A healthy
 response stops confirmation; an open monitor suppresses further probes until its recovery window.
@@ -140,3 +146,11 @@ eligible discovered instances Gateway returns `503 NO_AVAILABLE_INSTANCES`.
 Applicant and Credential also protect their own outbound business dependencies. They call Gateway
 8090 and do not know the physical replica selected downstream: they must not deregister Gateway
 or a shared service address. The physical-removal responsibility remains with Gateway.
+
+`server-moderation-session-service` also keeps one circuit per dependency (`applicant-service`,
+`server-rules-service`, `discord-dms-service`) on its calls through Gateway 8090, and never
+deregisters Gateway or a shared address either. When one of its circuits opens, it asks SD for that
+dependency's instances (`GET /services/{serviceName}/instances`), sends each one's `healthUrl` a
+health check, and deregisters only the physical instances that fail it (no `2xx`, or a `status`
+other than `Healthy`); instances that pass stay registered. It complements Gateway's removal, for an
+instance that fails its health check while Gateway has not yet tripped its circuit.
