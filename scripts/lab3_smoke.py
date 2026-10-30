@@ -70,14 +70,15 @@ def main() -> None:
     gateway["ports"] = [{"target": 8080, "published": str(args.port), "host_ip": "127.0.0.1", "protocol": "tcp"}]
     gateway["environment"].update(AUTH_API_KEYS=f"smoke:{KEY}", SD_POLL_INTERVAL_SECONDS="0.25")
     config["services"]["service-discovery"]["environment"].update(
-        INSTANCE_TTL_SECONDS="6", POLL_INTERVAL_SECONDS="0.25",
+        INSTANCE_TTL_SECONDS="30" if args.real_registry else "6", POLL_INTERVAL_SECONDS="0.25",
         ALERT_DISCORD_WEBHOOK_URL="http://service-discovery:18091/webhook",
         ALERT_TELEGRAM_BOT_TOKEN="", ALERT_TELEGRAM_CHAT_ID="",
     )
     config["services"]["credential-service"]["environment"]["Services__UniversityRecordMode"] = "Http" if args.real_registry else "Mock"
     path.write_text(json.dumps(config), encoding="utf-8")
     compose = ["docker", "compose", "-p", project, "-f", str(path)]
-    summary = {"project": project, "version": "0.4.0", "registry_dependency": "real" if args.real_registry else "mocked", "checks": [],
+    summary = {"project": project, "version": "0.4.0", "registry_dependency": "real" if args.real_registry else "mocked",
+               "registry_ttl_seconds": int(config["services"]["service-discovery"]["environment"]["INSTANCE_TTL_SECONDS"]), "checks": [],
                "images": {name: {"reference": value["image"],
                                   "id": command(["docker", "image", "inspect", "--format", "{{.Id}}", value["image"]])}
                           for name, value in config["services"].items() if name in
@@ -148,7 +149,9 @@ print(json.dumps({'status':response.status,'body':json.loads(raw) if raw else No
                 assert "instance=" + entry["instanceId"] in service_logs
         summary["checks"].append("real applicant-to-credential call, shared Redis reads, round-robin, and visible request/instance log IDs")
         if args.real_registry:
-            assert proxy("/records/faculties")["status"] == 200
+            wait_for(lambda: len(instances("university-record-service")) == 2, "two discovered University Record replicas")
+            for _ in range(4):
+                assert proxy("/records/faculties")["status"] == 200
             issued = proxy("/credentials/issue", {"applicantId": str(uuid.uuid4()), "isLegitimate": True,
                                                   "seed": {"studentId": "1234567890", "faculty": "FAF", "year": 3}})
             assert issued["status"] == 201, issued
@@ -157,8 +160,11 @@ print(json.dumps({'status':response.status,'body':json.loads(raw) if raw else No
             assert "/records/students/lookup" in registry_logs, "Credential did not call the real registry"
             summary["checks"].append("real Applicant -> Gateway -> Credential -> Gateway -> University Record call with PostgreSQL")
             summary["record_instances"] = instances("university-record-service")
-            if not summary["record_instances"]:
-                summary["limitations"] = ["University Record had no registered SD instances at lookup; real dependency calls used Gateway static fallback, not discovered-instance load balancing."]
+            assert len({entry["url"] for entry in summary["record_instances"]}) == 2
+            gateway_logs = command(compose + ["logs", "--no-color", "gateway-service"])
+            for entry in summary["record_instances"]:
+                assert entry["url"] in gateway_logs, "Gateway did not route to both discovered registry replicas"
+            summary["checks"].append("University Record has two discovered physical addresses and both receive Gateway requests")
 
         subprocess.check_call(compose + ["up", "-d", "--no-deps", "--scale", "applicant-service=3", "applicant-service"])
         wait_for(lambda: len(instances("applicant-service")) == 3, "third replica registration")
@@ -167,7 +173,8 @@ print(json.dumps({'status':response.status,'body':json.loads(raw) if raw else No
         summary["checks"].append("dynamic scale 2 -> 3 -> 2 with registration/deregistration")
 
         subprocess.check_call(compose + ["restart", "service-discovery"])
-        wait_for(lambda: len(instances("applicant-service")) == 2 and len(instances("credential-service")) == 2, "re-registration after SD restart")
+        wait_for(lambda: len(instances("applicant-service")) == 2 and len(instances("credential-service")) == 2
+                 and (not args.real_registry or len(instances("university-record-service")) == 2), "re-registration after SD restart")
         summary["checks"].append("heartbeat 404 triggers re-registration after SD restart")
 
         # A fixture fails business GETs while keeping /health healthy: only Gateway G10 removes it.
@@ -189,7 +196,7 @@ class Handler(BaseHTTPRequestHandler):
             status, body = 200, {'alerts': alerts}
         else:
             calls += 1
-            status, body = 503, {'error': 'SMOKE_FAILURE', 'message': 'Controlled failing replica'}
+            status, body = 500, {'error': 'SMOKE_FAILURE', 'message': 'Controlled failing replica'}
         raw = json.dumps(body).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
@@ -215,8 +222,8 @@ HTTPServer(('0.0.0.0', 18091), Handler).serve_forever()
             # Keep the fixture alive until Gateway explicitly deregisters it; TTL is not eviction.
             rpc(f"http://localhost:8089/instances/applicant-service/{bad_id}/heartbeat", "PUT")
             response = proxy("/applicants")
-            assert response["status"] in (200, 503), response
-            if response["status"] == 503:
+            assert response["status"] in (200, 500), response
+            if response["status"] == 500:
                 assert response["body"]["error"] == "SMOKE_FAILURE", response
                 failures.append(time.monotonic())
             return len(failures) == 3 and all(i["instanceId"] != bad_id for i in instances("applicant-service"))

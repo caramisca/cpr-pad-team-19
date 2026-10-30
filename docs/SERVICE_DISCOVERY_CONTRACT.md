@@ -134,7 +134,10 @@ Monitor circuits protect health calls; they do not remove business routing entri
 ## Business circuit breaker and physical removal
 
 Gateway's circuit belongs to one physical downstream address, across its endpoint paths. The third
-transport/timeout/5xx failure inside the task-timeout-times-3.5 window opens it. G10 immediately
+transport/timeout/5xx failure inside the task-timeout-times-3.5 window opens it. Gateway patch
+0.4.1 excludes an upstream 503 busy/dependency reply from this count, so a working caller is not
+removed merely because its dependency is unavailable; other 5xx, transport errors and timeouts
+still count. This does not change SD's separate classification of failed health probes. G10 immediately
 excludes that address from round-robin and asynchronously sends SD DELETE for its instance ID.
 Other healthy replicas remain routable. Static service DNS must not bypass quarantine.
 

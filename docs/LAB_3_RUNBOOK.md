@@ -11,15 +11,15 @@ repositories' `dev` branches; they must not be reimplemented or described as pen
 | Repository | Integrated work | Remaining release step |
 |---|---|---|
 | Service Discovery | #5 status/logs, #6 Docker/CI, #7 monitoring circuits, #3 notifications, #8 bounded confirmation, #10 namespace correction | Release [#9](https://github.com/DariaRateeva/service-discovery/pull/9) merged at `c05074d`; main publication and public `drateeva/service-discovery:0.4.0` verified |
-| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs | Released on `main` at `917726f`; public image verified; CPR pointer update remains in #214 |
+| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs; #19 excludes upstream 503 from instance failures | Released 0.4.0 at `917726f`, pinned through CPR #221; patch 0.4.1 is prepared in Gateway #20 and its release PR |
 | Applicant | #9 feature, #10 release | Released at `5c9b4c0`; public `0.4.0` verified |
 | Credential | #10 feature, #11 release | Released at `55b3d3c`; public `0.4.0` verified |
-| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session release integration | Integrate the SD release pointer/namespace and Gateway pointer; publication gate and final E2E |
+| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session, #217 SD release, #219 per-image versions, #221 Gateway pointer, #222 Rules/Record 0.4.1 | Review patch verification, deliver Gateway 0.4.1 and finalize the reviewed CPR release |
 
-This change pins SD to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway is
-still pinned to old `b5c58fc` until CPR #214 is corrected/integrated to use its release `917726f`.
-A recursive checkout of that old Gateway pointer misses integrated G7/G10 changes, even if Compose
-pulls the new binary. An image name alone neither updates source pointers nor proves publication.
+SD is pinned to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway 0.4.0 is
+correctly pinned to `917726f` through CPR #221. Rules and University Record use their published
+0.4.1 releases through CPR #222. Each future patch must update image, expected version and source
+pointer together; an image name alone neither updates source pointers nor proves publication.
 
 The common repositories require an approval by another teammate, conversation resolution,
 feature PRs into `dev`, and a reviewed release PR `dev -> main`. Features normally squash into
@@ -40,7 +40,8 @@ checks. A successful PR build alone does not publish an image.
 
 Each application image has its own pinned `repository:version` in `IMAGES` in
 `scripts/check_lab3_release.py`, which must match its Compose image. The current baseline uses
-**0.4.0**; independent **0.4.1** patches are supported without changing the other services.
+**0.4.0** for most services, with Rules and University Record at **0.4.1**. Independent patches
+are supported without changing the other services.
 After a patch is published, update only its expected reference, Compose image, release source
 pointer and documentation. Missing/unpublished tags fail the gate; there is no version fallback.
 Database images retain PostgreSQL/MongoDB/Redis upstream versions; seed jobs use the Redis image
@@ -152,10 +153,34 @@ real registry calls succeeded through static fallback. This evidence still does 
 discovered-instance balancing for that service or full-team SSE/WebSocket behavior. Only this
 run's unique temporary Docker project, network and volumes were removed after the test.
 
+On 30 October the full local stack was also tested with Rules/Record 0.4.1. All four reference
+replicas reported version 0.4.1 with distinct instance IDs. Restarting only SD recovered all
+16 business instances in 14.77 seconds; Rules/Record containers were not restarted. Gateway
+GETs for active rules and faculties both returned 200. The
+[re-registration evidence](evidence/lab3-rules-record-reregister-2026-10-30.json) records these
+checks. The former Rules/Record restart workaround is no longer needed for these patch images.
+
+The G10 fixture now returns 500 for a deliberately failing physical instance. Gateway patch #19
+intentionally excludes upstream 503 busy/dependency replies from its failure count, so such a
+reply cannot be used as the evidence for G10 removal after that patch.
+
+The updated real-registry smoke uses SD's production-default 30-second TTL and explicitly waits
+for two University Record registrations. It asserts both physical registry addresses occur in
+Gateway routing logs and that they re-register after SD restart; static fallback no longer counts
+as passing that scenario. The
+[Gateway 0.4.1 review-image smoke](evidence/lab3-gateway041-review-smoke-2026-10-30.json) passed
+all eleven checks with this stricter setup. Its Gateway tag is a local review build, not a claimed
+public release. Earlier dated short-TTL evidence remains unchanged.
+
+The [full local-stack summary](evidence/lab3-local-stack-2026-10-30.json) records 23/23 HTTP
+contract checks, all 16 domain registrations, SSE and a WebSocket message received by two local
+clients. That persistent stack used public Gateway 0.4.0 with Rules/Record 0.4.1. Developer-channel
+Discord/Telegram delivery is still separate from the isolated receiver test.
+
 ## Remaining checks for the complete laboratory
 
-- Peer review and merge of this CPR SD integration and the Gateway pointer correction, followed
-  by the reviewed CPR release. SD #8/#10 and the merge-commit release #9 are already merged.
+- Peer review of patch-verification changes, Gateway 0.4.1 publication/integration and the
+  reviewed CPR release. SD #8/#10/#9 and CPR #217/#219/#221/#222 are already merged.
 - Public `0.4.0` images for every service; successful publication gate before CPR release.
 - Real-channel critical-load alert receipt with credentials kept local. The current local `.env`
   has neither notification channel configured, so fixture tests cannot certify real delivery.
