@@ -1,0 +1,269 @@
+{
+  "checked_at_utc": "2026-10-30T14:34:20.618159+00:00",
+  "project": "pad-team19-local",
+  "cpr_commit": "adcc8a32f5ccab5b49b1e136f3860f195c9aa49b",
+  "images": {
+    "applicant-redis": "redis:7.4-alpine",
+    "applicant-seed": "redis:7.4-alpine",
+    "applicant-service": "caramisca/applicant-service:0.4.0",
+    "credential-redis": "redis:7.4-alpine",
+    "credential-seed": "redis:7.4-alpine",
+    "credential-service": "caramisca/credential-service:0.4.0",
+    "discord-dms-service": "andiblindu1/discord-dms-service:0.4.0",
+    "discord-dms-service-replica": "andiblindu1/discord-dms-service:0.4.0",
+    "dms-redis": "redis:7.4-alpine",
+    "gateway-service": "diana7376/gateway-service:0.4.0",
+    "moderation-postgres": "postgres:16",
+    "moderation-service": "andiblindu1/moderation-service:0.4.0",
+    "player-postgres": "postgres:16",
+    "player-service": "drateeva/player-service:0.4.0",
+    "record-postgres": "postgres:16",
+    "rules-mongo": "mongo:7",
+    "server-moderation-session-service": "drateeva/server-moderation-session-service:0.4.0",
+    "server-rules-service": "diana7376/server-rules-service:0.4.1",
+    "service-discovery": "drateeva/service-discovery:0.4.0",
+    "session-postgres": "postgres:16",
+    "university-record-service": "diana7376/university-record-service:0.4.1"
+  },
+  "discovery_counts": {
+    "moderation-service": 2,
+    "player-service": 2,
+    "server-rules-service": 2,
+    "credential-service": 2,
+    "applicant-service": 2,
+    "university-record-service": 2,
+    "discord-dms-service": 2,
+    "server-moderation-session-service": 2
+  },
+  "health": {
+    "player-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "b4e53425beb3"
+    },
+    "server-moderation-session-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "91e00b8de12f"
+    },
+    "applicant-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "99c52114bc71"
+    },
+    "credential-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "b10e8ac550e9"
+    },
+    "server-rules-service": {
+      "http_status": 200,
+      "version": "0.4.1",
+      "instanceId": "df973b084f15"
+    },
+    "university-record-service": {
+      "http_status": 200,
+      "version": "0.4.1",
+      "instanceId": "d821c53296f6"
+    },
+    "moderation-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "fb4580a194c7"
+    },
+    "discord-dms-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "2a096a746ed1"
+    },
+    "service-discovery": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "8981a4089b79"
+    },
+    "gateway-service": {
+      "http_status": 200,
+      "version": "0.4.0",
+      "instanceId": "70171344bf5f"
+    }
+  },
+  "http_summary": {
+    "passed": 23,
+    "total": 23
+  },
+  "http_checks": [
+    {
+      "name": "Gateway health",
+      "method": "GET",
+      "path": "/health",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Public auth rejects missing key",
+      "method": "GET",
+      "path": "/applicants",
+      "status": 401,
+      "passed": true
+    },
+    {
+      "name": "University faculties",
+      "method": "GET",
+      "path": "/records/faculties",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Seed university student",
+      "method": "GET",
+      "path": "/records/students/1234567890",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "University lookup",
+      "method": "POST",
+      "path": "/records/students/lookup",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Active rules",
+      "method": "GET",
+      "path": "/rulesets/active",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Register demo moderator",
+      "method": "POST",
+      "path": "/players",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "name": "Read moderator",
+      "method": "GET",
+      "path": "/players/d68d6da3-bf67-4e6e-8504-76f61e1e25b7",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Moderator stats",
+      "method": "GET",
+      "path": "/players/d68d6da3-bf67-4e6e-8504-76f61e1e25b7/stats",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Open moderation session",
+      "method": "POST",
+      "path": "/sessions",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "name": "Read session",
+      "method": "GET",
+      "path": "/sessions/1491de74-81d5-4b21-889e-020b9c4b95a1",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Generate applicant",
+      "method": "POST",
+      "path": "/applicants/generate",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "name": "Read applicant",
+      "method": "GET",
+      "path": "/applicants/9dd0c42b-ff50-472e-9c9e-1d1bb6751e2a",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Read presented credential",
+      "method": "GET",
+      "path": "/credentials/03baca12-fa2b-4639-bf54-b04652c23552",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Verify presented hash",
+      "method": "POST",
+      "path": "/credentials/03baca12-fa2b-4639-bf54-b04652c23552/verify-hash",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Issue control authentic credential",
+      "method": "POST",
+      "path": "/credentials/issue",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "name": "Verify authentic hash",
+      "method": "POST",
+      "path": "/credentials/d9a0085a-7cf1-442d-972c-a5247c12ecf9/verify-hash",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Next queued applicant",
+      "method": "GET",
+      "path": "/sessions/1491de74-81d5-4b21-889e-020b9c4b95a1/next-applicant",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Record decision for seeded applicant",
+      "method": "POST",
+      "path": "/decisions",
+      "status": 201,
+      "passed": true
+    },
+    {
+      "name": "Read decision",
+      "method": "GET",
+      "path": "/decisions/69ef5d57-ed76-4978-8ca7-14314e9bc8f9",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Session decisions",
+      "method": "GET",
+      "path": "/sessions/1491de74-81d5-4b21-889e-020b9c4b95a1/decisions",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "Negotiate WebSocket chat",
+      "method": "POST",
+      "path": "/ws/negotiate",
+      "status": 200,
+      "passed": true
+    },
+    {
+      "name": "DMS unknown notification contract",
+      "method": "GET",
+      "path": "/notifications/00000000-0000-4000-8000-000000000000",
+      "status": 404,
+      "passed": true
+    }
+  ],
+  "sse": {
+    "status": 200,
+    "content_type": "text/event-stream"
+  },
+  "websocket": {
+    "connected_clients": 2,
+    "message_received_by_both": true
+  },
+  "limitations": [
+    "This local stack still used public Gateway 0.4.0; Gateway 0.4.1 is a separate reviewed release.",
+    "No real Discord/Telegram developer-channel receipt is claimed."
+  ]
+}

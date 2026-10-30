@@ -1,0 +1,160 @@
+{
+  "checked_at_utc": "2026-10-30T14:17:45.913139+00:00",
+  "project": "pad-team19-local",
+  "checks": [
+    "Four Rules/Record replicas report 0.4.1 and instanceId",
+    "Restarted only Service Discovery",
+    "All eight business services re-registered two instances each",
+    "Rules/Record instance IDs unchanged; no Rules/Record restart used",
+    "Rules and Record business GETs through Gateway return 200"
+  ],
+  "recovery_seconds": 14.77,
+  "counts_before": {
+    "player-service": 2,
+    "credential-service": 2,
+    "discord-dms-service": 2,
+    "server-moderation-session-service": 2,
+    "moderation-service": 2,
+    "applicant-service": 2,
+    "server-rules-service": 2,
+    "university-record-service": 2
+  },
+  "counts_after": {
+    "moderation-service": 2,
+    "player-service": 2,
+    "server-rules-service": 2,
+    "credential-service": 2,
+    "applicant-service": 2,
+    "university-record-service": 2,
+    "discord-dms-service": 2,
+    "server-moderation-session-service": 2
+  },
+  "health_before": {
+    "22b3b3bd7320": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "server-rules-service",
+        "version": "0.4.1",
+        "instanceId": "22b3b3bd7320",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "df973b084f15": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "server-rules-service",
+        "version": "0.4.1",
+        "instanceId": "df973b084f15",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "d821c53296f6": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "university-record-service",
+        "version": "0.4.1",
+        "instanceId": "d821c53296f6",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "cad67dbb37a1": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "university-record-service",
+        "version": "0.4.1",
+        "instanceId": "cad67dbb37a1",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    }
+  },
+  "health_after": {
+    "22b3b3bd7320": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "server-rules-service",
+        "version": "0.4.1",
+        "instanceId": "22b3b3bd7320",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "df973b084f15": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "server-rules-service",
+        "version": "0.4.1",
+        "instanceId": "df973b084f15",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "d821c53296f6": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "university-record-service",
+        "version": "0.4.1",
+        "instanceId": "d821c53296f6",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    },
+    "cad67dbb37a1": {
+      "status": 200,
+      "body": {
+        "status": "Healthy",
+        "service": "university-record-service",
+        "version": "0.4.1",
+        "instanceId": "cad67dbb37a1",
+        "activeThreads": 1,
+        "maxThreads": 200,
+        "load": "NORMAL",
+        "checks": {
+          "database": "Healthy"
+        }
+      }
+    }
+  },
+  "gateway_checks": {
+    "/rulesets/active": 200,
+    "/records/faculties": 200
+  }
+}
