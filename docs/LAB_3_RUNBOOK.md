@@ -38,10 +38,13 @@ checks. A successful PR build alone does not publish an image.
 
 ## Version consistency
 
-All ten application images in the proposed Compose release are fixed at **0.4.0**. Database
-images retain PostgreSQL/MongoDB/Redis upstream versions; seed jobs use the Redis image and
-are not separate application releases. Do not retag old application binaries as `0.4.0` merely
-to make a version check pass.
+Each application image has its own pinned `repository:version` in `IMAGES` in
+`scripts/check_lab3_release.py`, which must match its Compose image. The current baseline uses
+**0.4.0**; independent **0.4.1** patches are supported without changing the other services.
+After a patch is published, update only its expected reference, Compose image, release source
+pointer and documentation. Missing/unpublished tags fail the gate; there is no version fallback.
+Database images retain PostgreSQL/MongoDB/Redis upstream versions; seed jobs use the Redis image
+and are not separate application releases. Do not retag old binaries merely to make a check pass.
 
 ```powershell
 python -m unittest discover -s tests -p test_lab3_release.py
@@ -53,7 +56,7 @@ The first configuration check needs Docker Compose CLI but no running engine. It
 `.env.example`, never prints resolved environments and checks all image references, private
 control-plane ports and the two initial replica counts. The publication check is unauthenticated
 against DockerHub: every image must be public, include linux/amd64 and linux/arm64, and have
-`latest` pointing at the same manifest digest as its own `0.4.0` tag. It fails on missing tags.
+`latest` pointing at the same manifest digest as its own pinned tag. It fails on missing tags.
 Different application images naturally have different digests.
 
 At the 28 October publication audit, six application images passed the public version,
