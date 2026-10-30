@@ -1,0 +1,29 @@
+name: Laboratory 3 release checks
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  configuration:
+    name: Validate Lab 3 image configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m unittest discover -s tests -p 'test_lab3_release.py'
+      - run: python scripts/check_lab3_release.py
+  published:
+    name: Verify published application images
+    if: github.base_ref == 'main' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python scripts/check_lab3_release.py --require-published

@@ -1,0 +1,33 @@
+{
+  "project": "pad-lab3-smoke-a11005e3",
+  "version": "0.4.0",
+  "registry_dependency": "mocked",
+  "checks": [
+    "applicant-service: two unique healthy registered replicas",
+    "credential-service: two unique healthy registered replicas",
+    "public auth rejects missing key and accepts fixture key",
+    "real applicant-to-credential call, shared Redis reads, round-robin, and visible request/instance log IDs",
+    "dynamic scale 2 -> 3 -> 2 with registration/deregistration",
+    "heartbeat 404 triggers re-registration after SD restart",
+    "G10: three physical-instance failures cause SD deregistration and round-robin removal; both healthy replicas keep serving",
+    "real dependency failures trip applicant circuit; recovery succeeds after restart"
+  ],
+  "images": {
+    "applicant-service": {
+      "reference": "caramisca/applicant-service:0.4.0",
+      "id": "sha256:127ade1942d32f73061a3da12db19044492154e97c5449d7c1151901c7647ae0"
+    },
+    "credential-service": {
+      "reference": "caramisca/credential-service:0.4.0",
+      "id": "sha256:83cff16c25028b153b3aa67c944a90aef4079a8aa7c102c8a830b4d6a60497bd"
+    },
+    "gateway-service": {
+      "reference": "diana7376/gateway-service:lab3-dev-check-20261029",
+      "id": "sha256:baefa0e38484ad9dd0c33c19b751c8c872d4b9a8a849ae1b106cccba3b630ac8"
+    },
+    "service-discovery": {
+      "reference": "caramisca/service-discovery:lab3-monitor-check-20261029",
+      "id": "sha256:05157a7b98e5faeca1bbd2b49ab1f85c7628a055ce9d2883cc2fd2663f124f24"
+    }
+  }
+}

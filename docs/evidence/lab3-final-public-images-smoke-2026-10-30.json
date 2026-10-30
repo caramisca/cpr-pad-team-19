@@ -1,0 +1,59 @@
+{
+  "project": "pad-lab3-smoke-d743ddff",
+  "version": "0.4.0",
+  "registry_dependency": "real",
+  "registry_ttl_seconds": 30,
+  "checks": [
+    "applicant-service: two unique healthy registered replicas",
+    "credential-service: two unique healthy registered replicas",
+    "public auth rejects missing key and accepts fixture key",
+    "real applicant-to-credential call, shared Redis reads, round-robin, and visible request/instance log IDs",
+    "real Applicant -> Gateway -> Credential -> Gateway -> University Record call with PostgreSQL",
+    "University Record has two discovered physical addresses and both receive Gateway requests",
+    "dynamic scale 2 -> 3 -> 2 with registration/deregistration",
+    "heartbeat 404 triggers re-registration after SD restart",
+    "G10: three physical-instance failures cause SD deregistration and round-robin removal; both healthy replicas keep serving",
+    "G8/G9: critical health load triggers an HTTP Discord notification to an isolated webhook fixture; no real developer channel used",
+    "real dependency failures trip applicant circuit; recovery succeeds after restart"
+  ],
+  "images": {
+    "applicant-service": {
+      "reference": "caramisca/applicant-service:0.4.0",
+      "id": "sha256:d1ad85027bdea940ce99eaf58aa7f06279e408b14efc19918198e32b0fddeb37"
+    },
+    "credential-service": {
+      "reference": "caramisca/credential-service:0.4.0",
+      "id": "sha256:0fbdee5a8d7f989709e53779fd8eb9bb18b6afdd8d125bd4d6747aa12a8f5076"
+    },
+    "gateway-service": {
+      "reference": "diana7376/gateway-service:0.4.1",
+      "id": "sha256:9f0d218c1d51d0d4a022278f713fa5436cb70b8eaf381eb36ea819a2aba2505f"
+    },
+    "service-discovery": {
+      "reference": "drateeva/service-discovery:0.4.0",
+      "id": "sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67"
+    },
+    "university-record-service": {
+      "reference": "diana7376/university-record-service:0.4.2",
+      "id": "sha256:89f77bb1cc59509119fb3c84ecf95f953b01cc58196c9e26cd3a2e77bc24f64b"
+    }
+  },
+  "record_instances": [
+    {
+      "serviceName": "university-record-service",
+      "instanceId": "235be503a44a",
+      "url": "http://172.20.0.6:8086",
+      "healthUrl": "http://172.20.0.6:8086/health",
+      "registeredAt": "2026-10-30T15:00:30Z",
+      "lastHeartbeat": "2026-10-30T15:01:00Z"
+    },
+    {
+      "serviceName": "university-record-service",
+      "instanceId": "dbaaf18d72f6",
+      "url": "http://172.20.0.7:8086",
+      "healthUrl": "http://172.20.0.7:8086/health",
+      "registeredAt": "2026-10-30T15:00:30Z",
+      "lastHeartbeat": "2026-10-30T15:01:00Z"
+    }
+  ]
+}

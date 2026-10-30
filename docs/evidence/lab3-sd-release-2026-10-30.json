@@ -1,0 +1,33 @@
+{
+  "checked_on": "2026-10-30",
+  "repository": "DariaRateeva/service-discovery",
+  "release_pr": "https://github.com/DariaRateeva/service-discovery/pull/9",
+  "release_commit": "c05074d18d87f303d2c8ada6940ac39976f31e3c",
+  "merge_method": "merge commit",
+  "peer_approval": {
+    "reviewer": "blinduandi",
+    "reviewed_head": "209466a6e1718f3d4d41e54d5bf0fc2cb63d2705"
+  },
+  "git_tag": "v0.4.0",
+  "annotated_tag_object": "3f48705d2d91fd1ed8e8c7a221a12cc5e8741004",
+  "publication_run": "https://github.com/DariaRateeva/service-discovery/actions/runs/41053521253",
+  "publication_result": "success",
+  "image": "drateeva/service-discovery:0.4.0",
+  "version_manifest_digest": "sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67",
+  "latest_manifest_digest": "sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67",
+  "platforms": ["linux/amd64", "linux/arm64"],
+  "public_repository": true,
+  "all_ten_application_publication_gate": "passed",
+  "published_image_smoke": "lab3-published-real-registry-smoke-2026-10-30.json",
+  "published_image_smoke_result": "passed with recorded University Record discovery limitation",
+  "standalone_health_in_isolated_project": {
+    "status": "Healthy",
+    "service": "service-discovery",
+    "version": "0.4.0"
+  },
+  "notes": [
+    "DockerHub publishing credentials are managed by Daria; no secret values were read or recorded.",
+    "Historical 29 October evidence retains its original local PR image references.",
+    "The public manifests were verified for both platforms; local runtime checks use the laptop's platform."
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "checkedDate": "2026-10-27",
+  "verification": "Unauthenticated public DockerHub tag metadata; each version digest matches its own latest digest",
+  "images": [
+    {
+      "repository": "caramisca/applicant-service",
+      "version": "0.4.0",
+      "gitTag": "v0.4.0",
+      "gitCommit": "5c9b4c0cd86a06acb77089b4cad86b15d217f344",
+      "digest": "sha256:d1ad85027bdea940ce99eaf58aa7f06279e408b14efc19918198e32b0fddeb37",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "publishingWorkflow": "https://github.com/caramisca/applicant-service/actions/runs/40536600117",
+      "releasePullRequest": "https://github.com/caramisca/applicant-service/pull/10"
+    },
+    {
+      "repository": "caramisca/credential-service",
+      "version": "0.4.0",
+      "gitTag": "v0.4.0",
+      "gitCommit": "55b3d3c4c7feb24e689f241a4b82e3b3d4039fc9",
+      "digest": "sha256:0fbdee5a8d7f989709e53779fd8eb9bb18b6afdd8d125bd4d6747aa12a8f5076",
+      "platforms": ["linux/amd64", "linux/arm64"],
+      "publishingWorkflow": "https://github.com/caramisca/credential-service/actions/runs/40536611068",
+      "releasePullRequest": "https://github.com/caramisca/credential-service/pull/11"
+    }
+  ]
+}

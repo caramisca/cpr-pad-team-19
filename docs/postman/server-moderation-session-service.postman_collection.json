@@ -56,7 +56,13 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"status is UP\", () => pm.expect(body.status).to.eql(\"UP\"));"
+                  "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
+                  "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
+                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
+                  "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
+                  "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
+                  "pm.test(\"returns request ID\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.match(/^[A-Za-z0-9._:-]{1,64}$/));"
                 ]
               }
             }

@@ -74,4 +74,15 @@ db_data/
 *.log
 logs/
 
+# Shared Python services and repository verification tooling
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+TestResults/
+coverage*.xml
+coverage*.json
+
 CONTRIBUTING.md

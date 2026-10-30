@@ -16,10 +16,14 @@ services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # credential-service, server-rules-service and university-record-service also go through the
   # gateway, on the internal port. No depends_on the gateway: the gateway depends on this service,
-  # and the calls only happen once a request arrives.
+  # and the calls only happen once a request arrives. Every replica registers with
+  # service-discovery under its container hostname, and the gateway finds the replicas there (Lab 3).
   moderation-service:
-    image: andiblindu1/moderation-service:0.3.0
+    deploy:
+      replicas: ${MODERATION_REPLICAS:-2}
+    image: andiblindu1/moderation-service:0.4.0
     environment:
+      ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
       Downstream__Rules__Mode: Http
       Downstream__Rules__BaseUrl: http://gateway-service:8090
@@ -37,6 +41,8 @@ services:
       retries: 5
       start_period: 10s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       moderation-postgres:
         condition: service_healthy
 
@@ -56,27 +62,43 @@ services:
 
   # Its REST endpoints are called through the gateway (Lab 2). Port 8088 stays published for the
   # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
-  # gateway returns.
+  # gateway returns. Every instance registers with service-discovery under its container hostname,
+  # and the gateway finds the instances there (Lab 3).
   discord-dms-service:
-    image: andiblindu1/discord-dms-service:0.3.0
+    image: andiblindu1/discord-dms-service:0.4.0
     ports:
       - "8088:8088"
-    environment:
+    environment: &dms-environment
+      ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
       # The gateway's WS_TICKET_SECRET: the chat accepts only the tickets the gateway signs with it.
       Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
       Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
       Limits__MaxConcurrentRequests: ${DMS_MAX_CONCURRENT_REQUESTS:-100}
     # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
-    healthcheck:
+    healthcheck: &dms-healthcheck
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8088 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 10s
-    depends_on:
+    depends_on: &dms-depends-on
+      service-discovery:
+        condition: service_healthy
       dms-redis:
         condition: service_healthy
+
+  # More instances of discord-dms-service, with the same image and settings. A host port belongs to
+  # one container, so only discord-dms-service publishes 8088 for the chat; these publish no port,
+  # as the gateway reaches them on the Compose network. Chat messages and session.closed pass
+  # between all instances over Redis, so the chats still reach every client.
+  discord-dms-service-replica:
+    deploy:
+      replicas: ${DMS_EXTRA_REPLICAS:-1}
+    image: andiblindu1/discord-dms-service:0.4.0
+    environment: *dms-environment
+    healthcheck: *dms-healthcheck
+    depends_on: *dms-depends-on
 
   dms-redis:
     image: redis:7.4-alpine
@@ -94,13 +116,19 @@ services:
       retries: 12
 
   server-rules-service:
-    image: diana7376/server-rules-service:0.3.0
+    deploy:
+      replicas: ${RULES_REPLICAS:-2}
+    image: diana7376/server-rules-service:0.4.2
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
     depends_on:
-      - rules-mongo
+      service-discovery:
+        condition: service_healthy
+      rules-mongo:
+        condition: service_started
 
   rules-mongo:
     image: mongo:7
@@ -111,15 +139,21 @@ services:
       - rules-mongo-data:/data/db
 
   university-record-service:
-    image: diana7376/university-record-service:0.3.0
+    deploy:
+      replicas: ${RECORD_REPLICAS:-2}
+    image: diana7376/university-record-service:0.4.2
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
       DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
       MAX_THREADS: ${RECORD_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RECORD_REQUEST_TIMEOUT_MS:-5000}
+      SD_URL: http://service-discovery:8089
     depends_on:
-      - record-postgres
+      service-discovery:
+        condition: service_healthy
+      record-postgres:
+        condition: service_started
 
   record-postgres:
     image: postgres:16
@@ -131,14 +165,20 @@ services:
       - record-postgres-data:/var/lib/postgresql/data
 
   applicant-service:
-    image: caramisca/applicant-service:0.3.0
+    deploy:
+      replicas: ${APPLICANT_REPLICAS:-2}
+    image: caramisca/applicant-service:0.4.0
     environment:
+      Storage__Provider: Redis
+      ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
       Services__CredentialServiceMode: Http
       Services__CredentialServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${APPLICANT_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${APPLICANT_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       applicant-seed:
         condition: service_completed_successfully
       credential-service:
@@ -174,14 +214,20 @@ services:
     restart: "no"
 
   credential-service:
-    image: caramisca/credential-service:0.3.0
+    deploy:
+      replicas: ${CREDENTIAL_REPLICAS:-2}
+    image: caramisca/credential-service:0.4.0
     environment:
+      Storage__Provider: Redis
+      ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
       Services__UniversityRecordMode: Http
       Services__UniversityRecordServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${CREDENTIAL_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${CREDENTIAL_REQUEST_TIMEOUT_MS:-5000}
     depends_on:
+      service-discovery:
+        condition: service_healthy
       credential-seed:
         condition: service_completed_successfully
       university-record-service:
@@ -214,15 +260,20 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # Not published to the host: clients reach it only through the gateway (Lab 2).
+  # Not published to the host: clients reach it only through the gateway (Lab 2). Every replica
+  # registers with service-discovery under its container hostname and its own container address,
+  # and the gateway finds the replicas there (Lab 3). All replicas share player-postgres.
   player-service:
-    image: drateeva/player-service:0.3.0
+    deploy:
+      replicas: ${PLAYER_REPLICAS:-2}
+    image: drateeva/player-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
       TASK_TIMEOUT: ${PLAYER_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${PLAYER_MAX_CONCURRENT_TASKS:-20}
+      DISCOVERY_URL: http://service-discovery:8089
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
       interval: 10s
@@ -230,6 +281,8 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       player-postgres:
         condition: service_healthy
 
@@ -250,9 +303,14 @@ services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # applicant-service, server-rules-service and discord-dms-service also go through the gateway, on
   # the internal port. No depends_on the gateway: the gateway depends on this service, and the calls
-  # only happen once a request arrives.
+  # only happen once a request arrives. Every replica registers with service-discovery under its
+  # container hostname and its own container address (Lab 3). All replicas share session-postgres,
+  # which also carries the live updates between them (LISTEN/NOTIFY), so an SSE stream open on one
+  # replica gets the changes made on any other.
   server-moderation-session-service:
-    image: drateeva/server-moderation-session-service:0.3.0
+    deploy:
+      replicas: ${SESSION_REPLICAS:-2}
+    image: drateeva/server-moderation-session-service:0.4.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
@@ -264,6 +322,7 @@ services:
       SESSION_MAX_APPLICANTS_PER_SHIFT: ${SESSION_MAX_APPLICANTS_PER_SHIFT:-10}
       TASK_TIMEOUT: ${SESSION_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${SESSION_MAX_CONCURRENT_TASKS:-20}
+      DISCOVERY_URL: http://service-discovery:8089
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
       interval: 10s
@@ -271,6 +330,8 @@ services:
       retries: 5
       start_period: 30s
     depends_on:
+      service-discovery:
+        condition: service_healthy
       session-postgres:
         condition: service_healthy
 
@@ -293,10 +354,12 @@ services:
   # that owns it without the Authorization header. Port 8090 is the internal port for the services'
   # calls to each other (no key needed): it is deliberately not published to the host.
   gateway-service:
-    image: diana7376/gateway-service:0.3.0
+    image: diana7376/gateway-service:0.4.1
     ports:
       - "8080:8080"
     environment:
+      SD_URL: http://service-discovery:8089
+      SD_POLL_INTERVAL_SECONDS: ${GATEWAY_SD_POLL_INTERVAL_SECONDS:-5}
       AUTH_API_KEYS: ${GATEWAY_API_KEYS}
       GATEWAY_INTERNAL_PORT: 8090
       WS_TICKET_SECRET: ${GATEWAY_WS_TICKET_SECRET}
@@ -321,6 +384,8 @@ services:
     # Started, not healthy: the gateway only connects to a service when a request for it arrives,
     # and answers 502 UPSTREAM_UNAVAILABLE while that service is still starting.
     depends_on:
+      service-discovery:
+        condition: service_healthy
       player-service:
         condition: service_started
       server-moderation-session-service:
@@ -337,6 +402,29 @@ services:
         condition: service_started
       discord-dms-service:
         condition: service_started
+
+
+  # Control plane, private to this Compose network. One process: the registry is in memory.
+  service-discovery:
+    image: drateeva/service-discovery:0.4.0
+    environment:
+      DISCOVERY_PORT: 8089
+      INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}
+      POLL_INTERVAL_SECONDS: ${DISCOVERY_POLL_INTERVAL_SECONDS:-10}
+      MAX_CONCURRENT_REQUESTS: ${DISCOVERY_MAX_CONCURRENT_REQUESTS:-200}
+      REQUEST_TIMEOUT_SECONDS: ${DISCOVERY_REQUEST_TIMEOUT_SECONDS:-5}
+      # Health alerts to the developers (Lab 3 Grade 9). An empty value switches that channel off;
+      # with none set, the alerts are only logged.
+      ALERT_DISCORD_WEBHOOK_URL: ${DISCOVERY_ALERT_DISCORD_WEBHOOK_URL:-}
+      ALERT_TELEGRAM_BOT_TOKEN: ${DISCOVERY_ALERT_TELEGRAM_BOT_TOKEN:-}
+      ALERT_TELEGRAM_CHAT_ID: ${DISCOVERY_ALERT_TELEGRAM_CHAT_ID:-}
+      ALERT_COOLDOWN_SECONDS: ${DISCOVERY_ALERT_COOLDOWN_SECONDS:-300}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8089/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
 
 volumes:
   moderation-postgres-data:
