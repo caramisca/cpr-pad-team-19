@@ -406,7 +406,7 @@ services:
 
   # Control plane, private to this Compose network. One process: the registry is in memory.
   service-discovery:
-    image: caramisca/service-discovery:0.4.0
+    image: drateeva/service-discovery:0.4.0
     environment:
       DISCOVERY_PORT: 8089
       INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}

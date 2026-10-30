@@ -27,7 +27,7 @@ IMAGES = {
     "moderation-service": "andiblindu1/moderation-service",
     "discord-dms-service": "andiblindu1/discord-dms-service",
     "gateway-service": "diana7376/gateway-service",
-    "service-discovery": "caramisca/service-discovery",
+    "service-discovery": "drateeva/service-discovery",
 }
 
 
