@@ -118,7 +118,7 @@ services:
   server-rules-service:
     deploy:
       replicas: ${RULES_REPLICAS:-2}
-    image: diana7376/server-rules-service:0.4.0
+    image: diana7376/server-rules-service:0.4.1
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
@@ -141,7 +141,7 @@ services:
   university-record-service:
     deploy:
       replicas: ${RECORD_REPLICAS:-2}
-    image: diana7376/university-record-service:0.4.0
+    image: diana7376/university-record-service:0.4.1
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
