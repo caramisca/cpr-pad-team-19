@@ -3,55 +3,48 @@
 This runbook covers Mihai's delivery and its dependencies. Passing the scoped smoke test does
 not demonstrate the full team's SSE, WebSocket, notification and physical-instance eviction tasks.
 
-## Review and release order
+## Integration state and release order
 
-| Repository | Reviewable change | Dependency |
+Status checked on 30 October 2026. The feature PRs listed below are already merged into their
+repositories' `dev` branches; they must not be reimplemented or described as pending reviews.
+
+| Repository | Integrated work | Remaining release step |
 |---|---|---|
-| Service Discovery | [#5: status/logs](https://github.com/DariaRateeva/service-discovery/pull/5) | Current registry/polling API |
-| Service Discovery | [#6: Docker and tested publishing](https://github.com/DariaRateeva/service-discovery/pull/6) | Owner configures DockerHub secrets and public repository |
-| Service Discovery | [#7: monitoring circuits and notifier handoff](https://github.com/DariaRateeva/service-discovery/pull/7) | Status timeout from #5; notifier implementation from Andi #3 |
-| Gateway | [#12: discovery integration](https://github.com/diana7376/gateway-service/pull/12) | Existing SD API; preserves hooks for Andi |
-| Gateway | [#13: branch protections](https://github.com/diana7376/gateway-service/pull/13) | Owner/admin applies the script; merging JSON alone is insufficient |
-| Gateway | [#14: 0.4.0 publication preparation](https://github.com/diana7376/gateway-service/pull/14) | Feature integration and reviewed `dev → main` release |
-| Applicant | [#9 feature](https://github.com/caramisca/applicant-service/pull/9), [#10 release](https://github.com/caramisca/applicant-service/pull/10) | Merged; v0.4.0 and public multi-platform image verified |
-| Credential | [#10 feature](https://github.com/caramisca/credential-service/pull/10), [#11 release](https://github.com/caramisca/credential-service/pull/11) | Merged; v0.4.0 and public multi-platform image verified |
-| CPR | [#197: Compose, smoke and release checks](https://github.com/caramisca/cpr-pad-team-19/pull/197) | Draft until required public images and release pointers are verified |
-| CPR | [#198: workflow clarification](https://github.com/caramisca/cpr-pad-team-19/pull/198) | Peer approval |
-| CPR | [#199: actual private-service release pointers](https://github.com/caramisca/cpr-pad-team-19/pull/199) | Public images/manifests verified; peer approval |
-| CPR | [#200: all eight Gateway-health Postman checks](https://github.com/caramisca/cpr-pad-team-19/pull/200) | Gateway 0.4.0 release; 8 requests / 64 assertions passed |
+| Service Discovery | #5 status/logs, #6 Docker/CI, #7 monitoring circuits, #3 notifications, #8 bounded confirmation, #10 namespace correction | Release [#9](https://github.com/DariaRateeva/service-discovery/pull/9) merged at `c05074d`; main publication and public `drateeva/service-discovery:0.4.0` verified |
+| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs | Released on `main` at `917726f`; public image verified; CPR pointer update remains in #214 |
+| Applicant | #9 feature, #10 release | Released at `5c9b4c0`; public `0.4.0` verified |
+| Credential | #10 feature, #11 release | Released at `55b3d3c`; public `0.4.0` verified |
+| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session release integration | Integrate the SD release pointer/namespace and Gateway pointer; publication gate and final E2E |
+
+This change pins SD to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway is
+still pinned to old `b5c58fc` until CPR #214 is corrected/integrated to use its release `917726f`.
+A recursive checkout of that old Gateway pointer misses integrated G7/G10 changes, even if Compose
+pulls the new binary. An image name alone neither updates source pointers nor proves publication.
 
 The common repositories require an approval by another teammate, conversation resolution,
-feature PRs into `dev`, and a reviewed release PR `dev → main`. Features normally squash into
-`dev`; milestone releases use merge commits. No direct protected-branch pushes or bypass merges.
-Individual Applicant/Credential repositories follow the explicit owner-merge exception in the
-CPR README because classmates must not be added as collaborators there.
+feature PRs into `dev`, and a reviewed release PR `dev -> main`. Features normally squash into
+`dev`; milestone releases use merge commits. Do not bypass protections. Rulesets for both common
+repositories' `dev` and `main` were verified active. Individual Applicant/Credential repositories
+follow the documented owner-merge exception because classmates cannot be collaborators there.
 
-All three SD changes were tested together (73 tests passed) on a local validation branch; that branch
-is not a substitute for peer approval or an integration-branch merge. The same applies to the
-Gateway discovery/version combination used for the smoke test.
-
-## When Diana can continue
-
-The required code and reproducible smoke test are available for review. Diana's previously merged
-round-robin and monitoring work can be validated against it. The shared stack is ready for her
-without local source access to private services only after:
-
-1. SD #5/#6/#7 and Gateway #12/#14 are reviewed and merged into `dev`.
-2. SD has a public DockerHub repository and CI credentials with push permission for the configured
-   namespace (`caramisca/service-discovery` in this delivery).
-3. Reviewed common-service releases publish `0.4.0`, and the other application owners publish
-   their own `0.4.0` releases.
-4. The publication gate succeeds and the CPR draft is completed with release submodule pointers.
-
-An owner must also apply Gateway #13: the current collaborator has WRITE, not ADMIN. This is a
-GitHub permission constraint; the rule definitions are already concrete and reviewable.
+The SD workflow publishes only on a push to `main`. Both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+repository secret names are now present, and `drateeva/service-discovery` is public. Daria manages
+the DockerHub account and token; no token was read or copied into source. Main workflow run
+`41053521253` passed tests and publishing on `c05074d`, and both public tags have digest
+`sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67`.
+Annotated Git tag `v0.4.0` resolves to `c05074d`. The
+[release evidence](evidence/lab3-sd-release-2026-10-30.json) records the source, CI and manifest
+checks. A successful PR build alone does not publish an image.
 
 ## Version consistency
 
-All ten application images in the proposed Compose release are fixed at **0.4.0**. Database
-images retain PostgreSQL/MongoDB/Redis upstream versions; seed jobs use the Redis image and
-are not separate application releases. Do not retag old application binaries as `0.4.0` merely
-to make a version check pass.
+Each application image has its own pinned `repository:version` in `IMAGES` in
+`scripts/check_lab3_release.py`, which must match its Compose image. The current baseline uses
+**0.4.0**; independent **0.4.1** patches are supported without changing the other services.
+After a patch is published, update only its expected reference, Compose image, release source
+pointer and documentation. Missing/unpublished tags fail the gate; there is no version fallback.
+Database images retain PostgreSQL/MongoDB/Redis upstream versions; seed jobs use the Redis image
+and are not separate application releases. Do not retag old binaries merely to make a check pass.
 
 ```powershell
 python -m unittest discover -s tests -p test_lab3_release.py
@@ -63,18 +56,14 @@ The first configuration check needs Docker Compose CLI but no running engine. It
 `.env.example`, never prints resolved environments and checks all image references, private
 control-plane ports and the two initial replica counts. The publication check is unauthenticated
 against DockerHub: every image must be public, include linux/amd64 and linux/arm64, and have
-`latest` pointing at the same manifest digest as its own `0.4.0` tag. It fails on missing tags.
+`latest` pointing at the same manifest digest as its own pinned tag. It fails on missing tags.
 Different application images naturally have different digests.
 
-At the initial 27 October audit, the nine pre-existing images had public `0.3.0` tags, no public
-`0.4.0` tags were found, and SD had not been published. This is a dated observation, not current
-release proof; rerun the gate after the owners' publishing workflows finish.
-
-Later in the same session, Applicant and Credential were released through their own feature and
-milestone PRs. Their public `0.4.0` tags, amd64/arm64 platforms and matching `latest` digests were
-verified, with Git release tags fixed to the main merge commits. CPR #199 records the manifests
-and release pointers. The remaining eight application images still require their owners' release
-steps; a locally built common-service image is not counted as public publication.
+At the 28 October publication audit, six application images passed the public version,
+architecture and matching-latest checks. SD, Gateway, Player and Session `0.4.0` returned 404.
+On 30 October, after SD release #9, all ten application images passed the public version,
+architecture and matching-latest checks using the updated `drateeva/service-discovery` reference.
+Re-run the gate before the CPR release; a local PR image is never publication proof.
 
 ## Running the release stack
 
@@ -99,21 +88,34 @@ SD is single-process because its registry is in memory. Its 8089 port and Gatewa
 are private. SD's own health does not depend on business services. Gateway polls every five
 seconds in this Compose stack and keeps the last valid snapshots on a temporary SD failure.
 
-Other owners' services are not blindly scaled. Before increasing their replica count, verify
-registration, shared state, event delivery and the public connection contract. DMS's fixed
-8088 host mapping and negotiated WebSocket address need an owner-provided scaling solution.
+Moderation, Rules and Record have two replicas configured. DMS has one public WebSocket instance
+and one internal replica sharing Redis. Player and Session now also have two replicas and
+`DISCOVERY_URL` through CPR #216; their release pointers and Session V2 migration arrived in #215.
+CPR #213 removed shared `SERVICE_URL` overrides for Rules/Record. Verify physical registration
+and SSE/WS/event behavior in the final stack rather than treating configuration as runtime proof.
+
+The common [SD contract](SERVICE_DISCOVERY_CONTRACT.md) records registration, status, monitoring,
+notifications and physical-instance removal. The monitor confirmation fix keeps three health
+failures inside the task-timeout-times-3.5 window even when normal polling is every ten seconds.
 
 ## Scoped container smoke test
 
 ```powershell
-python scripts/lab3_smoke.py
+python scripts/lab3_smoke.py --real-registry
+# Or explicitly test local common-service builds under separate tags:
+python scripts/lab3_smoke.py --sd-image caramisca/service-discovery:lab3-monitor-check-20261029 --gateway-image diana7376/gateway-service:lab3-dev-check-20261029 --output docs/evidence/lab3-mihai-smoke-2026-10-29.json
+# Include published University Record with its actual PostgreSQL database:
+python scripts/lab3_smoke.py --real-registry --sd-image caramisca/service-discovery:lab3-monitor-check-20261029 --gateway-image diana7376/gateway-service:lab3-dev-check-20261029 --output docs/evidence/lab3-mihai-real-registry-smoke-2026-10-29.json
 ```
 
 Requires local `0.4.0` images. It derives a subset of the proposed root Compose, starts a unique
 project/network/volumes, binds only Gateway to localhost port 18080, and deletes only its own
 temporary project resources. Use `--port` if 18080 is occupied. It uses explicit fixture credentials,
-separate test databases and the mock university-record dependency inside Credential; no messages
-are sent to developers or Discord. It does not build images or bypass the image-only Compose rule.
+separate test databases and, by default, a mock university-record dependency inside Credential.
+`--real-registry` instead starts the published University Record and its PostgreSQL, verifies a
+real student lookup and issues a credential from the demo data. Notifications use a private local
+Discord-webhook fixture; no messages are sent to developers or Discord. The test does not build
+images or bypass the image-only Compose rule.
 
 Verified locally with the combined SD/Gateway PR images and Mihai's service changes:
 
@@ -123,27 +125,51 @@ Verified locally with the combined SD/Gateway PR images and Mihai's service chan
 - Public API-key rejection/acceptance; business service health ports remain private.
 - Dynamic Applicant scale 2 → 3 → 2 and graceful deregistration.
 - SD restart followed by heartbeat 404 and re-registration of all four replicas.
+- Three failures from a controlled physical-instance fixture cause Gateway to deregister it from
+  SD and stop routing to it, while both healthy replicas keep serving (G10). The fixture health
+  stays healthy, and its heartbeat is renewed: this proves business eviction rather than TTL expiry.
 - Real failed dependency calls open the Applicant circuit; restarting Credential and passing
   the recovery window restores successful generation.
 
-The smoke run emits a result JSON path in the OS temporary directory. Its university registry
-is mocked, and its images can be local PR builds, so this evidence is separate from public-image
-verification and the final full-team stack.
+The smoke run emits a result JSON path in the OS temporary directory; `--output` also writes a
+chosen evidence file. It records whether the registry was real or mocked, plus image references
+and IDs. Its common-service images can be local PR builds, so this evidence is separate from
+public-image verification and the final full-team stack.
+
+Historical evidence: on 29 October both scoped runs passed, including G10, and the real-registry
+run also verified HTTP critical-load notification delivery to the local fixture. Its University Record SD snapshot
+contained no registered instances despite two healthy running containers. Dependency requests
+succeeded through Gateway's static fallback; this does not demonstrate discovery/load balancing
+for that Java service. Its owner must verify the published image and registration configuration.
+
+On 30 October the same real-registry smoke passed with the public release images, including
+`drateeva/service-discovery:0.4.0` and `diana7376/gateway-service:0.4.0`, after pulling the current
+SD, Gateway and University Record images. The
+[published-image evidence](evidence/lab3-published-real-registry-smoke-2026-10-30.json) records
+all ten scoped checks, including G10, the isolated notification receiver and circuit recovery.
+The University Record SD snapshot was again empty at lookup in this smoke's short-TTL setup;
+real registry calls succeeded through static fallback. This evidence still does not establish
+discovered-instance balancing for that service or full-team SSE/WebSocket behavior. Only this
+run's unique temporary Docker project, network and volumes were removed after the test.
 
 ## Remaining checks for the complete laboratory
 
-- Shared contract/status documentation coordinated with Daria; mirror individual contracts.
-- Andi's Gateway G7/G10 failure counting, physical removal, quarantine and half-open recovery;
-  discovery hooks alone do not implement these tasks.
-- SD polling-to-notifier connection after the notification PR is rebased onto Diana's poller,
-  including real-channel alert receipt with credentials kept local/secret.
-- Merge SD #7 for outbound monitor circuit protection and the poller/notifier handoff; it was
-  verified together with #5/#6. Physical-instance business-routing eviction remains Gateway work.
-- Other owners' lifecycle/state changes, outbox/event consistency, shared rate limits and
-  SSE/WS behavior across their replicas, followed by real full-team E2E.
-- ≥80% required coverage, clean staged diffs, current image manifests and release pointers,
-  substantive common-service contributions and genuine peer reviews.
-- Teams presentation slot/deadline and a working demonstration on the presenting laptop.
+- Peer review and merge of this CPR SD integration and the Gateway pointer correction, followed
+  by the reviewed CPR release. SD #8/#10 and the merge-commit release #9 are already merged.
+- Public `0.4.0` images for every service; successful publication gate before CPR release.
+- Real-channel critical-load alert receipt with credentials kept local. The current local `.env`
+  has neither notification channel configured, so fixture tests cannot certify real delivery.
+- Player/Session lifecycle, replicas and outbound circuits; per-instance Java registration;
+  full-team state/event consistency and SSE/WS regressions across replicas.
+- Full-team E2E and University Record registration. The real-registry smoke verifies Applicant,
+  Credential and PostgreSQL-backed University Record calls, but observed no SD entries for that
+  dependency; static fallback is not a substitute for its G5 registration/round-robin demonstration.
+- Required coverage, clean staged diffs, substantive contributions and genuine peer reviews.
+- Teams slot/deadline and a working demonstration on the presenting laptop.
+
+The dated JSON evidence records the image references and actual local image IDs used. Local
+common-service tags are PR builds, not published release artifacts. A scoped pass is separate from
+final image publication and the full-team demonstration.
 
 Local Postman collections can contain private environment values. Do not stage them wholesale;
 published collections must have empty keys and take credentials from a local environment.

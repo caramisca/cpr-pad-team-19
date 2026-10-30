@@ -1,0 +1,43 @@
+{
+  "project": "pad-lab3-smoke-b2155c0b",
+  "version": "0.4.0",
+  "registry_dependency": "real",
+  "checks": [
+    "applicant-service: two unique healthy registered replicas",
+    "credential-service: two unique healthy registered replicas",
+    "public auth rejects missing key and accepts fixture key",
+    "real applicant-to-credential call, shared Redis reads, round-robin, and visible request/instance log IDs",
+    "real Applicant -> Gateway -> Credential -> Gateway -> University Record call with PostgreSQL",
+    "dynamic scale 2 -> 3 -> 2 with registration/deregistration",
+    "heartbeat 404 triggers re-registration after SD restart",
+    "G10: three physical-instance failures cause SD deregistration and round-robin removal; both healthy replicas keep serving",
+    "G8/G9: critical health load triggers an HTTP Discord notification to an isolated webhook fixture; no real developer channel used",
+    "real dependency failures trip applicant circuit; recovery succeeds after restart"
+  ],
+  "images": {
+    "applicant-service": {
+      "reference": "caramisca/applicant-service:0.4.0",
+      "id": "sha256:127ade1942d32f73061a3da12db19044492154e97c5449d7c1151901c7647ae0"
+    },
+    "credential-service": {
+      "reference": "caramisca/credential-service:0.4.0",
+      "id": "sha256:83cff16c25028b153b3aa67c944a90aef4079a8aa7c102c8a830b4d6a60497bd"
+    },
+    "gateway-service": {
+      "reference": "diana7376/gateway-service:0.4.0",
+      "id": "sha256:ca73d56622d2cd142b9e38413d6d733374f493a4d7087bf32d9eb458ea70f459"
+    },
+    "service-discovery": {
+      "reference": "drateeva/service-discovery:0.4.0",
+      "id": "sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67"
+    },
+    "university-record-service": {
+      "reference": "diana7376/university-record-service:0.4.0",
+      "id": "sha256:b9775e57b8c31f5dcb7fcac081e7964d9185f85c73ba5145317413493afa0726"
+    }
+  },
+  "record_instances": [],
+  "limitations": [
+    "University Record had no registered SD instances at lookup; real dependency calls used Gateway static fallback, not discovered-instance load balancing."
+  ]
+}

@@ -1,6 +1,7 @@
 """Validate the ten application image tags and optionally their public DockerHub manifests.
 
 Uses .env.example only; never prints a resolved Compose environment or loads local credentials.
+Each application has an explicit repository and version; patch releases need not move together.
 Database/Redis images retain their own upstream versions.
 """
 
@@ -16,27 +17,26 @@ import urllib.error
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = "0.4.0"
+# Keep these pinned references in sync with Compose when each service publishes a release.
 IMAGES = {
-    "player-service": "drateeva/player-service",
-    "server-moderation-session-service": "drateeva/server-moderation-session-service",
-    "applicant-service": "caramisca/applicant-service",
-    "credential-service": "caramisca/credential-service",
-    "server-rules-service": "diana7376/server-rules-service",
-    "university-record-service": "diana7376/university-record-service",
-    "moderation-service": "andiblindu1/moderation-service",
-    "discord-dms-service": "andiblindu1/discord-dms-service",
-    "gateway-service": "diana7376/gateway-service",
-    "service-discovery": "caramisca/service-discovery",
+    "player-service": "drateeva/player-service:0.4.0",
+    "server-moderation-session-service": "drateeva/server-moderation-session-service:0.4.0",
+    "applicant-service": "caramisca/applicant-service:0.4.0",
+    "credential-service": "caramisca/credential-service:0.4.0",
+    "server-rules-service": "diana7376/server-rules-service:0.4.0",
+    "university-record-service": "diana7376/university-record-service:0.4.0",
+    "moderation-service": "andiblindu1/moderation-service:0.4.0",
+    "discord-dms-service": "andiblindu1/discord-dms-service:0.4.0",
+    "gateway-service": "diana7376/gateway-service:0.4.0",
+    "service-discovery": "drateeva/service-discovery:0.4.0",
 }
 
 
 def validate_config(config: dict) -> list[str]:
     errors = []
     services = config.get("services", {})
-    for service, repository in IMAGES.items():
+    for service, expected in IMAGES.items():
         entry = services.get(service, {})
-        expected = f"{repository}:{VERSION}"
         if entry.get("image") != expected:
             errors.append(f"{service}: expected {expected}")
         if "build" in entry:
@@ -65,25 +65,26 @@ def tag_metadata(repository: str, tag: str) -> dict:
         return json.load(response)
 
 
-def validate_public_image(repository: str) -> list[str]:
+def validate_public_image(reference: str) -> list[str]:
     try:
-        version, latest = tag_metadata(repository, VERSION), tag_metadata(repository, "latest")
+        repository, tag = reference.rsplit(":", 1)
+        version, latest = tag_metadata(repository, tag), tag_metadata(repository, "latest")
         platforms = {(image.get("os"), image.get("architecture")) for image in version.get("images", [])}
         errors = []
         if not {("linux", "amd64"), ("linux", "arm64")} <= platforms:
-            errors.append(f"{repository}:{VERSION}: missing linux/amd64 or linux/arm64")
+            errors.append(f"{reference}: missing linux/amd64 or linux/arm64")
         if not version.get("digest") or version["digest"] != latest.get("digest"):
-            errors.append(f"{repository}: latest digest does not match {VERSION}")
+            errors.append(f"{repository}: latest digest does not match {tag}")
         return errors
     except urllib.error.HTTPError as error:
-        return [f"{repository}:{VERSION}: public DockerHub lookup returned HTTP {error.code}"]
+        return [f"{reference}: public DockerHub lookup returned HTTP {error.code}"]
     except (OSError, ValueError, KeyError):
-        return [f"{repository}:{VERSION}: could not verify public image metadata"]
+        return [f"{reference}: could not verify public image metadata"]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--require-published", action="store_true", help="Fail unless every public 0.4.0 image has both architectures and matching latest")
+    parser.add_argument("--require-published", action="store_true", help="Fail unless every pinned public image has both architectures and matching latest")
     args = parser.parse_args()
     result = subprocess.run(
         ["docker", "compose", "--env-file", str(ROOT / ".env.example"), "-f", str(ROOT / "docker-compose.yml"), "config", "--format", "json"],
@@ -101,7 +102,7 @@ def main() -> int:
         print(error, file=sys.stderr)
     if errors:
         return 1
-    print(f"All {len(IMAGES)} application images target {VERSION}; database versions are independent.")
+    print(f"All {len(IMAGES)} application images match their pinned per-service versions; database versions are independent.")
     print("Public manifests and latest digests verified." if args.require_published else "Publication not checked; use --require-published before release.")
     return 0
 
