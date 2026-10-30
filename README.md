@@ -2047,10 +2047,18 @@ Applicant/Credential `/health` now distinguishes storage health from load: activ
 requests versus capacity, `NORMAL` at most 50%, `HIGH` above 50% up to 80%, `CRITICAL` above 80%.
 It remains exempt from limits and includes the unique instance ID. Incoming/outgoing calls share
 `X-Request-Id`. Their singleton business-dependency circuits open on three failures within task
-timeout ? 3.5 (17.5 s with a five-second task timeout), admit one recovery probe, and never retry
+timeout x 3.5 (17.5 s with a five-second task timeout), admit one recovery probe, and never retry
 a business POST automatically. Physical-instance eviction remains Gateway's Grade 10 task.
 The shared [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md) documents registration,
 status, heartbeat, monitoring and the Gateway's responsibility for physical-instance removal.
+
+Service Discovery 0.4.0 is released from `DariaRateeva/service-discovery` at `c05074d` (release
+PR #9, including the bounded monitoring fix #8 and namespace correction #10). Its image reference
+is `drateeva/service-discovery:0.4.0`; Daria manages the DockerHub publishing credentials, while
+Mihai contributed the Dockerfile/CI and monitoring changes. The main workflow passed and the
+public version/latest manifests match for amd64/arm64, as recorded in the
+[release evidence](docs/evidence/lab3-sd-release-2026-10-30.json). Re-run the publication gate
+before releasing the stack. A source merge alone is not proof of DockerHub publication.
 
 [Lab 3 runbook](docs/LAB_3_RUNBOOK.md) records integration order, PR dependencies, verification
 commands and remaining team requirements. `python scripts/lab3_smoke.py` tests locally available

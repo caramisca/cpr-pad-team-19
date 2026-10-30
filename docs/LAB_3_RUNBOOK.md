@@ -5,21 +5,21 @@ not demonstrate the full team's SSE, WebSocket, notification and physical-instan
 
 ## Integration state and release order
 
-Status checked on 29 October 2026. The feature PRs listed below are already merged into their
+Status checked on 30 October 2026. The feature PRs listed below are already merged into their
 repositories' `dev` branches; they must not be reimplemented or described as pending reviews.
 
 | Repository | Integrated work | Remaining release step |
 |---|---|---|
-| Service Discovery | #5 status/logs, #6 Docker/CI, #7 monitoring circuits, #3 notifications | Review [confirmation fix #8](https://github.com/DariaRateeva/service-discovery/pull/8); configure DockerHub push credentials; [draft release #9](https://github.com/DariaRateeva/service-discovery/pull/9) |
-| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs | Reviewed `dev -> main` release and public image |
+| Service Discovery | #5 status/logs, #6 Docker/CI, #7 monitoring circuits, #3 notifications, #8 bounded confirmation, #10 namespace correction | Release [#9](https://github.com/DariaRateeva/service-discovery/pull/9) merged at `c05074d`; main publication and public `drateeva/service-discovery:0.4.0` verified |
+| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs | Released on `main` at `917726f`; public image verified; CPR pointer update remains in #214 |
 | Applicant | #9 feature, #10 release | Released at `5c9b4c0`; public `0.4.0` verified |
 | Credential | #10 feature, #11 release | Released at `55b3d3c`; public `0.4.0` verified |
-| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman | Refresh common-service pointers after their actual releases; publication gate and final E2E |
+| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session release integration | Integrate the SD release pointer/namespace and Gateway pointer; publication gate and final E2E |
 
-CPR `dev` currently pins old SD `cf1b13f` and Gateway `b5c58fc`. A recursive checkout of those
-pointers misses the integrated status, notification and G7/G10 changes. The final pointer update
-must reference the published release commits, whose hashes do not exist yet. The public image
-name in Compose alone neither updates source pointers nor proves publication.
+This change pins SD to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway is
+still pinned to old `b5c58fc` until CPR #214 is corrected/integrated to use its release `917726f`.
+A recursive checkout of that old Gateway pointer misses integrated G7/G10 changes, even if Compose
+pulls the new binary. An image name alone neither updates source pointers nor proves publication.
 
 The common repositories require an approval by another teammate, conversation resolution,
 feature PRs into `dev`, and a reviewed release PR `dev -> main`. Features normally squash into
@@ -27,11 +27,14 @@ feature PRs into `dev`, and a reviewed release PR `dev -> main`. Features normal
 repositories' `dev` and `main` were verified active. Individual Applicant/Credential repositories
 follow the documented owner-merge exception because classmates cannot be collaborators there.
 
-The SD workflow publishes only on a push to `main`. No SD repository secrets were configured at
-the check: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` must permit pushing to the configured
-`caramisca/service-discovery` namespace. Configure them through GitHub's secret settings; do not
-copy a developer's unrelated broad Docker credentials into a common repository. A successful PR
-build does not publish an image. Gateway already has its DockerHub secret names configured.
+The SD workflow publishes only on a push to `main`. Both `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`
+repository secret names are now present, and `drateeva/service-discovery` is public. Daria manages
+the DockerHub account and token; no token was read or copied into source. Main workflow run
+`41053521253` passed tests and publishing on `c05074d`, and both public tags have digest
+`sha256:060649dae0429e99c800325caef9c0e4d7693cc658737bff47c9fe08d80cdb67`.
+Annotated Git tag `v0.4.0` resolves to `c05074d`. The
+[release evidence](evidence/lab3-sd-release-2026-10-30.json) records the source, CI and manifest
+checks. A successful PR build alone does not publish an image.
 
 ## Version consistency
 
@@ -55,7 +58,9 @@ Different application images naturally have different digests.
 
 At the 28 October publication audit, six application images passed the public version,
 architecture and matching-latest checks. SD, Gateway, Player and Session `0.4.0` returned 404.
-Re-run the gate for the current state before a release; a local PR image is never publication proof.
+On 30 October, after SD release #9, all ten application images passed the public version,
+architecture and matching-latest checks using the updated `drateeva/service-discovery` reference.
+Re-run the gate before the CPR release; a local PR image is never publication proof.
 
 ## Running the release stack
 
@@ -80,10 +85,11 @@ SD is single-process because its registry is in memory. Its 8089 port and Gatewa
 are private. SD's own health does not depend on business services. Gateway polls every five
 seconds in this Compose stack and keeps the last valid snapshots on a temporary SD failure.
 
-Moderation, Rules and Record now have two replicas configured. DMS has one public WebSocket
-instance and one internal replica sharing Redis. Player and Session still need their owners'
-discovery/replica configuration. Verify that each Java replica registers a physical address rather
-than its shared `SERVICE_URL`, and demonstrate SSE/WS/event behavior across replicas.
+Moderation, Rules and Record have two replicas configured. DMS has one public WebSocket instance
+and one internal replica sharing Redis. Player and Session now also have two replicas and
+`DISCOVERY_URL` through CPR #216; their release pointers and Session V2 migration arrived in #215.
+CPR #213 removed shared `SERVICE_URL` overrides for Rules/Record. Verify physical registration
+and SSE/WS/event behavior in the final stack rather than treating configuration as runtime proof.
 
 The common [SD contract](SERVICE_DISCOVERY_CONTRACT.md) records registration, status, monitoring,
 notifications and physical-instance removal. The monitor confirmation fix keeps three health
@@ -92,7 +98,7 @@ failures inside the task-timeout-times-3.5 window even when normal polling is ev
 ## Scoped container smoke test
 
 ```powershell
-python scripts/lab3_smoke.py
+python scripts/lab3_smoke.py --real-registry
 # Or explicitly test local common-service builds under separate tags:
 python scripts/lab3_smoke.py --sd-image caramisca/service-discovery:lab3-monitor-check-20261029 --gateway-image diana7376/gateway-service:lab3-dev-check-20261029 --output docs/evidence/lab3-mihai-smoke-2026-10-29.json
 # Include published University Record with its actual PostgreSQL database:
@@ -127,16 +133,26 @@ chosen evidence file. It records whether the registry was real or mocked, plus i
 and IDs. Its common-service images can be local PR builds, so this evidence is separate from
 public-image verification and the final full-team stack.
 
-On 29 October both scoped runs passed, including G10, and the real-registry run also verified
-HTTP critical-load notification delivery to the local fixture. Its University Record SD snapshot
+Historical evidence: on 29 October both scoped runs passed, including G10, and the real-registry
+run also verified HTTP critical-load notification delivery to the local fixture. Its University Record SD snapshot
 contained no registered instances despite two healthy running containers. Dependency requests
 succeeded through Gateway's static fallback; this does not demonstrate discovery/load balancing
 for that Java service. Its owner must verify the published image and registration configuration.
 
+On 30 October the same real-registry smoke passed with the public release images, including
+`drateeva/service-discovery:0.4.0` and `diana7376/gateway-service:0.4.0`, after pulling the current
+SD, Gateway and University Record images. The
+[published-image evidence](evidence/lab3-published-real-registry-smoke-2026-10-30.json) records
+all ten scoped checks, including G10, the isolated notification receiver and circuit recovery.
+The University Record SD snapshot was again empty at lookup in this smoke's short-TTL setup;
+real registry calls succeeded through static fallback. This evidence still does not establish
+discovered-instance balancing for that service or full-team SSE/WebSocket behavior. Only this
+run's unique temporary Docker project, network and volumes were removed after the test.
+
 ## Remaining checks for the complete laboratory
 
-- Peer review and merge of the new SD confirmation fix, then the common-service releases and CPR
-  source-pointer update. Code review approval must come from another teammate.
+- Peer review and merge of this CPR SD integration and the Gateway pointer correction, followed
+  by the reviewed CPR release. SD #8/#10 and the merge-commit release #9 are already merged.
 - Public `0.4.0` images for every service; successful publication gate before CPR release.
 - Real-channel critical-load alert receipt with credentials kept local. The current local `.env`
   has neither notification channel configured, so fixture tests cannot certify real delivery.

@@ -125,7 +125,7 @@ Credentials stay in ignored local environments or CI secrets. Notifications are 
 by cooldown and retried without making registration or polling wait for the external channel.
 Receiving a fixture alert in a test does not prove delivery to a developer's real channel.
 
-The monitoring fix proposed with this delivery (SD #8, not merged into SD `dev` yet) confirms a failed health GET with at most two
+The monitoring fix integrated through SD #8 and released in SD 0.4.0 confirms a failed health GET with at most two
 additional probes within the same cycle. Each whole GET is bounded to `min(3 seconds, window / 4)`;
 the circuit still requires three actual failures within `REQUEST_TIMEOUT_SECONDS * 3.5`. A healthy
 response stops confirmation; an open monitor suppresses further probes until its recovery window.
