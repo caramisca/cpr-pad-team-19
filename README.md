@@ -1619,8 +1619,10 @@ verify the reviewed branch rules: committing ruleset JSON alone does not enable 
 Every feature begins from current `dev`, targets `dev` in a PR, uses Conventional Commits and
 includes Summary, Milestone / Grade Reference and Verification. The CPR PR template records
 these fields. A release is a separate `dev` to `main` PR using a merge commit, followed by the
-version tag and verified publishing CI. Lab 3 application image version is `0.4.0` for all ten
-application services; upstream database image versions are independent.
+version tag and verified publishing CI. Lab 3 starts at application image version `0.4.0`;
+services may publish independent patch releases such as `0.4.1`. Pin each service's published
+version in both Compose and `IMAGES` in `scripts/check_lab3_release.py`; upstream database image
+versions are independent.
 
 ### Branching Strategy
 
@@ -2012,10 +2014,13 @@ at `/swagger` on both.
 
 ## Laboratory 3 integration and release
 
-The Lab 3 Compose configuration targets **0.4.0 for all ten application images**, including
-Gateway and Service Discovery. PostgreSQL, Redis and MongoDB keep their upstream database
-versions. This configuration prepares the release; a versioned image reference is not evidence
-that the image is already published. Before the final release run:
+The Lab 3 Compose configuration pins a version for each application image. The initial ten
+releases use **0.4.0**; a service can move to **0.4.1** without moving the others. PostgreSQL,
+Redis and MongoDB keep their upstream database versions. When a patch is published, update that
+service's Compose image and its full `repository:version` reference in `IMAGES` in
+`scripts/check_lab3_release.py`, plus its release source pointer and documentation. The checker
+does not discover or substitute versions automatically. A versioned reference is not evidence
+that the image is published. Before the final release run:
 
 ```powershell
 python scripts/check_lab3_release.py
@@ -2024,8 +2029,8 @@ python scripts/check_lab3_release.py --require-published
 
 The first check validates Compose, all application image tags, private control-plane ports and
 Mihai's replica settings. The publication check additionally requires unauthenticated public
-DockerHub access, linux/amd64 and linux/arm64 manifests, and a `latest` digest matching `0.4.0`
-for each image. It fails on missing images instead of substituting `0.3.0`. The release workflow
+DockerHub access, linux/amd64 and linux/arm64 manifests, and a `latest` digest matching each
+image's own pinned version. It fails on missing images instead of substituting another tag. The release workflow
 runs the publication check on PRs to `main`; do not release while it is failing.
 
 Applicant and Credential start with two replicas (`APPLICANT_REPLICAS`, `CREDENTIAL_REPLICAS`),
