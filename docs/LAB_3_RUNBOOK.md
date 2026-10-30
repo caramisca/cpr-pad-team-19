@@ -11,14 +11,14 @@ repositories' `dev` branches; they must not be reimplemented or described as pen
 | Repository | Integrated work | Remaining release step |
 |---|---|---|
 | Service Discovery | #5 status/logs, #6 Docker/CI, #7 monitoring circuits, #3 notifications, #8 bounded confirmation, #10 namespace correction | Release [#9](https://github.com/DariaRateeva/service-discovery/pull/9) merged at `c05074d`; main publication and public `drateeva/service-discovery:0.4.0` verified |
-| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs; #19 excludes upstream 503 from instance failures | Released 0.4.0 at `917726f`, pinned through CPR #221; patch 0.4.1 is prepared in Gateway #20 and its release PR |
+| Gateway | #12 discovery, #13 protection definitions, #14 publication, #15 circuits, #16 instance removal, #17 log IDs; #19 excludes upstream 503 from instance failures | Released 0.4.1 through #21 at `421f5da`; main CI publication succeeded; image and source pointer aligned by this integration |
 | Applicant | #9 feature, #10 release | Released at `5c9b4c0`; public `0.4.0` verified |
 | Credential | #10 feature, #11 release | Released at `55b3d3c`; public `0.4.0` verified |
-| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session, #217 SD release, #219 per-image versions, #221 Gateway pointer, #222 Rules/Record 0.4.1 | Review patch verification, deliver Gateway 0.4.1 and finalize the reviewed CPR release |
+| CPR | #197 Compose/smoke, #198 workflow, #199 private release pointers, #200 Postman, #212 scoped evidence, #213 Java addressing, #215/#216 Player/Session, #217 SD release, #219 per-image versions, #221 Gateway pointer, #222/#224 Java patches, #223 patch verification | Review this final Gateway integration and the CPR milestone release |
 
-SD is pinned to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway 0.4.0 is
-correctly pinned to `917726f` through CPR #221. Rules and University Record use their published
-0.4.1 releases through CPR #222. Each future patch must update image, expected version and source
+SD is pinned to release `c05074d` and uses `drateeva/service-discovery:0.4.0`. Gateway 0.4.1 is
+pinned to `421f5da`. Rules and University Record use their published 0.4.2 releases through
+CPR #224, including per-container IP registration and startup retry. Each future patch must update image, expected version and source
 pointer together; an image name alone neither updates source pointers nor proves publication.
 
 The common repositories require an approval by another teammate, conversation resolution,
@@ -40,7 +40,7 @@ checks. A successful PR build alone does not publish an image.
 
 Each application image has its own pinned `repository:version` in `IMAGES` in
 `scripts/check_lab3_release.py`, which must match its Compose image. The current baseline uses
-**0.4.0** for most services, with Rules and University Record at **0.4.1**. Independent patches
+**0.4.0** for most services, with Gateway at **0.4.1** and Rules/University Record at **0.4.2**. Independent patches
 are supported without changing the other services.
 After a patch is published, update only its expected reference, Compose image, release source
 pointer and documentation. Missing/unpublished tags fail the gate; there is no version fallback.
@@ -177,10 +177,20 @@ contract checks, all 16 domain registrations, SSE and a WebSocket message receiv
 clients. That persistent stack used public Gateway 0.4.0 with Rules/Record 0.4.1. Developer-channel
 Discord/Telegram delivery is still separate from the isolated receiver test.
 
+Final public-image verification on 30 October passed with Gateway 0.4.1, Rules/Record 0.4.2
+and the remaining services at 0.4.0. All ten publication checks passed; the
+[final public smoke](evidence/lab3-final-public-images-smoke-2026-10-30.json) passed all eleven
+scenarios, including discovered registry balancing, scaling, SD restart, G10 and circuit recovery.
+The [final local-stack summary](evidence/lab3-final-local-stack-2026-10-30.json) records 23/23
+HTTP checks, SSE and two-client WebSocket delivery on those public versions. After restarting
+only SD, all 16 domain registrations returned in 13.35 seconds, as recorded in the
+[final re-registration evidence](evidence/lab3-final-reregister-2026-10-30.json). The test projects
+were cleaned up; the persistent Postman project remains running with its volumes preserved.
+
 ## Remaining checks for the complete laboratory
 
-- Peer review of patch-verification changes, Gateway 0.4.1 publication/integration and the
-  reviewed CPR release. SD #8/#10/#9 and CPR #217/#219/#221/#222 are already merged.
+- Peer review of this final Gateway integration and the reviewed CPR milestone release.
+  SD #8/#10/#9, Gateway #19/#20/#21 and CPR #217/#219/#221/#222/#223/#224 are already merged.
 - Public `0.4.0` images for every service; successful publication gate before CPR release.
 - Real-channel critical-load alert receipt with credentials kept local. The current local `.env`
   has neither notification channel configured, so fixture tests cannot certify real delivery.
