@@ -35,3 +35,6 @@
 [submodule "services/service-discovery"]
 	path = services/service-discovery
 	url = https://github.com/DariaRateeva/service-discovery.git
+[submodule "services/message-broker"]
+	path = services/message-broker
+	url = https://github.com/DariaRateeva/message-broker.git
