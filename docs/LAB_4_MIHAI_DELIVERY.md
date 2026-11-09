@@ -29,6 +29,24 @@ La inceputul auditului, codul de topics/gRPC al lui Mihai nu exista in ramurile 
 Contractul este pregatit pentru review; fiecare PR contine numai partea implementata de Mihai.
 Nu au fost integrate automat PR-uri si nu s-au facut push-uri directe pe dev/main.
 
+## Actualizare dupa integrarea serviciilor in dev
+
+Applicant #11 si Credential #12 au fost integrate de proprietar in `dev`; CI-ul post-merge este
+verde pentru commiturile `7292baa` si `f14bac7`. Codul implementat al celor doua servicii este
+verificat; validarea cu adaptorul gRPC real al University Record ramane pentru integrarea echipei.
+
+Sunt pregatite PR-uri **draft** `dev -> main`, fara merge sau publicare:
+
+- [Applicant release #12](https://github.com/caramisca/applicant-service/pull/12)
+- [Credential release #13](https://github.com/caramisca/credential-service/pull/13)
+
+Asteptam review-ul contractului comun CPR #271 si al Broker #6 inainte de a fixa release-ul 0.5.0.
+Dupa acceptarea contractului: confirmam compatibilitatea proto, finalizam PR-urile de release prin
+merge commit si verificam publicarea 0.5.0 pentru amd64/arm64, inclusiv digestul `latest`.
+Apoi un PR CPR actualizeaza **gitlink-urile la commiturile finale main**, tagurile celor doua imagini
+si valorile din `scripts/check_lab3_release.py`. Pointerele CPR nu au fost mutate anticipat la dev.
+Activarea modului Grpc in Compose asteapta brokerul si adaptoarele reale ale dependentelor.
+
 ## Ce am implementat
 
 | Partea ta | Livrabil |
