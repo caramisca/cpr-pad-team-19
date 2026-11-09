@@ -17,6 +17,18 @@ din 4 noiembrie. Cele trei PR-uri recente cerute de Daria sunt toate merged in `
 [CPR #244](https://github.com/caramisca/cpr-pad-team-19/pull/244).
 La inceputul auditului, codul de topics/gRPC al lui Mihai nu exista in ramurile lor `dev`.
 
+## PR-uri livrate
+
+| Repository | PR catre dev |
+|---|---|
+| Message Broker | [#6](https://github.com/DariaRateeva/message-broker/pull/6) |
+| Applicant | [#11](https://github.com/caramisca/applicant-service/pull/11) |
+| Credential | [#12](https://github.com/caramisca/credential-service/pull/12) |
+| CPR | [#271](https://github.com/caramisca/cpr-pad-team-19/pull/271) |
+
+Contractul este pregatit pentru review; fiecare PR contine numai partea implementata de Mihai.
+Nu au fost integrate automat PR-uri si nu s-au facut push-uri directe pe dev/main.
+
 ## Ce am implementat
 
 | Partea ta | Livrabil |

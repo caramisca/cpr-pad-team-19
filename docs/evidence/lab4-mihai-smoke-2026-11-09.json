@@ -1,5 +1,5 @@
 {
-  "startedAt": "2026-11-09T21:02:29.960049+00:00",
+  "startedAt": "2026-11-09T21:11:19.573733+00:00",
   "checks": [
     "Two live, independently registered replicas of each owned service",
     "Credential -> Broker -> University Record gRPC fixture",
@@ -14,6 +14,6 @@
   ],
   "scope": "Real Applicant/Credential/Redis/Service Discovery; University Record gRPC fixture; no Gateway",
   "runtime": "Microsoft.AspNetCore.App 8.0.33\nMicrosoft.NETCore.App 8.0.33",
-  "completedAt": "2026-11-09T21:02:35.978899+00:00",
+  "completedAt": "2026-11-09T21:11:25.399556+00:00",
   "passed": true
 }
