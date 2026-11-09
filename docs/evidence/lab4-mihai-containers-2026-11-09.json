@@ -1,0 +1,47 @@
+{
+  "passed": true,
+  "timestamp": "2026-11-09T21:06:23.180327+00:00",
+  "checks": [
+    "Broker -> Credential uses real gRPC between Linux containers",
+    "Both physical Credential replicas read the shared Redis bundle over gRPC",
+    "Topic publication creates one service copy despite two replicas",
+    "applicant.deleted delivery commits Credential cleanup and GET returns 404"
+  ],
+  "scope": "Owned service container integration; no University Record call; no Gateway",
+  "replicaIds": [
+    "d7b2767123f9",
+    "8e5aa2c63283"
+  ],
+  "prometheusTargets": [
+    {
+      "job": "applicant-service",
+      "instance": "172.20.0.3:8083",
+      "health": "up"
+    },
+    {
+      "job": "applicant-service",
+      "instance": "172.20.0.8:8083",
+      "health": "up"
+    },
+    {
+      "job": "credential-service",
+      "instance": "172.20.0.6:8084",
+      "health": "up"
+    },
+    {
+      "job": "credential-service",
+      "instance": "172.20.0.9:8084",
+      "health": "up"
+    },
+    {
+      "job": "message-broker",
+      "instance": "message-broker:8091",
+      "health": "up"
+    },
+    {
+      "job": "prometheus",
+      "instance": "localhost:9090",
+      "health": "up"
+    }
+  ]
+}

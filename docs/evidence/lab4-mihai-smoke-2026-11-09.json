@@ -1,0 +1,19 @@
+{
+  "startedAt": "2026-11-09T21:02:29.960049+00:00",
+  "checks": [
+    "Two live, independently registered replicas of each owned service",
+    "Credential -> Broker -> University Record gRPC fixture",
+    "Applicant -> Broker -> Credential uses real HTTP/2 protobuf, Gateway absent",
+    "Second replica reads shared Redis state",
+    "session.closed -> Applicant commit/outbox -> applicant.deleted -> Credential commit; both entities removed",
+    "Duplicate delivery to another replica reads shared durable inbox; poison payload returns REJECTED",
+    "Metrics and bounded structured NDJSON logs available on every replica",
+    "Broker outage retains a committed domain event in Redis outbox",
+    "Domain record and pending outbox survive Credential process restart",
+    "Outbox resumes automatically after broker recovery"
+  ],
+  "scope": "Real Applicant/Credential/Redis/Service Discovery; University Record gRPC fixture; no Gateway",
+  "runtime": "Microsoft.AspNetCore.App 8.0.33\nMicrosoft.NETCore.App 8.0.33",
+  "completedAt": "2026-11-09T21:02:35.978899+00:00",
+  "passed": true
+}
