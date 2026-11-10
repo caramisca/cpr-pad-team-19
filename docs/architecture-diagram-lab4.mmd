@@ -1,0 +1,16 @@
+flowchart LR
+  UI[Client] -->|REST + API key| GW[Gateway - Diana / Andi]
+  GW -->|Subscriber request queues - Diana| MB[Custom Python Message Broker]
+  MB <-->|HTTP registration / topic subscriptions| SD[Service Discovery]
+  MB <-->|gRPC Call / Deliver| APP[Applicant - Mihai]
+  MB <-->|gRPC Call / Deliver| CRED[Credential - Mihai]
+  APP -->|gRPC Call credential-service| MB
+  CRED -->|gRPC Call university-record-service| MB
+  MB <-->|gRPC adapters - respective owners| OTHER[Other six services]
+  APP --> AR[(Applicant Redis + inbox/outbox)]
+  CRED --> CR[(Credential Redis + inbox/outbox)]
+  MB -.->|QueueStore adapter - Andi| DQ[(Durable queues + DLC)]
+  PROM[Prometheus] -->|metrics, every replica| APP
+  PROM -->|metrics, every replica| CRED
+  PROM -->|metrics| MB
+  GRAF[Grafana - Diana] --> PROM

@@ -4,6 +4,41 @@ Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (
 
 A distributed system of 9 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
+## Laboratory 4: broker communication and monitoring
+
+The Lab 4 contribution by **Mihai (@caramisca)** adds the versioned
+[protobuf/message contract](docs/MESSAGE_BROKER_CONTRACT.md), topic fan-out and listing in the
+custom Python broker, and gRPC adapters, subscriptions, Redis inbox/outbox, structured logs and
+Prometheus metrics in Applicant and Credential. See the [delivery and integration checklist](docs/LAB_4_MIHAI_DELIVERY.md).
+The older Lab 2/3 REST-via-Gateway instructions below describe the published stack retained in
+`docker-compose.yml`; the new behavior is explicitly enabled with `Messaging__Enabled=true` and
+dependency mode `Grpc` in the new service builds. Full Lab 4 rollout still needs the other owners'
+adapters, queued Gateway routing, durable broker store/DLC and reviewed release images.
+
+```mermaid
+flowchart LR
+  UI[Client] -->|REST + API key| GW[Gateway - Diana / Andi]
+  GW -->|Subscriber request queues - Diana| MB[Custom Python Message Broker]
+  MB <-->|HTTP registration / topic subscriptions| SD[Service Discovery]
+  MB <-->|gRPC Call / Deliver| APP[Applicant - Mihai]
+  MB <-->|gRPC Call / Deliver| CRED[Credential - Mihai]
+  APP -->|gRPC Call credential-service| MB
+  CRED -->|gRPC Call university-record-service| MB
+  MB <-->|gRPC adapters - respective owners| OTHER[Other six services]
+  APP --> AR[(Applicant Redis + inbox/outbox)]
+  CRED --> CR[(Credential Redis + inbox/outbox)]
+  MB -.->|QueueStore adapter - Andi| DQ[(Durable queues + DLC)]
+  PROM[Prometheus] -->|metrics, every replica| APP
+  PROM -->|metrics, every replica| CRED
+  PROM -->|metrics| MB
+  GRAF[Grafana - Diana] --> PROM
+```
+
+Detailed [architecture source](docs/architecture-diagram-lab4.mmd),
+[Prometheus setup and dashboard queries](monitoring/README.md), and
+[scoped integration evidence](docs/evidence/lab4-mihai-smoke-2026-11-09.json).
+New private log/metrics endpoints must remain excluded from the public Gateway routes.
+
 ## Team Definition & Microservice Allocation
 
 The team works in **2 polyglot backend languages** (Java and C#) for domain services, with an **API Gateway** implemented in Python (the previously banned language) as required by Laboratory 2:
@@ -69,7 +104,7 @@ Owner: Mihai — C# (.NET 8) — Redis / In-Memory
   legitimate. Ground truth lives in `university-record-service`.
 - **Exposes:** `POST /applicants/generate`, `GET /applicants/{id}`, `GET /applicants`,
   `PUT /applicants/{id}`, `DELETE /applicants/{id}`.
-- **Calls:** `credential-service` to attach a credential bundle to a freshly generated applicant.
+- **Calls:** `credential-service` through the Message Broker in Lab 4 to attach a credential bundle to a freshly generated applicant.
 
 ### 4. `credential-service`
 
@@ -83,7 +118,7 @@ Owner: Mihai — C# (.NET 8) — Redis / In-Memory
 - **Exposes:** `POST /credentials/issue`, `GET /credentials/{id}`,
   `POST /credentials/{id}/verify-hash`, `GET /credentials`, `PUT /credentials/{id}`,
   `DELETE /credentials/{id}`.
-- **Calls:** `university-record-service` to derive authentic field values for legitimate applicants.
+- **Calls:** `university-record-service` through the Message Broker in Lab 4 to derive authentic field values for legitimate applicants.
 
 ### 5. `server-rules-service`
 
