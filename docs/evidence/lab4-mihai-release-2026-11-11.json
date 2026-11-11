@@ -1,0 +1,45 @@
+{
+  "timestamp": "2026-11-11T18:07:10.711400+00:00",
+  "version": "0.5.0",
+  "services": [
+    {
+      "repository": "caramisca/applicant-service",
+      "mainCommit": "341e8c36e10830a83ff2fe5596ce8b493b35edf2",
+      "publishingRun": {
+        "conclusion": "success",
+        "headSha": "341e8c36e10830a83ff2fe5596ce8b493b35edf2",
+        "status": "completed",
+        "url": "https://github.com/caramisca/applicant-service/actions/runs/43074160390"
+      },
+      "digest": "sha256:e133b1b6e45f122e2cbf58572540d8436fbd5792518db3e0641bfeebcc27f5ae",
+      "latestMatches": true,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceTag": "v0.5.0",
+      "sourceTagStatus": "verified",
+      "sourceTagCommit": "341e8c36e10830a83ff2fe5596ce8b493b35edf2"
+    },
+    {
+      "repository": "caramisca/credential-service",
+      "mainCommit": "a05ba8bd8e5103de4d3efd343cf8254b59c0bb79",
+      "publishingRun": {
+        "conclusion": "success",
+        "headSha": "a05ba8bd8e5103de4d3efd343cf8254b59c0bb79",
+        "status": "completed",
+        "url": "https://github.com/caramisca/credential-service/actions/runs/43074177190"
+      },
+      "digest": "sha256:3d16730e2bdc92b1d623b3c540d2065768d51dab30432c6993a4a203aafc7506",
+      "latestMatches": true,
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ],
+      "sourceTag": "v0.5.0",
+      "sourceTagStatus": "verified",
+      "sourceTagCommit": "a05ba8bd8e5103de4d3efd343cf8254b59c0bb79"
+    }
+  ],
+  "passed": true
+}

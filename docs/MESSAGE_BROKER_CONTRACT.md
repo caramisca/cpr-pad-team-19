@@ -36,6 +36,13 @@ Mutating requests must not be replayed automatically after an ambiguous timeout 
 idempotency. Transport failure is gRPC UNAVAILABLE; validation failure is INVALID_ARGUMENT.
 Application errors remain `ServiceReply.status` with the existing JSON error shape.
 
+HTTP adapters must retain the query string inside `ServiceRequest.path`, for example
+`/applicants?sessionId=<uuid>` and `/credentials?applicantId=<uuid>`. A path without its
+query silently removes business filters. `ServiceReply.headers` includes `Content-Type`
+for JSON, `Location` for created resources, `X-Request-Id` and `X-Instance-Id`; the Gateway
+must restore these headers along with status and body. Applicant/Credential contract tests
+compare the gRPC and REST responses for filtered lists and JSON 400/404 errors.
+
 ## Event envelope
 
 HTTP `POST /events` and gRPC `MessageBroker.Publish(Event)` use the same topic bus. Example HTTP:

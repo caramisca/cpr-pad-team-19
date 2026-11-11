@@ -21,8 +21,8 @@ ROOT = Path(__file__).resolve().parents[1]
 IMAGES = {
     "player-service": "drateeva/player-service:0.4.0",
     "server-moderation-session-service": "drateeva/server-moderation-session-service:0.4.0",
-    "applicant-service": "caramisca/applicant-service:0.4.0",
-    "credential-service": "caramisca/credential-service:0.4.0",
+    "applicant-service": "caramisca/applicant-service:0.5.0",
+    "credential-service": "caramisca/credential-service:0.5.0",
     "server-rules-service": "diana7376/server-rules-service:0.4.2",
     "university-record-service": "diana7376/university-record-service:0.4.2",
     "moderation-service": "andiblindu1/moderation-service:0.4.0",

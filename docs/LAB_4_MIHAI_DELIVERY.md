@@ -1,51 +1,42 @@
-# Lab 4: partea lui Mihai / caramisca, 9 noiembrie 2026
+# Lab 4: livrarea lui Mihai / caramisca, 11 noiembrie 2026
 
-## Identitate si repartizare verificate
+## Starea actuala
 
-Contul GitHub autentificat este `caramisca`; identitatea Git globala este tot `caramisca`.
-In conversatia Telegram apari drept **Mihai Caraman**, iar README-ul CPR iti atribuie
-`applicant-service` si `credential-service`. Randul **Mihai** din tabel este partea ta;
-randul **You** este al Dariei, autoarea repartizarii.
+Partea implementata de Mihai este livrata in serviciile proprii si pregatita pentru integrarea
+CPR prin PR cu peer review. Laboratorul complet al echipei ramane in integrare; vezi
+[planul de finalizare si prezentare](LAB_4_PRESENTATION_READINESS.md).
 
-PDF-ul Lab 4 stabileste cerintele laboratorului; tabelul transmis de echipa le imparte pe persoane.
-Nu am tratat mesajele colegilor drept autorizatie de a le aproba sau integra automat PR-urile.
+Repartizarea a fost reverificata din **ambele screenshoturi originale ale Dariei**, recuperate
+impreuna cu conversatia Telegram din 3-9 noiembrie. Randul **Mihai** iti apartine; randul **You**
+este al Dariei, autoarea tabelului. PDF-ul Lab 4 defineste cerintele, iar al doilea screenshot
+adauga obligatiile fiecaruia in cele doua servicii proprii.
 
-Verificare GitHub: [CPR #228](https://github.com/caramisca/cpr-pad-team-19/pull/228) este merged
-din 4 noiembrie. Cele trei PR-uri recente cerute de Daria sunt toate merged in `dev`, pe 9 noiembrie:
-[SD #11](https://github.com/DariaRateeva/service-discovery/pull/11),
-[Broker #5](https://github.com/DariaRateeva/message-broker/pull/5),
-[CPR #244](https://github.com/caramisca/cpr-pad-team-19/pull/244).
-La inceputul auditului, codul de topics/gRPC al lui Mihai nu exista in ramurile lor `dev`.
+## PR-uri si release-uri verificate
 
-## PR-uri livrate
-
-| Repository | PR catre dev |
+| Livrabil | PR / stare |
 |---|---|
-| Message Broker | [#6](https://github.com/DariaRateeva/message-broker/pull/6) |
-| Applicant | [#11](https://github.com/caramisca/applicant-service/pull/11) |
-| Credential | [#12](https://github.com/caramisca/credential-service/pull/12) |
-| CPR | [#271](https://github.com/caramisca/cpr-pad-team-19/pull/271) |
+| Contract, documentatie, Prometheus initial | [CPR #271](https://github.com/caramisca/cpr-pad-team-19/pull/271), merged in dev |
+| Broker topics / gRPC | [Broker #6](https://github.com/DariaRateeva/message-broker/pull/6), merged in dev |
+| Applicant Lab 4 + corectia JSON | [#11](https://github.com/caramisca/applicant-service/pull/11) si [#13](https://github.com/caramisca/applicant-service/pull/13), merged in dev |
+| Credential Lab 4 + corectia JSON | [#12](https://github.com/caramisca/credential-service/pull/12) si [#14](https://github.com/caramisca/credential-service/pull/14), merged in dev |
+| Applicant dev -> main | [release #12](https://github.com/caramisca/applicant-service/pull/12), merged prin merge commit |
+| Credential dev -> main | [release #13](https://github.com/caramisca/credential-service/pull/13), merged prin merge commit |
+| CPR: partea proprie de release/monitoring | Ramura `chore/cpr/lab4-mihai-release`, PR separat cu peer approval obligatoriu |
 
-Contractul este pregatit pentru review; fiecare PR contine numai partea implementata de Mihai.
-Nu au fost integrate automat PR-uri si nu s-au facut push-uri directe pe dev/main.
+| Imagine publica | Commit main si tag Git |
+|---|---|
+| `caramisca/applicant-service:0.5.0` | `341e8c36e10830a83ff2fe5596ce8b493b35edf2`, `v0.5.0` |
+| `caramisca/credential-service:0.5.0` | `a05ba8bd8e5103de4d3efd343cf8254b59c0bb79`, `v0.5.0` |
 
-## Actualizare dupa integrarea serviciilor in dev
+Pentru ambele imagini s-au verificat accesul public, manifestele **linux/amd64 + linux/arm64** si
+`latest` cu acelasi digest ca `0.5.0`. Dovezile cu digesturile si CI-ul exact sunt in
+[release evidence](evidence/lab4-mihai-release-2026-11-11.json). Gitlink-urile CPR sunt pregatite
+la aceste commituri finale main, dupa publicare, impreuna cu tagurile Compose si IMAGES din checker.
 
-Applicant #11 si Credential #12 au fost integrate de proprietar in `dev`; CI-ul post-merge este
-verde pentru commiturile `7292baa` si `f14bac7`. Codul implementat al celor doua servicii este
-verificat; validarea cu adaptorul gRPC real al University Record ramane pentru integrarea echipei.
-
-Sunt pregatite PR-uri **draft** `dev -> main`, fara merge sau publicare:
-
-- [Applicant release #12](https://github.com/caramisca/applicant-service/pull/12)
-- [Credential release #13](https://github.com/caramisca/credential-service/pull/13)
-
-Asteptam review-ul contractului comun CPR #271 si al Broker #6 inainte de a fixa release-ul 0.5.0.
-Dupa acceptarea contractului: confirmam compatibilitatea proto, finalizam PR-urile de release prin
-merge commit si verificam publicarea 0.5.0 pentru amd64/arm64, inclusiv digestul `latest`.
-Apoi un PR CPR actualizeaza **gitlink-urile la commiturile finale main**, tagurile celor doua imagini
-si valorile din `scripts/check_lab3_release.py`. Pointerele CPR nu au fost mutate anticipat la dev.
-Activarea modului Grpc in Compose asteapta brokerul si adaptoarele reale ale dependentelor.
+Base Compose poate rula noile imagini in modul Http existent. Activarea Lab 4 a serviciilor
+proprii este pregatita separat in `docker-compose.lab4-mihai.yml`; aplicati overlay-ul numai
+cand brokerul si adaptorul real University Record sunt integrate de colegi. Un overlay valid
+sintactic nu demonstreaza existenta acelor componente.
 
 ## Ce am implementat
 
@@ -63,7 +54,7 @@ Activarea modului Grpc in Compose asteapta brokerul si adaptoarele reale ale dep
 | Applicant + Credential G9 | Redis outbox atomic cu create/delete, inbox comun replicilor, cleanup idempotent, COMMITTED/RETRY/REJECTED distincte |
 | Applicant + Credential G10 | Contoare requests/errors, durata cumulata si active requests la `/metrics` |
 
-Noile versiuni ale celor doua servicii sunt pregatite ca **0.5.0**, inclusiv tagurile workflow-ului.
+Cele doua servicii au release **0.5.0** publicat si tag Git **v0.5.0**, cu CI de publicare verificat.
 Nu suprascriu release-ul 0.4.0. Comportamentul Lab 4 se activeaza explicit prin
 `Messaging__Enabled=true`, `Messaging__BrokerUrl` si modul dependentei `Grpc`.
 Niciun `/internal/mock-events` nu exista in cele doua servicii ale tale; adaptoarele vechi ale
@@ -72,69 +63,84 @@ celorlalti autori se retrag in PR-urile lor.
 Detaliile API si punctele concrete de integrare sunt in
 [MESSAGE_BROKER_CONTRACT.md](MESSAGE_BROKER_CONTRACT.md).
 
-## Dovezi si verificari
+## Corectia de integrare din 11 noiembrie
 
-- Broker: **97 teste** trecute, inclusiv HTTP/2 real, fan-out, duplicate concurente, capacitate
-  atomica, confirmare dupa commit, handoff DLC si thread separat per RPC.
-- Applicant: **111 teste**, fara skip; coverage aproximativ **90%**, peste pragul CI de 80%.
-- Credential: **134 teste**, fara skip; coverage aproximativ **90.7%**.
-- CPR: **6 teste** existente trecute si verificarea configuratiei Lab 3 trecuta.
-- Cele patru copii ale proto sunt identice; **57 scripturi Postman** au sintaxa JavaScript valida.
-- Toate cele trei imagini modificate au fost construite local pentru Linux/amd64, cu utilizatori
-  non-root. Nu sunt prezentate drept imagini publicate pe DockerHub sau dovada pentru ARM64.
-- `promtool check config`: configuratie valida, toate cele **3 reguli** valide.
-- Prometheus a avut **6 targeturi UP**: doua Applicant, doua Credential, broker si el insusi.
+Ambele `Messaging/ServiceRpc.cs` pastreaza acum `Content-Type` in ServiceReply, pe langa status,
+JSON, Location, X-Request-Id si X-Instance-Id. Testele compara raspunsuri REST/gRPC 200/400/404
+si verifica filtrarea cu date pentru doua sesiuni/proprietari diferiti. Gateway trebuie sa
+transmita query string-ul integral in path; aceasta corectie in Gateway ramane la Diana.
 
-[Smoke nativ](evidence/lab4-mihai-smoke-2026-11-09.json): .NET 8.0.33, doua replici per serviciu,
-Redis real, Service Discovery real, gRPC fara Gateway, cleanup prin evenimente, duplicate la alta
-replica si outbox pastrat dupa restart si trimis dupa revenirea brokerului. University Record este
-un **receptor gRPC de test explicit**, nu implementarea Dianei.
+Cele doua colectii Postman includ `runLab4GatewayChecks=false`, implicit. Pe stack-ul comun
+final setati variabila la `true` pentru verificari suplimentare de Content-Type si query filters.
+Diagnosticele private raman separat opt-in (`runInternalDiagnostics=false`); porturile interne
+nu se expun public pentru a rula colectiile.
 
-[Smoke containere](evidence/lab4-mihai-containers-2026-11-09.json): gRPC intre containere Linux,
-citire din ambele replici Credential, o singura copie de topic per serviciu si stergere verificata
-dupa commit; inventarul Prometheus include adresele fizice.
+Prometheus are acum joburi pentru toate cele opt servicii de domeniu, broker si el insusi,
+inclusiv ambele nume Compose DMS. Interfetele asteptate de la ceilalti autori sunt documentate in
+[monitoring/README.md](../monitoring/README.md). `check_lab4_monitoring.py --scope team` detecteaza
+si joburile DNS fara nicio tinta; `up == 0` singur nu surprinde aceasta situatie.
 
-## Ce mai necesita integrarea echipei
+## Dovezi actuale
 
-Aceste puncte sunt dependente reale, nu parti declarate gata prin faptul ca testele tale trec:
+- **Applicant: 112 teste, 0 skipped, coverage 90.07%.**
+- **Credential: 135 teste, 0 skipped, coverage 90.75%.**
+- Testele Release au rulat pe .NET 8, cu Redis real; pragul CI 80% a trecut.
+- CI de feature, dev, main si publicare: verde pentru commiturile livrate.
+- **59 scripturi Postman** din cele doua colectii au sintaxa JavaScript valida.
+- `promtool`: configuratie valida si toate cele **5 reguli** valide.
+- CPR: **6 teste trecute**, configuratiile Compose base/overlay/monitoring valide si
+  `check_lab3_release.py --require-published` reusit pentru toate cele zece imagini pin-uite.
+  Acest checker nu include inca brokerul si nu probeaza activarea Lab 4 a tuturor serviciilor.
+- [Smoke nativ actual](evidence/lab4-mihai-smoke-2026-11-11.json): doua replici per serviciu,
+  gRPC/HTTP2 prin broker, filtre/headere JSON, Redis comun, topic cleanup, inbox comun, restart
+  serviciu si recuperare outbox. **University Record este fixture explicit; Gateway este absent.**
+- [Smoke imagini publice](evidence/lab4-mihai-public-containers-2026-11-11.json): gRPC intre
+  containere Linux cu imaginile Applicant/Credential 0.5.0 descarcate public, filtre/headere,
+  citire din ambele replici Credential si cleanup dupa commit. Broker/SD sunt builduri locale
+  pentru test; nu sunt prezentate ca release-uri ale colegilor.
+- [Monitoring actual](evidence/lab4-mihai-monitoring-2026-11-11.json): sase targeturi UP,
+  doua Applicant, doua Credential, broker si Prometheus. Nu sunt toate serviciile echipei.
+- [Rezumat teste](evidence/lab4-mihai-tests-2026-11-11.json): numere extrase din TRX/Cobertura.
 
-1. **Review comun** pentru contract si broker. PR-urile merg catre `dev`, fara merge automat.
-2. **Diana:** cozile request/reply, rutarea Gateway, load balancing/rerutare, adaptorul gRPC al
-   serviciilor ei, retragerea rutelor private din Gateway si dashboard-urile Grafana.
-   `broker.request_dispatch`, `broker.selector` si query-urile Prometheus sunt pregatite.
-3. **Andi:** circuit breakers, store durabil pentru broker, DLC si colectorul de loguri Gateway.
-   `topic_store=` si `topic_bus.on_rejected` sunt punctele pregatite; `/internal/logs` este disponibil.
-4. **Daria:** integrarea brokerului in Compose, adaptoarele serviciilor ei si release check/runbook
-   comun. SD cu topics este deja integrat in `dev`.
-5. **Fiecare autor:** implementarea aceluiasi `ServiceEndpoint` in serviciile proprii si expunerea
-   metricilor; acum sunt instrumentate brokerul si cele doua servicii ale lui Mihai.
-6. Dupa review si integrare: release-uri 0.5.0, verificarea manifestelor publice amd64/arm64,
-   pointere de submodule, configuratia Compose comuna si demonstratia E2E a tuturor serviciilor.
+Dovezile din 9 noiembrie sunt pastrate ca istoric. Auditul dinaintea interventiei este separat
+in [LAB_4_AUDIT_2026-11-11.md](LAB_4_AUDIT_2026-11-11.md); statusul actual este cel din acest raport.
 
-**Limita Grade 9:** store-ul implicit al brokerului este in memorie. Outbox-ul serviciilor este
-durabil, dar un eveniment acceptat de broker poate fi pierdut la restartul brokerului pana cand
-Andi conecteaza store-ul durabil. Nu se poate declara inca fiabilitatea end-to-end pentru toata echipa.
+## Ce mai trebuie echipei
 
-## Repetarea verificarii tale
+1. **Review CPR pentru aceasta livrare.** README cere aprobarea altui coleg pentru contracte,
+   submodule si repository-uri comune. PR-ul nu se integreaza automat si nu ocoleste protectiile.
+2. **Diana:** request/reply queues reale, query string si dependente gRPC/protobuf corecte in
+   Gateway, teste actualizate, alimentarea load cache-ului si rerutare impreuna cu Andi; adaptoarele
+   reale Rules/Record si panouri Grafana pentru toate serviciile, inclusiv contoarele C#.
+3. **Andi:** circuit breaker real in broker, store durabil, DLC si endpoint de listare, endpoint
+   Gateway pentru download loguri; integrarea propriilor servicii.
+4. **Daria:** integrarea brokerului/SD si a tuturor release-urilor in Compose, release check/runbook
+   Lab 4, adaptoarele si release-urile Player/Session.
+5. **Fiecare autor:** imagini publice reale si proba comuna cu serviciile proprii, ACK dupa commit,
+   loguri/metrici si contract protobuf compatibil.
+6. **Impreuna:** flux Gateway -> broker queues -> Applicant -> Credential -> University Record
+   real; probe de topic cleanup, persistenta broker/DLC, circuit trip/reroute si load balancing;
+   toate targeturile/panourile prezente. Apoi release-ul CPR prin PR dev -> main.
 
-Pastreaza patru checkout-uri cu numele `broker`, `applicant`, `credential`, `discovery`, in acelasi
-director de lucru, fiecare la PR-ul corespunzator sau la `dev` dupa integrare. Instaleaza dependentele
-din `scripts/requirements-lab4-smoke.txt` intr-un venv si compileaza cele doua servicii in Release.
-Ai nevoie de runtime .NET 8 si un Redis separat pentru test, implicit pe localhost:16394.
+**Limita G9:** store-ul brokerului verificat este in memorie. Outbox/inbox durabile la servicii
+nu garanteaza recuperarea unui eveniment deja acceptat de broker dupa restartul brokerului.
+Nu se declara fiabilitate end-to-end pana la integrarea si verificarea store-ului lui Andi.
+
+## Repetarea probei proprii
+
+Pastrati checkouts `broker`, `applicant`, `credential`, `discovery` in acelasi workspace;
+compilati cele doua servicii in Release. Sunt necesare .NET 8, dependentele Python din
+`scripts/requirements-lab4-smoke.txt` si Redis separat pentru test (implicit localhost:16394).
 
 ```powershell
-dotnet build <workspace>/applicant/ApplicantService.sln -c Release
-dotnet build <workspace>/credential/CredentialService.sln -c Release
 python scripts/lab4_mihai_smoke.py --workspace <workspace> --dotnet <dotnet8-runtime> --evidence <evidence.json>
+python scripts/check_lab4_monitoring.py --scope owned --evidence <monitoring.json>
 ```
 
-Scriptul porneste numai procesele lui, foloseste prefix Redis unic si le curata la final.
-Pentru verificarea containerelor, ruleaza `scripts/lab4_container_probe.py` in containerul brokerului.
-Configuratia Prometheus se porneste cu overlay-ul descris in [monitoring/README.md](../monitoring/README.md).
+Scriptul nativ porneste numai procesele lui, foloseste prefix Redis unic si le curata la final.
+Proba containerelor ruleaza `scripts/lab4_container_probe.py` in brokerul proiectului de test.
+Pentru acceptarea finala a echipei folositi **--scope team**, nu owned, si checklistul de prezentare.
 
-In Postman, folderele noi de diagnostic intern sunt **dezactivate implicit**:
-`runInternalDiagnostics=false`. Activeaza-le doar cu un port-forward de test si `internalBaseUrl`
-potrivit. Cererile publice de business continua sa foloseasca `baseUrl` al Gateway-ului.
-
-Modificarile locale existente pentru Lab 3 au fost pastrate in directorul principal. Toata
-implementarea Lab 4 este in checkout-urile separate din `.local/lab4-mihai`.
+Modificarile Lab 3 existente in directorul principal au fost pastrate. Lucrul Lab 4 este in
+checkout-urile izolate `.local/lab4-mihai`; nicio implementare privata a colegilor nu a fost
+inlocuita sau declarata completa prin fixture.
