@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "server-moderation-session-service",
-    "description": "server-moderation-session-service (Team 19, Topic 3 — Student ID, Please): shifts, the applicant queue, the `decision.recorded` stand-in, live updates (SSE) and the error contract, as of Lab 4. Run the folders top to bottom, or use the Collection Runner: later requests use {{sessionId}} and the applicant captured on the way. Calls go through the API Gateway (`baseUrl` http://localhost:8080) with the API key from the `apiKey` variable as `Authorization: Bearer` (one of the keys in GATEWAY_API_KEYS; never stored here). Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. The live stream is sent by hand (`watchLive`); instance status and metrics need `sessionInstanceUrl` (see those folders).",
+    "description": "server-moderation-session-service (Team 19, Topic 3 — Student ID, Please): shifts, the applicant queue, live updates (SSE) and the error contract, as of Lab 4 (`decision.recorded` arrives from the Message Broker; the REST stand-in is local only, see the queue folder). Run the folders top to bottom, or use the Collection Runner: later requests use {{sessionId}} and the applicant captured on the way. Calls go through the API Gateway (`baseUrl` http://localhost:8080) with the API key from the `apiKey` variable as `Authorization: Bearer` (one of the keys in GATEWAY_API_KEYS; never stored here). Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. The live stream is sent by hand (`watchLive`); instance status and metrics need `sessionInstanceUrl` (see those folders).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -49,7 +49,8 @@
     { "key": "moderatorId", "value": "", "type": "string" },
     { "key": "juniorModeratorId", "value": "", "type": "string" },
     { "key": "queueApplicantId", "value": "", "type": "string" },
-    { "key": "decisionEventId", "value": "", "type": "string" }
+    { "key": "decisionEventId", "value": "", "type": "string" },
+    { "key": "standInUrl", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -727,12 +728,40 @@
             "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000"] },
             "description": "Sent without `Authorization`: the Gateway refuses it before routing."
           }
+        },
+        {
+          "name": "Event Stand-In Is Not Reachable Through The Gateway Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Lab 4: events arrive from the Message Broker; the REST stand-in is off in Compose and the",
+                  "// Gateway no longer routes /internal/*, so a client can never reach it.",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+          }
         }
       ]
     },
     {
-      "name": "Queue And Event Stand-In (decision.recorded)",
-      "description": "`next-applicant` calls applicant-service and server-rules-service (through the Gateway's internal port in Lab 3; through the Message Broker once Lab 4 moves them). `POST /internal/mock-events/decision-recorded` stands in for the `decision.recorded` event until the broker delivers it: same body as the event, deduplicated on `eventId`. Once the broker carries the event, the Gateway drops this route and those requests go.",
+      "name": "Queue And Event Stand-In (decision.recorded, stand-in local only)",
+      "description": "`next-applicant` calls applicant-service (through the Gateway's internal port, or the Message Broker with `APPLICANT_CLIENT_MODE=broker`) and server-rules-service. Since Lab 4 `decision.recorded` arrives from the Message Broker over gRPC; `POST /internal/mock-events/decision-recorded` remains for local runs without a broker, only on an instance started with `MOCK_EVENTS_ENABLED=true` (never in Compose), and the Gateway no longer routes it. Set `standInUrl` to such an instance (e.g. `http://localhost:8082`); empty, the stand-in requests and the checks of their effect are skipped, the queue requests still run.",
       "item": [
         {
           "name": "Open Session For Queue Tests",
@@ -895,6 +924,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }",
                   "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
@@ -919,12 +951,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Session Reflects Processed Applicant",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -948,6 +994,17 @@
           "name": "Replay Same Decision Event Is No-Op",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -966,12 +1023,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Session After Replay Still Shows One Processed",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -991,6 +1062,17 @@
         {
           "name": "Record Decision With An Unknown Action Returns 400",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1012,13 +1094,27 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"MAYBE\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
-            "description": "`action` must be ACCEPT, REJECT, FLAG or BAN; anything else is refused as never valid since Lab 4."
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "description": "`action` must be ACCEPT, REJECT, FLAG or BAN; anything else is refused as never valid since Lab 4.",
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Record Decision Missing RecordedAt Returns 400",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1040,12 +1136,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Record Decision For Nonexistent Session Returns 404",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1066,12 +1176,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Record Decision For Unmatched Applicant Returns 404",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1092,12 +1216,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Session After Refused Events Still Shows One Processed",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -1130,7 +1268,7 @@
                   "  pm.expect(Date.parse(body.closedAt)).to.not.be.NaN;",
                   "  pm.expect(body.summary).to.include.all.keys(\"applicantsProcessed\", \"correctDecisions\", \"incorrectDecisions\", \"score\");",
                   "});",
-                  "pm.test(\"summary applicantsProcessed is 1\", () => pm.expect(body.summary.applicantsProcessed).to.eql(1));"
+                  "// One decision was recorded through the stand-in when standInUrl is set; none otherwise.\nconst processed = pm.variables.get(\"standInUrl\") ? 1 : 0;\npm.test(\"summary applicantsProcessed counts the recorded decisions\", () => pm.expect(body.summary.applicantsProcessed).to.eql(processed));"
                 ]
               }
             }

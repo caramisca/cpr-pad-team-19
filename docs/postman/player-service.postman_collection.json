@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "player-service",
-    "description": "player-service (Team 19, Topic 3 — Student ID, Please): CRUD, progression, the `decision.evaluated` stand-in and the error contract, as of Lab 4. Run the folders top to bottom, or use the Collection Runner: later requests use {{playerId}} and {{decisionPlayerId}} captured on the way. Calls go through the API Gateway (`baseUrl` http://localhost:8080) with the API key from the `apiKey` variable as `Authorization: Bearer` (one of the keys in GATEWAY_API_KEYS; never stored here). Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. Instance status and metrics need `playerInstanceUrl` (see that folder).",
+    "description": "player-service (Team 19, Topic 3 — Student ID, Please): CRUD, progression and the error contract, as of Lab 4 (`decision.evaluated` and `session.closed` arrive from the Message Broker; the REST stand-in is local only, see its folder). Run the folders top to bottom, or use the Collection Runner: later requests use {{playerId}} and {{decisionPlayerId}} captured on the way. Calls go through the API Gateway (`baseUrl` http://localhost:8080) with the API key from the `apiKey` variable as `Authorization: Bearer` (one of the keys in GATEWAY_API_KEYS; never stored here). Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. Instance status and metrics need `playerInstanceUrl` (see that folder).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -46,7 +46,8 @@
     { "key": "playerId", "value": "", "type": "string" },
     { "key": "discordId", "value": "", "type": "string" },
     { "key": "decisionPlayerId", "value": "", "type": "string" },
-    { "key": "decisionEventId", "value": "", "type": "string" }
+    { "key": "decisionEventId", "value": "", "type": "string" },
+    { "key": "standInUrl", "value": "", "type": "string" }
   ],
   "item": [
     {
@@ -578,12 +579,40 @@
             "url": { "raw": "{{baseUrl}}/players/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["players", "00000000-0000-0000-0000-000000000000"] },
             "description": "Sent without `Authorization`: the Gateway refuses it before routing."
           }
+        },
+        {
+          "name": "Event Stand-In Is Not Reachable Through The Gateway Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Lab 4: events arrive from the Message Broker; the REST stand-in is off in Compose and the",
+                  "// Gateway no longer routes /internal/*, so a client can never reach it.",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{$guid}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 10,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+          }
         }
       ]
     },
     {
-      "name": "Event Stand-In (decision.evaluated)",
-      "description": "`POST /internal/mock-events/decision-evaluated` stands in for the `decision.evaluated` event until the Message Broker delivers it (Lab 4). Same body as the event, deduplicated on `eventId`. Once the broker carries the event, the Gateway drops this route and the folder goes.",
+      "name": "Event Stand-In (decision.evaluated, local only)",
+      "description": "Since Lab 4 `decision.evaluated` (and `session.closed`) reach the service from the Message Broker over gRPC. `POST /internal/mock-events/decision-evaluated` remains for local runs without a broker: it exists only on an instance started with `MOCK_EVENTS_ENABLED=true` (never in the CPR Compose setup) and the Gateway no longer routes it. Set `standInUrl` to such an instance (e.g. `http://localhost:8081`); empty, the whole folder is skipped. Same body as the event, deduplicated on `eventId`.",
       "item": [
         {
           "name": "Register Player For Events",
@@ -593,6 +622,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }",
                   "pm.collectionVariables.set(\"discordId\", \"discord-mockevent-\" + Date.now());"
                 ]
               }
@@ -634,6 +666,9 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }",
                   "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
@@ -658,12 +693,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Player After Event Reflects Xp And Rank",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -689,6 +738,17 @@
           "name": "Get Player Stats After Event Reflects Decision",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -712,6 +772,17 @@
           "name": "Replay Same Event Id Is Deduped",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -730,12 +801,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Player After Replay Is Unchanged",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -756,6 +841,17 @@
           "name": "Send Second Distinct Event (incorrect, xp=10)",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -774,12 +870,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": false,\n  \"xpAwarded\": 10,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Player Stats After Second Event",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -804,6 +914,17 @@
           "name": "Event Missing Correct Returns 400",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -824,13 +945,27 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
-            "description": "A missing boolean used to count as `false`; it is refused as never valid since Lab 4."
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "description": "A missing boolean used to count as `false`; it is refused as never valid since Lab 4.",
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Event With Negative Xp Returns 400",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -852,12 +987,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": -5,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Event With A Non-Boolean Correct Returns 400",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -879,12 +1028,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"{{decisionPlayerId}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": \"yes\",\n  \"xpAwarded\": 250,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Stats After Refused Events Are Unchanged",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -909,6 +1072,17 @@
           "name": "Event For Nonexistent Player Returns 404",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -928,12 +1102,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"playerId\": \"00000000-0000-0000-0000-000000000000\",\n  \"sessionId\": \"{{$guid}}\",\n  \"correct\": true,\n  \"xpAwarded\": 50,\n  \"evaluatedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-evaluated", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-evaluated", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-evaluated"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Delete Event Test Player",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
