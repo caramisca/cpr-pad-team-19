@@ -51,6 +51,34 @@ Prometheus has scrape definitions for all eight domain services. Validate actual
 `python scripts/check_lab4_monitoring.py --scope team`; missing DNS targets also fail this check.
 For Mihai's explicitly scoped test stack use `--scope owned`, which does not certify team readiness.
 
+The Lab 4 contribution by **Andi (@blinduandi)**:
+
+- **Broker reliability**
+  ([Broker #9](https://github.com/DariaRateeva/message-broker/pull/9), issues
+  [#274](https://github.com/caramisca/cpr-pad-team-19/issues/274) and
+  [#275](https://github.com/caramisca/cpr-pad-team-19/issues/275)). The circuit breaker moves from
+  the Gateway into the broker, one circuit per service instance (Grade 5). The topic queues become
+  durable in SQLite (`QUEUE_STORE_PATH`, on the image's `/data` volume), a copy the consumer answers
+  `REJECTED` goes to the dead-letter channel with its reason, and `GET /dead-letters` lists the
+  channel (Grade 9).
+- **Log download** (Gateway branch `feat/gateway/log-download`, issue
+  [#276](https://github.com/caramisca/cpr-pad-team-19/issues/276)). `GET /logs` on the Gateway
+  collects `GET /internal/logs` from every replica of every service, adds the Gateway's own
+  requests, and returns one NDJSON file correlated by `requestId` and `instanceId` (Grade 4). See
+  [`gateway-service` — log download](#gateway-service--log-download).
+- **`moderation-service`** ([#24](https://github.com/blinduandi/moderation-service/pull/24)) and
+  **`discord-dms-service`** ([#18](https://github.com/blinduandi/discord-dms-service/pull/18)).
+  Both serve `ServiceEndpoint` over gRPC and expose the private `GET /internal/logs` and
+  `GET /metrics`. `moderation-service` publishes its outbox with `MessageBroker.Publish` and calls
+  its three dependencies with `MessageBroker.Call`. `discord-dms-service` registers the four topics
+  it consumes in the Service Discovery and answers `COMMITTED` only after the Redis transaction.
+
+`docker-compose.lab4-andi.yml` turns the broker mode on for both services. Apply it only after their
+0.5.0 images are pinned in `docker-compose.yml` and the broker is in the stack; the broker's `/data`
+volume belongs to the Compose broker service
+([#243](https://github.com/caramisca/cpr-pad-team-19/issues/243)). Until then the base Compose keeps
+both services in the Laboratory 3 HTTP mode.
+
 ## Team Definition & Microservice Allocation
 
 The team works in **2 polyglot backend languages** (Java and C#) for domain services, with an **API Gateway** implemented in Python (the previously banned language) as required by Laboratory 2:
@@ -175,11 +203,17 @@ Owner: Andi — C# (.NET 8) — PostgreSQL
 - **Exposes:** `POST /decisions`, `GET /decisions/{id}`, `PATCH /decisions/{id}`,
   `DELETE /decisions/{id}`, `GET /sessions/{id}/decisions`.
 - **Calls:** `credential-service`, `server-rules-service`, `university-record-service`, each
-  behind a circuit breaker ([see Circuit Breaker](#circuit-breaker)).
+  behind a circuit breaker ([see Circuit Breaker](#circuit-breaker)), through the message broker
+  over gRPC (`MessageBroker.Call`, Lab 4) or through the Gateway over REST.
 - **Publishes:** `decision.recorded`, `decision.evaluated`, `verdict.issued`, `decision.amended`,
-  `decision.voided`.
-- **Registers with:** `service-discovery`, which the Gateway reads to find the replicas
-  ([see Service Discovery](#service-discovery)).
+  `decision.voided`, from a transactional outbox to the message broker (`MessageBroker.Publish`).
+- **Serves the broker:** `pad.messaging.v1.ServiceEndpoint` on its private gRPC port `9087`, which
+  runs the broker's calls through the same pipeline as the REST API.
+- **Registers with:** `service-discovery`, which the Gateway and the message broker read to find
+  the replicas ([see Service Discovery](#service-discovery)). It consumes no topic
+  (`"topics": []`).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /metrics` (Prometheus), on port `8087`.
 
 ### 8. `discord-dms-service`
 
@@ -197,10 +231,15 @@ Owner: Andi — C# (.NET 8) — Redis
   the domain services. Who may join which chat is settled by the gateway when it issues the ticket.
 - **Exposes:** `POST /notifications/dm`, `GET /notifications/{id}/status`, `GET /notifications/{id}`,
   `POST /notifications/{id}/retry`, `DELETE /notifications/{id}`, and the chat WebSocket
-  `GET /ws/chat?ticket={ticket}`.
-- **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`.
-- **Registers with:** `service-discovery`, which the Gateway reads to find the replicas
-  ([see Service Discovery](#service-discovery)).
+  `GET /ws/chat?ticket={ticket}`, over REST and, through the message broker, over gRPC
+  (`ServiceEndpoint` on its private port `9088`, Lab 4).
+- **Consumes:** `verdict.issued`, `session.started`, `session.closed`, `ruleset.updated`, delivered
+  by the message broker (`ServiceEndpoint.Deliver`). A delivery is answered `COMMITTED` only after
+  the notifications and the event ID are stored in one Redis transaction.
+- **Registers with:** `service-discovery`, which the Gateway and the message broker read to find
+  the replicas and the topics they consume ([see Service Discovery](#service-discovery)).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /metrics` (Prometheus), on port `8088`.
 
 ### 9. `gateway-service` (API Gateway)
 
@@ -216,6 +255,8 @@ Owner: Team 19 (All Members) — Python 3.12 (FastAPI / Uvicorn)
   `GET /health`, and `POST /ws/negotiate`, which returns a short-lived ticket and the direct URL
   of the `discord-dms-service` chat. See
   [`gateway-service` — WebSocket negotiation](#gateway-service--websocket-negotiation).
+  `GET /logs` downloads the logs of the whole system (Lab 4). See
+  [`gateway-service` — log download](#gateway-service--log-download).
 - **Authorization:** every client request on port `8080` needs `Authorization: Bearer <key>`; the
   Gateway validates it and never forwards the header. The services call each other through its
   internal port `8090` (no key, not published to the host). See
@@ -1314,19 +1355,13 @@ A session is open from its `session.started` until its `session.closed`, for at 
 `session.closed` also ends the chat of the session: every instance closes its chat connections to
 that session, even when the event is a redelivery.
 
-Until the team message broker exists, an event is delivered by sending its payload, exactly as the
-publisher documents it in this contract, to **`POST /internal/events/{eventType}`**, for example
-`POST /internal/events/verdict.issued`. Each `eventId` is processed once and remembered for 7 days.
-
-Response `202 Accepted` for the first delivery, or `200 OK` with `"duplicate": true` for a
-redelivery, which changes nothing and returns the notifications of the first delivery:
-```json
-{ "eventId": "string (uuid)", "duplicate": "boolean", "notificationIds": ["string (uuid)"] }
-```
-`notificationIds` is empty when there is nobody to notify: a `session.closed` whose
-`session.started` was never received, or a `ruleset.updated` while no session is open.
-Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 NOT_FOUND` for an unknown event
-type, `415 UNSUPPORTED_MEDIA_TYPE`.
+The events arrive through the message broker, which delivers each one with the gRPC
+`ServiceEndpoint.Deliver`; the payload is the JSON the publisher documents in this contract
+([see the message broker contract](docs/MESSAGE_BROKER_CONTRACT.md)). Each `eventId` is processed
+once and remembered for 7 days: a redelivery changes nothing. Nobody is notified for a
+`session.closed` whose `session.started` was never received, or for a `ruleset.updated` while no
+session is open. The Laboratory 3 stand-in,
+`POST /internal/events/{eventType}`, is removed and answers `404 NOT_FOUND`.
 
 **`GET /ws/chat?ticket={ticket}`** — join the chat of a session and channel over a WebSocket.
 
@@ -1426,20 +1461,24 @@ from the client is answered with the same code. A client that stops reading is d
 close frame once 100 frames are waiting for it. A keep-alive frame is sent every 30 seconds, so
 proxies do not drop a quiet connection.
 
-**Timeout and concurrency limit.** Every endpoint except `GET /health` and `GET /ws/chat` runs
-under both. A request still running after `Limits__RequestTimeoutMs` (8 seconds by default) is
-cancelled, together with its wait for Redis, and answered with `504 REQUEST_TIMEOUT`. The default
+**Timeout and concurrency limit.** Every endpoint except `GET /health`, `GET /metrics`,
+`GET /internal/logs` and `GET /ws/chat` runs under both, whether the request comes over REST or
+through the broker's `ServiceEndpoint.Call`. A request still running after
+`Limits__RequestTimeoutMs` (8 seconds by default) is cancelled, together with its wait for Redis,
+and answered with `504 REQUEST_TIMEOUT`. The default
 is longer than the 5-second command timeout of the Redis client, so a stalled Redis is reported as
 `503 STORE_UNAVAILABLE`, and shorter than the gateway's 10-second timeout; keep that order when
 changing it. Redis still carries out a write it has already received, so a timed-out request may
-have taken effect: an event can safely be sent again, since its `eventId` is processed once, but
-sending `POST /notifications/dm` again can queue the message twice. When
+have taken effect: sending `POST /notifications/dm` again can queue the message twice, while an
+event can safely be delivered again, since its `eventId` is processed once. When
 `Limits__MaxConcurrentRequests` requests (100 by default) are already in progress, a new one is not
 processed: it is answered at once with `503 TOO_MANY_REQUESTS` and a `Retry-After: 1` header
 instead of waiting for a free slot. Both limits are separate from `Delivery__RateLimit__*`, which
-paces the delivery worker's calls to Discord. A chat connection stays open for the whole
-conversation, so `Chat__MaxConnections` (100 by default) caps the connections open on each instance
-instead: the next one is refused before the upgrade with `503 TOO_MANY_REQUESTS` and a
+paces the delivery worker's calls to Discord. A broker delivery is not a REST request, so neither
+limit applies to it: `Messaging__CallTimeoutSeconds` bounds it instead
+([see the message broker contract](docs/MESSAGE_BROKER_CONTRACT.md)). A chat connection stays open
+for the whole conversation, so `Chat__MaxConnections` (100 by default) caps the connections open on
+each instance instead: the next one is refused before the upgrade with `503 TOO_MANY_REQUESTS` and a
 `Retry-After: 1` header.
 
 **Request ID.** Every response, errors included, has an `X-Request-Id` header: the caller's
@@ -1462,7 +1501,7 @@ ID of its upgrade request, so its join and leave lines carry it too.
 | `409` | `NOTIFICATION_NOT_FAILED` | Only a `FAILED` notification can be retried. |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
-| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications or events, and by `GET /ws/chat`, until it is back. |
+| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications, and by `GET /ws/chat`, until it is back; a broker delivery is answered `RETRY` instead. |
 | `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached, or for `GET /ws/chat` the connection limit. The request was not processed; retry after the `Retry-After` delay. |
 | `503` | `WEBSOCKET_UNAVAILABLE` | The chat is switched off because `Chat__TicketSecret` is not set. |
 | `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
@@ -1645,6 +1684,103 @@ a service has its own circuit, and an instance whose circuit trips is removed:
   open period; none is sent to a removed address.
 - An address the Service Discovery never listed (the static `*_SERVICE_URL` while no instance is
   registered) has nothing to remove, so its circuit works as above, with `503 CIRCUIT_OPEN`.
+
+#### `gateway-service` — log download
+
+Lab 4, Grade 4: one endpoint downloads the logs of the whole system. The Gateway collects them over
+HTTP from every instance of every service, so no service writes to a shared file or volume.
+
+**`GET /logs`** — the last requests of every instance of every service, and of the Gateway, as one
+NDJSON file, oldest first. Like every path but `GET /health`, it needs an API key on port `8080`.
+
+```bash
+# Everything, saved as system-logs-<UTC time>.ndjson
+curl -OJ -H "Authorization: Bearer <key>" http://localhost:8080/logs
+
+# One request through the whole system: the X-Request-Id the Gateway sent back for it
+curl -s -H "Authorization: Bearer <key>" "http://localhost:8080/logs?requestId=<X-Request-Id>"
+```
+
+- **Collection.** The Gateway sends `GET /internal/logs` to every replica the Service Discovery
+  lists, removed ones included, or to the static `*_SERVICE_URL` when it lists none. It asks up to
+  16 instances at once, each within `LOG_COLLECT_TIMEOUT_SECONDS` (3 by default), on a connection
+  pool of its own, and passes on the request's `X-Request-Id`. It adds its own last 1,000 requests,
+  kept in memory in the same line format; `GET /health` and `GET /logs` are not kept.
+- **Correlation.** Every line keeps `requestId`, the ID the Gateway gives each request and passes
+  on, and `instanceId`, the replica that wrote it. One request can be followed through every
+  service and replica it reached.
+- **Order.** The lines are sorted by time. Lines with the same time keep the order their instance
+  wrote them in, and the services' lines come before the Gateway's.
+
+**Query parameters**, all optional. The list parameters can be repeated (`?service=a&service=b`) or
+comma-separated (`?service=a,b`):
+
+| Parameter | Keeps |
+| :--- | :--- |
+| `service` | Only the lines of these services, and only these are asked: the eight service names and `gateway-service`. |
+| `instanceId` | Only the lines written by these instances. |
+| `requestId` | Only the lines of these requests. |
+| `since`, `until` | Only the lines from / up to this time, both included, in ISO 8601 (`2026-11-12T09:30:00Z`; UTC without an offset). Each may be given once. |
+| `limit` | The last N lines left after the other filters, from 1 to 100000. It may be given once. |
+
+An unknown parameter or service, an empty or invalid value, or `since` later than `until` gets
+`400 VALIDATION_ERROR` before any service is asked, with a message that names the parameter.
+
+Response `200 OK`, `Content-Type: application/x-ndjson; charset=utf-8`,
+`Content-Disposition: attachment; filename="system-logs-<UTC time>.ndjson"`,
+`Cache-Control: no-store`:
+
+```text
+{"timestamp":"2026-11-12T09:30:00.120000Z","service":"moderation-service","instanceId":"mod-a","requestId":"097941a6-5d1c-4c1e-9a43-2f0e8b7c6d15","method":"POST","path":"/decisions","status":201,"durationMs":41.5}
+{"timestamp":"2026-11-12T09:30:00.131000Z","service":"gateway-service","instanceId":"gateway-1","requestId":"097941a6-5d1c-4c1e-9a43-2f0e8b7c6d15","method":"POST","path":"/decisions","status":201,"durationMs":52.3}
+```
+
+| Field | Value |
+| :--- | :--- |
+| `timestamp` | The time of the line, in UTC with microseconds and `Z`. |
+| `service` | The service the Gateway asked. |
+| `instanceId` | The instance named in the line, else the one the Service Discovery lists for the instance asked, else `null`. |
+| `requestId` | The request ID named in the line, or `null`. |
+| everything else | Every other field of the line, unchanged (`method`, `path`, `status`, `durationMs`, `level`, ...). A query string left in `path` is cut off. |
+
+| Response header | Value |
+| :--- | :--- |
+| `X-Log-Sources` | How many instances answered, the Gateway included. |
+| `X-Log-Lines` | How many lines the file holds. |
+| `X-Log-Lines-Skipped` | How many lines the services sent that were not a JSON object with a readable time. |
+| `X-Log-Sources-Failed` | Only when some instance could not be asked: their names (`service/instanceId`, or `service` behind a static URL), comma-separated. |
+
+An instance that is down, slower than `LOG_COLLECT_TIMEOUT_SECONDS`, answers anything but `200`,
+sends more than 4 MiB or has no `/internal/logs` yet does not fail the download. The file holds what
+the other instances answered, `X-Log-Sources-Failed` names the instance, and the `gateway.logs`
+logger writes a warning with the reason.
+
+**What each service provides** (the
+[logs and metrics contract](docs/MESSAGE_BROKER_CONTRACT.md#logs-and-metrics)):
+
+- `GET /internal/logs` on the service's own HTTP port, the address it registers in the Service
+  Discovery. It answers `200` with `application/x-ndjson`, within 3 seconds and under 4 MiB, and is
+  not routed through the Gateway.
+- The instance's last 1,000 business requests, oldest first, one JSON object per line, each with at
+  least `timestamp`, `service`, `instanceId`, `requestId`, `method`, `status` and `durationMs`. No
+  headers, bodies, query values or secrets. Other fields are kept in the file.
+- The Gateway also reads the time as `@timestamp` or `time` (ISO 8601 with `Z`, an offset, or none
+  for UTC, or Unix epoch seconds or milliseconds), `instance` for `instanceId` and `request_id` for
+  `requestId`, so a logstash JSON line with the request ID in the MDC is read as it is.
+
+**Limits.** Each instance keeps a window of its last 1,000 requests in memory, not an archive: a
+restarted instance starts empty, and its console log stays complete. The Gateway does not register
+in the Service Discovery, so with several Gateway replicas the file holds the requests of the one
+that answered the download. The message broker and the Service Discovery have no
+`/internal/logs` in the contract and are not collected.
+
+**Postman.** `docs/postman/gateway-log-download.postman_collection.json` sends a business request
+with its own `X-Request-Id`, finds every line of it again with `?requestId=`, downloads the whole
+file, filters by service, and checks the `400 VALIDATION_ERROR` and `401 UNAUTHORIZED` answers:
+
+```bash
+npx newman run docs/postman/gateway-log-download.postman_collection.json --env-var apiKey=<key>
+```
 
 ## Contribution Workflow & GitHub Rules
 
@@ -1941,6 +2077,52 @@ Compose (`docker compose ps` shows `healthy`); they are not routed through the G
 `docs/db/moderation-service/schema.sql` is the PostgreSQL schema that `moderation-service` creates
 through its EF Core migrations when it starts, and `docs/db/discord-dms-service/` lists the Redis
 keys of `discord-dms-service`.
+
+#### Message Broker (Lab 4)
+
+From `0.5.0`, both services can talk to the team message broker over gRPC instead of the Gateway's
+internal port. `docker-compose.lab4-andi.yml` turns this on: `Messaging__Enabled: "true"` and
+`Messaging__BrokerUrl: http://message-broker:9091` on `moderation-service`, `discord-dms-service`
+and `discord-dms-service-replica`, and `Grpc` for the three dependencies of `moderation-service`.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml config   # check the merge
+docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml up -d
+```
+
+Apply it only once the 0.5.0 images are pinned in `docker-compose.yml` and the `message-broker`
+service is in the stack ([#243](https://github.com/caramisca/cpr-pad-team-19/issues/243)).
+
+- **Ports.** REST, `GET /health`, `GET /internal/logs` and `GET /metrics` stay on `8087` and `8088`.
+  `ServiceEndpoint` listens on that port + 1000 (`9087`, `9088`), cleartext HTTP/2 only. The broker
+  derives it from the address each instance registers, so neither gRPC port is published.
+- **`moderation-service`** reads the credential, the active ruleset and the student record with
+  `MessageBroker.Call`, behind the same circuits and with the same `503 DEPENDENCY_UNAVAILABLE`. Its
+  outbox publishes each event with `MessageBroker.Publish` and marks it as published only after the
+  broker has answered, so an event is never lost while the broker is down.
+- **`discord-dms-service`** registers `verdict.issued`, `session.started`, `session.closed` and
+  `ruleset.updated` with the Service Discovery. The replicas share one queue per topic. A delivery
+  is answered `COMMITTED` once the notifications and the event ID are stored in one Redis
+  transaction, `RETRY` when nothing could be stored, and `REJECTED` when no redelivery can succeed
+  (the broker then keeps the copy in its dead-letter channel). A redelivered `eventId` is
+  `COMMITTED` without notifying anyone twice.
+- **Logs and metrics.** Every business request, whether it came over REST or through the broker, is
+  one line of `GET /internal/logs` (`"transport":"http"` or `"grpc"`; a delivery is
+  `DELIVER topics/<topic>`) and is counted in `GET /metrics`. The Gateway's `GET /logs` collects the
+  lines of every replica, and the Prometheus jobs `moderation-service` and `discord-dms-service`
+  scrape every replica.
+- **Postman.** The Event Delivery folder of the `discord-dms-service` collection publishes the four
+  events to the broker (`brokerUrl`, `http://localhost:8091`), which replaces the Laboratory 3
+  `POST /internal/events`, so it needs the broker in the stack. Both collections have a folder
+  `Lab 4 Internal diagnostics` that reads `GET /metrics`, `GET /internal/logs` and `GET /health` on
+  one instance (`internalBaseUrl`, not the Gateway): `discord-dms-service` on its published `8088`.
+  `moderation-service` publishes no port, so its folder is skipped unless the collection variable
+  `runInternalDiagnostics` is `true` and `internalBaseUrl` reaches an instance.
+
+```bash
+docker compose logs -f discord-dms-service discord-dms-service-replica | grep DELIVER
+curl -OJ -H "Authorization: Bearer <key>" "http://localhost:8080/logs?service=moderation-service,discord-dms-service"
+```
 
 #### Service Discovery
 
