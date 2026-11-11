@@ -22,3 +22,17 @@ scrape_configs:
         type: A
         port: 8084
         refresh_interval: 5s
+  - job_name: server-rules-service
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ['server-rules-service']
+        type: A
+        port: 8085
+        refresh_interval: 5s
+  - job_name: university-record-service
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ['university-record-service']
+        type: A
+        port: 8086
+        refresh_interval: 5s
