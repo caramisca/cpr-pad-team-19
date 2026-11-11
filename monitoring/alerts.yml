@@ -2,7 +2,7 @@ groups:
   - name: lab4
     rules:
       - alert: ServiceScrapeDown
-        expr: up{job=~"applicant-service|credential-service|message-broker"} == 0
+        expr: up{job=~"applicant-service|credential-service|message-broker|moderation-service|discord-dms-service"} == 0
         for: 30s
         labels:
           severity: warning
@@ -23,7 +23,7 @@ groups:
         annotations:
           summary: 'Broker has more than 100 unacknowledged event copies'
       - alert: SpringServiceScrapeDown
-        expr: up{job=~"server-rules-service|university-record-service"} == 0
+        expr: up{job=~"server-rules-service|university-record-service|player-service|server-moderation-session-service"} == 0
         for: 30s
         labels:
           severity: warning

@@ -36,3 +36,32 @@ scrape_configs:
         type: A
         port: 8086
         refresh_interval: 5s
+  # The remaining owners must expose these private metrics endpoints in their Lab 4 builds.
+  # Failed scrapes remain DOWN; an absent DNS name can produce no targets at all.
+  # Adding a scrape job is not runtime validation: use check_lab4_monitoring.py.
+  - job_name: player-service
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ['player-service']
+        type: A
+        port: 8081
+        refresh_interval: 5s
+  - job_name: server-moderation-session-service
+    metrics_path: /actuator/prometheus
+    dns_sd_configs:
+      - names: ['server-moderation-session-service']
+        type: A
+        port: 8082
+        refresh_interval: 5s
+  - job_name: moderation-service
+    dns_sd_configs:
+      - names: ['moderation-service']
+        type: A
+        port: 8087
+        refresh_interval: 5s
+  - job_name: discord-dms-service
+    dns_sd_configs:
+      - names: ['discord-dms-service', 'discord-dms-service-replica']
+        type: A
+        port: 8088
+        refresh_interval: 5s

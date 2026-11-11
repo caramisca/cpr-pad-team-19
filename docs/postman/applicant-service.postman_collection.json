@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "applicant-service",
-    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 — Student ID, Please). Runs against the shared docker-compose.yml through the API Gateway (baseUrl http://localhost:8080) with collection-level Authorization: Bearer {{apiKey}}. The Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order. Lab 4: service calls use gRPC through the Message Broker when enabled. Public business requests keep their REST contract. The optional Internal diagnostics folder uses internalBaseUrl and needs a local test port-forward; these routes must not be public Gateway routes.",
+    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 â€” Student ID, Please). Runs against the shared docker-compose.yml through the API Gateway (baseUrl http://localhost:8080) with collection-level Authorization: Bearer {{apiKey}}. The Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order. Lab 4: service calls use gRPC through the Message Broker when enabled. Public business requests keep their REST contract. The optional Internal diagnostics folder uses internalBaseUrl and needs a local test port-forward; these routes must not be public Gateway routes.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -62,6 +62,11 @@
     },
     {
       "key": "runInternalDiagnostics",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "runLab4GatewayChecks",
       "value": "false",
       "type": "string"
     }
@@ -916,6 +921,35 @@
           }
         }
       ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Enable only for the final Lab 4 Gateway integration; diagnostics have separate tests.",
+          "if (pm.variables.get(\"runLab4GatewayChecks\") === \"true\") {",
+          "  const path = pm.request.url.getPath();",
+          "  if (path === \"/applicants\" || path.startsWith(\"/applicants/\")) {",
+          "    if (pm.response.code !== 204 && pm.response.text().trim()) {",
+          "      pm.test(\"Lab 4: HTTP JSON Content-Type survives the broker\", function () {",
+          "        pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/^application\\/json(?:;|$)/i);",
+          "      });",
+          "    }",
+          "    const filter = pm.variables.replaceIn(pm.request.url.query.get(\"sessionId\") || \"\");",
+          "    if (pm.request.method === \"GET\" && path === \"/applicants\" && filter && pm.response.code === 200) {",
+          "      pm.test(\"Lab 4: Gateway retains the query filter\", function () {",
+          "        const rows = pm.response.json().applicants;",
+          "        pm.expect(rows).to.be.an(\"array\");",
+          "        rows.forEach(row => pm.expect(row.sessionId).to.eql(filter));",
+          "      });",
+          "    }",
+          "  }",
+          "}"
+        ]
+      }
     }
   ]
 }

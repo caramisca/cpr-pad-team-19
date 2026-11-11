@@ -1,0 +1,50 @@
+{
+  "timestamp": "2026-11-11T18:08:43.194828+00:00",
+  "scope": "owned",
+  "required": {
+    "prometheus": 1,
+    "message-broker": 1,
+    "applicant-service": 2,
+    "credential-service": 2
+  },
+  "targets": [
+    {
+      "job": "applicant-service",
+      "instance": "172.20.0.3:8083",
+      "url": "http://172.20.0.3:8083/metrics",
+      "health": "up"
+    },
+    {
+      "job": "applicant-service",
+      "instance": "172.20.0.8:8083",
+      "url": "http://172.20.0.8:8083/metrics",
+      "health": "up"
+    },
+    {
+      "job": "credential-service",
+      "instance": "172.20.0.9:8084",
+      "url": "http://172.20.0.9:8084/metrics",
+      "health": "up"
+    },
+    {
+      "job": "credential-service",
+      "instance": "172.20.0.6:8084",
+      "url": "http://172.20.0.6:8084/metrics",
+      "health": "up"
+    },
+    {
+      "job": "message-broker",
+      "instance": "message-broker:8091",
+      "url": "http://message-broker:8091/metrics",
+      "health": "up"
+    },
+    {
+      "job": "prometheus",
+      "instance": "localhost:9090",
+      "url": "http://localhost:9090/metrics",
+      "health": "up"
+    }
+  ],
+  "errors": [],
+  "passed": true
+}

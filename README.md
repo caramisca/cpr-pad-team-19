@@ -39,6 +39,18 @@ Detailed [architecture source](docs/architecture-diagram-lab4.mmd),
 [scoped integration evidence](docs/evidence/lab4-mihai-smoke-2026-11-09.json).
 New private log/metrics endpoints must remain excluded from the public Gateway routes.
 
+Mihai's **Applicant/Credential 0.5.0 releases** are now published for linux/amd64 and linux/arm64,
+with matching `latest` digests; CPR pins their final main commits. See the current
+[delivery evidence](docs/LAB_4_MIHAI_DELIVERY.md) and
+[team integration/presentation checklist](docs/LAB_4_PRESENTATION_READINESS.md).
+`docker-compose.lab4-mihai.yml` prepares their opt-in gRPC settings for the common Lab 4 stack;
+apply it only after the broker and the real University Record adapter are integrated. The base
+Compose retains the working legacy HTTP mode during that integration.
+
+Prometheus has scrape definitions for all eight domain services. Validate actual replicas with
+`python scripts/check_lab4_monitoring.py --scope team`; missing DNS targets also fail this check.
+For Mihai's explicitly scoped test stack use `--scope owned`, which does not certify team readiness.
+
 ## Team Definition & Microservice Allocation
 
 The team works in **2 polyglot backend languages** (Java and C#) for domain services, with an **API Gateway** implemented in Python (the previously banned language) as required by Laboratory 2:

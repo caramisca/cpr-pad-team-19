@@ -1,0 +1,20 @@
+{
+  "passed": true,
+  "timestamp": "2026-11-11T18:08:39.677647+00:00",
+  "checks": [
+    "Broker -> Credential uses real gRPC between Linux containers",
+    "Both physical Credential replicas read the shared Redis bundle over gRPC",
+    "JSON Content-Type, creation Location and applicantId query filter survive gRPC",
+    "Topic publication creates one service copy despite two replicas",
+    "applicant.deleted delivery commits Credential cleanup and GET returns 404"
+  ],
+  "scope": "Public Applicant/Credential 0.5.0 images, local shared Broker/SD builds; no University Record call; no Gateway",
+  "replicaIds": [
+    "e6450278653f",
+    "74927dadb870"
+  ],
+  "ownedImages": [
+    "caramisca/applicant-service:0.5.0",
+    "caramisca/credential-service:0.5.0"
+  ]
+}

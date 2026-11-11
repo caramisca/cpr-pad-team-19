@@ -100,6 +100,8 @@ def main():
                 reply=client.Call(pb.ServiceRequest(message_id=str(uuid.uuid4()),source='smoke',target=target,method=method,path=path,
                     body=b'' if body is None else json.dumps(body).encode(),request_id='lab4-smoke'),timeout=8)
                 assert reply.status in (200,201,204), (reply.status,reply.body)
+                if reply.body:
+                    assert reply.headers.get('Content-Type', '').startswith('application/json'), dict(reply.headers)
                 return json.loads(reply.body) if reply.body else None
             # Explicit legitimate issue proves Credential -> Broker -> University Record fixture.
             issued=call('credential-service','POST','/credentials/issue',dict(applicantId=str(uuid.uuid4()),isLegitimate=True,seed=dict(studentId='1234567890',faculty='FAF',year=3)))
@@ -108,6 +110,11 @@ def main():
             evidence['checks'].append('Applicant -> Broker -> Credential uses real HTTP/2 protobuf, Gateway absent')
             assert http.get(f'http://127.0.0.1:{app_ports[1]}/applicants/'+generated['id']).status_code==200
             evidence['checks'].append('Second replica reads shared Redis state')
+            filtered=call('applicant-service','GET','/applicants?sessionId='+session)
+            assert [a['id'] for a in filtered['applicants']]==[generated['id']]
+            filtered=call('credential-service','GET','/credentials?applicantId='+generated['id'])
+            assert [c['id'] for c in filtered['credentials']]==[generated['credentialId']]
+            evidence['checks'].append('Broker gRPC preserves JSON Content-Type and sessionId/applicantId filters')
             listed=client.ListTopics(pb.Empty(),timeout=3)
             assert {'session.closed','applicant.deleted'} <= {t.name for t in listed.topics}
             message=dict(messageId=str(uuid.uuid4()),source='server-moderation-session-service',topic='session.closed',occurredAt=datetime.now(timezone.utc).isoformat(),schemaVersion=1,payload=dict(sessionId=session))
