@@ -7,6 +7,8 @@ repo, not this copy.
 
 - `V1__init_schema.sql` — creates `players`, `player_stats`, and `processed_events` with the
   foreign keys and unique constraints described in the CPR's Communication Contract.
+- `V2__index_players_xp.sql` (Lab 4, `0.5.0`) — an index on `players.xp`, which
+  `GET /players/{id}/rank` filters on to compute the percentile.
 
 There is no seed script: players are created through `POST /players` and progress via the
-`decision.evaluated` consumer, not from static demo data.
+`decision.evaluated` and `session.closed` consumers, not from static demo data.
