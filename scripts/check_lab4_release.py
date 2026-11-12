@@ -56,6 +56,12 @@ def validate_config(config: dict) -> list[str]:
     if _environment(broker).get("DISCOVERY_URL") != SD_URL:
         errors.append(f"message-broker: DISCOVERY_URL must be {SD_URL}")
 
+    # These published Java 0.5.0 images construct a gRPC client during startup.
+    # An empty target prevents the application context from starting, even in HTTP business mode.
+    for name in ("server-rules-service", "university-record-service"):
+        if _environment(services.get(name, {})).get("BROKER_GRPC_URL") != BROKER_ADDRESS:
+            errors.append(f"{name}: BROKER_GRPC_URL must be {BROKER_ADDRESS} (required at startup)")
+
     player = _environment(services.get("player-service", {}))
     if player.get("MESSAGING_ENABLED") != "true":
         errors.append("player-service: MESSAGING_ENABLED must be true (events from the broker)")

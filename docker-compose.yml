@@ -126,6 +126,7 @@ services:
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
       SD_URL: http://service-discovery:8089
+      BROKER_GRPC_URL: message-broker:9091
     depends_on:
       service-discovery:
         condition: service_healthy
@@ -151,6 +152,7 @@ services:
       MAX_THREADS: ${RECORD_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RECORD_REQUEST_TIMEOUT_MS:-5000}
       SD_URL: http://service-discovery:8089
+      BROKER_GRPC_URL: message-broker:9091
     depends_on:
       service-discovery:
         condition: service_healthy
