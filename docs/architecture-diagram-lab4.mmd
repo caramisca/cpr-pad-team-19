@@ -1,0 +1,12 @@
+flowchart LR
+  UI[Client] -->|HTTP + API key| GW[Gateway]
+  GW -->|gRPC Call: Applicant / Credential / Rules / Record| MB[Python Message Broker]
+  GW -->|HTTP: Player / Session / Moderation / DMS; SSE| HTTP[Remaining public service routes]
+  MB <-->|gRPC Call / Publish / Deliver| DOMAIN[Eight domain services]
+  DOMAIN -->|HTTP registration + subscriptions| SD[Service Discovery]
+  MB -->|HTTP instance + topic lookup| SD
+  MB -->|Durable topic copies + dead letters| STORE[(SQLite /data on broker-data)]
+  DOMAIN --> DATA[(Owned databases + inbox / outbox)]
+  PROM[Prometheus] -->|metrics per replica| DOMAIN
+  PROM -->|metrics| MB
+  GRAF[Grafana] --> PROM

@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-11-12T13:02:00.449689+00:00",
+  "repositories": {
+    "cpr": "e6c6ec34cc67b52784df001603a0428402295c02",
+    "gateway": "6a7cef0803a0934c33d3a8094629f2f377dbf338",
+    "broker": "58728c1c8e155679a42347acd4de95ed72d5de13",
+    "discovery": "34342fe221e1597469e43a3b2c1f7cd6867f9a38"
+  },
+  "gatewayContainerBuildCommit": "fc7fe7aafb999fced6d4c5c6264e8fb99d5447d5",
+  "gatewayApplicationTreeUnchangedAfterWorkflowRename": true,
+  "images": {
+    "applicant": "caramisca/applicant-service:0.5.0",
+    "credential": "caramisca/credential-service:0.5.0",
+    "broker": "local build of integrated dev",
+    "discovery": "local build of integrated dev",
+    "gateway": "local build of integrated dev"
+  },
+  "recordAdapter": {
+    "fixtureUsed": false,
+    "legitimateIssueStatus": 503,
+    "fullTeamE2EVerified": false
+  },
+  "panelIds": [
+    9,
+    10,
+    11,
+    12
+  ],
+  "panelQueriesChanged": false,
+  "protobufSchemaChanged": false,
+  "defaultTimeoutsRestored": true,
+  "teamChangesObserved": {
+    "cpr285": "merged",
+    "cpr286": "merged",
+    "cpr284": "merged",
+    "gateway26": "merged; latest observed CI startup_failure"
+  }
+}

@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "server-moderation-session-service",
-    "description": "CRUD endpoints for server-moderation-session-service (Team 19, Topic 3 — Student ID, Please). Run requests top to bottom, or use the Collection Runner — later requests depend on {{sessionId}} captured from the Open Session response. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS).",
+    "description": "server-moderation-session-service (Team 19, Topic 3 — Student ID, Please): shifts, the applicant queue, live updates (SSE) and the error contract, as of Lab 4 (`decision.recorded` arrives from the Message Broker; the REST stand-in is local only, see the queue folder). Run the folders top to bottom, or use the Collection Runner: later requests use {{sessionId}} and the applicant captured on the way. Calls go through the API Gateway (`baseUrl` http://localhost:8080) with the API key from the `apiKey` variable as `Authorization: Bearer` (one of the keys in GATEWAY_API_KEYS; never stored here). Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. The live stream is sent by hand (`watchLive`); instance status and metrics need `sessionInstanceUrl` (see those folders).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -10,44 +10,54 @@
       { "key": "token", "value": "{{apiKey}}", "type": "string" }
     ]
   },
-  "variable": [
+  "event": [
     {
-      "key": "baseUrl",
-      "value": "http://localhost:8080",
-      "type": "string"
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Every request sends its own request ID; the Gateway forwards it and both log it.",
+          "pm.variables.set(\"requestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));",
+          "pm.request.headers.upsert({ key: \"X-Request-Id\", value: pm.variables.get(\"requestId\") });"
+        ]
+      }
     },
     {
-      "key": "apiKey",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "sessionId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "moderatorId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "queueApplicantId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "decisionEventId",
-      "value": "",
-      "type": "string"
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"echoes the request ID\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(pm.variables.get(\"requestId\")));",
+          "if (pm.response.code >= 400) {",
+          "  pm.test(\"error body is {error, message}\", () => {",
+          "    const error = pm.response.json();",
+          "    pm.expect(error.error).to.be.a(\"string\").and.match(/^[A-Z_]+$/);",
+          "    pm.expect(error.message).to.be.a(\"string\").and.not.empty;",
+          "  });",
+          "}"
+        ]
+      }
     }
+  ],
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:8080", "type": "string" },
+    { "key": "apiKey", "value": "", "type": "string" },
+    { "key": "sessionInstanceUrl", "value": "", "type": "string" },
+    { "key": "watchLive", "value": "", "type": "string" },
+    { "key": "sessionId", "value": "", "type": "string" },
+    { "key": "streamSessionId", "value": "", "type": "string" },
+    { "key": "moderatorId", "value": "", "type": "string" },
+    { "key": "juniorModeratorId", "value": "", "type": "string" },
+    { "key": "queueApplicantId", "value": "", "type": "string" },
+    { "key": "decisionEventId", "value": "", "type": "string" },
+    { "key": "standInUrl", "value": "", "type": "string" }
   ],
   "item": [
     {
       "name": "Health Check",
       "item": [
         {
-          "name": "Get Gateway Health Status (the service's own health is checked by Compose)",
+          "name": "Get Gateway Health Without An API Key",
           "event": [
             {
               "listen": "test",
@@ -58,18 +68,21 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports a SemVer version\", () => pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
-                  "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
-                  "pm.test(\"returns request ID\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.match(/^[A-Za-z0-9._:-]{1,64}$/));"
+                  "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });"
                 ]
               }
             }
           ],
           "request": {
+            "auth": {
+              "type": "noauth"
+            },
             "method": "GET",
-            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] }
+            "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+            "description": "The Gateway's own status needs no API key. The service's own `GET /health` isn't routed by the Gateway: see the folder \"Instance Status And Metrics (direct, local only)\"."
           }
         }
       ]
@@ -85,7 +98,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn('{{$guid}}'));"
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -96,7 +109,13 @@
                 "exec": [
                   "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
-                  "pm.test(\"response has id\", () => pm.expect(body.id).to.be.a(\"string\"));",
+                  "pm.test(\"body has the session shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"startedAt\");",
+                  "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(body.juniorModeratorIds).to.be.an(\"array\");",
+                  "  pm.expect([\"OPEN\", \"CLOSED\"]).to.include(body.status);",
+                  "  pm.expect(Date.parse(body.startedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.test(\"moderatorId echoed back\", () => pm.expect(body.moderatorId).to.eql(pm.collectionVariables.get(\"moderatorId\")));",
                   "pm.test(\"starts OPEN\", () => pm.expect(body.status).to.eql(\"OPEN\"));",
                   "pm.collectionVariables.set(\"sessionId\", body.id);"
@@ -126,10 +145,16 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the session detail shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"queueLength\", \"applicantsProcessed\", \"startedAt\", \"closedAt\");",
+                  "  pm.expect(body.queueLength).to.be.a(\"number\").and.at.least(0);",
+                  "  pm.expect(body.applicantsProcessed).to.be.a(\"number\").and.at.least(0);",
+                  "});",
                   "pm.test(\"id matches requested session\", () => pm.expect(body.id).to.eql(pm.collectionVariables.get(\"sessionId\")));",
                   "pm.test(\"fresh session has zeroed queue/applicants\", () => {",
                   "  pm.expect(body.queueLength).to.eql(0);",
                   "  pm.expect(body.applicantsProcessed).to.eql(0);",
+                  "  pm.expect(body.closedAt).to.be.null;",
                   "});"
                 ]
               }
@@ -150,8 +175,12 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"status is CLOSED\", () => pm.expect(body.status).to.eql(\"CLOSED\"));",
-                  "pm.test(\"closedAt is set\", () => pm.expect(body.closedAt).to.not.be.null);",
+                  "pm.test(\"body has the close shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"status\", \"closedAt\", \"summary\");",
+                  "  pm.expect(body.status).to.eql(\"CLOSED\");",
+                  "  pm.expect(Date.parse(body.closedAt)).to.not.be.NaN;",
+                  "  pm.expect(body.summary).to.include.all.keys(\"applicantsProcessed\", \"correctDecisions\", \"incorrectDecisions\", \"score\");",
+                  "});",
                   "pm.test(\"summary reflects no decisions yet\", () => pm.expect(body.summary.score).to.eql(0));"
                 ]
               }
@@ -170,7 +199,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));",
+                  "pm.test(\"no body\", () => pm.expect(pm.response.text()).to.be.empty);"
                 ]
               }
             }
@@ -188,15 +218,77 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 404 after delete\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"SESSION_NOT_FOUND\"));"
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] }
+          }
+        },
+        {
+          "name": "Open Session With A Junior Moderator",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"juniorModeratorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the session shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"startedAt\");",
+                  "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(body.juniorModeratorIds).to.be.an(\"array\");",
+                  "  pm.expect([\"OPEN\", \"CLOSED\"]).to.include(body.status);",
+                  "  pm.expect(Date.parse(body.startedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"junior moderator echoed back\", () => pm.expect(body.juniorModeratorIds).to.eql([pm.collectionVariables.get(\"juniorModeratorId\")]));",
+                  "pm.collectionVariables.set(\"sessionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": [\"{{juniorModeratorId}}\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Delete Session With A Junior Moderator",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
             "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] }
           }
         }
@@ -213,7 +305,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn('{{$guid}}'));"
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -224,6 +316,13 @@
                 "exec": [
                   "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the session shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"startedAt\");",
+                  "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(body.juniorModeratorIds).to.be.an(\"array\");",
+                  "  pm.expect([\"OPEN\", \"CLOSED\"]).to.include(body.status);",
+                  "  pm.expect(Date.parse(body.startedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.collectionVariables.set(\"sessionId\", body.id);"
                 ]
               }
@@ -268,8 +367,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is SESSION_ALREADY_CLOSED\", () => pm.expect(body.error).to.eql(\"SESSION_ALREADY_CLOSED\"));"
+                  "pm.test(\"error code is SESSION_ALREADY_CLOSED\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_ALREADY_CLOSED\"));"
                 ]
               }
             }
@@ -277,6 +375,25 @@
           "request": {
             "method": "POST",
             "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/close", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "close"] }
+          }
+        },
+        {
+          "name": "Next Applicant Of A Closed Session Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error code is SESSION_ALREADY_CLOSED\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_ALREADY_CLOSED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "next-applicant"] }
           }
         },
         {
@@ -288,8 +405,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));"
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"moderatorId\"));"
                 ]
               }
             }
@@ -307,6 +424,213 @@
           }
         },
         {
+          "name": "Open Session With The Moderator As Own Junior Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"juniorModeratorIds\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": [\"{{moderatorId}}\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Open Session With A Repeated Junior Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"juniorModeratorIds\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": [\"00000000-0000-0000-0000-000000000000\", \"00000000-0000-0000-0000-000000000000\"]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Open Session With A Null Junior Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"juniorModeratorIds\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": [null]\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Open Session With Malformed Json Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is MALFORMED_REQUEST_BODY\", () => pm.expect(pm.response.json().error).to.eql(\"MALFORMED_REQUEST_BODY\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": "
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Open Session As Plain Text Returns 415",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 415\", () => pm.response.to.have.status(415));",
+                  "pm.test(\"error code is UNSUPPORTED_MEDIA_TYPE\", () => pm.expect(pm.response.json().error).to.eql(\"UNSUPPORTED_MEDIA_TYPE\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "text/plain" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "moderatorId=00000000-0000-0000-0000-000000000000"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Put On A Session Returns 405",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 405\", () => pm.response.to.have.status(405));",
+                  "pm.test(\"error code is METHOD_NOT_ALLOWED\", () => pm.expect(pm.response.json().error).to.eql(\"METHOD_NOT_ALLOWED\"));",
+                  "pm.test(\"lists the allowed methods\", () => pm.expect(pm.response.headers.get(\"Allow\")).to.include(\"DELETE\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": []\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000"] }
+          }
+        },
+        {
+          "name": "Unknown Session Path Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000/applicants", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000", "applicants"] },
+            "description": "Routed by the Gateway (it owns `/sessions/**` except `/sessions/{id}/decisions`); the service answers that no endpoint matches."
+          }
+        },
+        {
           "name": "Get Session With Invalid Uuid Returns 400",
           "event": [
             {
@@ -315,8 +639,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is INVALID_PATH_VARIABLE\", () => pm.expect(body.error).to.eql(\"INVALID_PATH_VARIABLE\"));"
+                  "pm.test(\"error code is INVALID_PATH_VARIABLE\", () => pm.expect(pm.response.json().error).to.eql(\"INVALID_PATH_VARIABLE\"));"
                 ]
               }
             }
@@ -335,19 +658,33 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"SESSION_NOT_FOUND\"));"
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
                 ]
               }
             }
           ],
           "request": {
             "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000",
-              "host": ["{{baseUrl}}"],
-              "path": ["sessions", "00000000-0000-0000-0000-000000000000"]
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000"] }
+          }
+        },
+        {
+          "name": "Next Applicant Of A Nonexistent Session Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
+                ]
+              }
             }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000/next-applicant", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000", "next-applicant"] }
           }
         },
         {
@@ -359,25 +696,72 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"SESSION_NOT_FOUND\"));"
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
                 ]
               }
             }
           ],
           "request": {
             "method": "DELETE",
-            "url": {
-              "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000",
-              "host": ["{{baseUrl}}"],
-              "path": ["sessions", "00000000-0000-0000-0000-000000000000"]
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000"] }
+          }
+        },
+        {
+          "name": "Get Session Without An API Key Returns 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"error code is UNAUTHORIZED\", () => pm.expect(pm.response.json().error).to.eql(\"UNAUTHORIZED\"));"
+                ]
+              }
             }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000"] },
+            "description": "Sent without `Authorization`: the Gateway refuses it before routing."
+          }
+        },
+        {
+          "name": "Event Stand-In Is Not Reachable Through The Gateway Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Lab 4: events arrive from the Message Broker; the REST stand-in is off in Compose and the",
+                  "// Gateway no longer routes /internal/*, so a client can never reach it.",
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
           }
         }
       ]
     },
     {
-      "name": "Queue & Mock Decisions",
+      "name": "Queue And Event Stand-In (decision.recorded, stand-in local only)",
+      "description": "`next-applicant` calls applicant-service (through the Gateway's internal port, or the Message Broker with `APPLICANT_CLIENT_MODE=broker`) and server-rules-service. Since Lab 4 `decision.recorded` arrives from the Message Broker over gRPC; `POST /internal/mock-events/decision-recorded` remains for local runs without a broker, only on an instance started with `MOCK_EVENTS_ENABLED=true` (never in Compose), and the Gateway no longer routes it. Set `standInUrl` to such an instance (e.g. `http://localhost:8082`); empty, the stand-in requests and the checks of their effect are skipped, the queue requests still run.",
       "item": [
         {
           "name": "Open Session For Queue Tests",
@@ -387,7 +771,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn('{{$guid}}'));"
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -398,6 +782,13 @@
                 "exec": [
                   "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the session shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"startedAt\");",
+                  "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(body.juniorModeratorIds).to.be.an(\"array\");",
+                  "  pm.expect([\"OPEN\", \"CLOSED\"]).to.include(body.status);",
+                  "  pm.expect(Date.parse(body.startedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.collectionVariables.set(\"sessionId\", body.id);"
                 ]
               }
@@ -425,6 +816,12 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the next-applicant shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"sessionId\", \"applicantId\", \"queuePosition\", \"presentedAt\");",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.applicantId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(Date.parse(body.presentedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.test(\"queuePosition is 1\", () => pm.expect(body.queuePosition).to.eql(1));",
                   "pm.collectionVariables.set(\"queueApplicantId\", body.applicantId);"
                 ]
@@ -446,6 +843,12 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the next-applicant shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"sessionId\", \"applicantId\", \"queuePosition\", \"presentedAt\");",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.applicantId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(Date.parse(body.presentedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.test(\"queuePosition is 2\", () => pm.expect(body.queuePosition).to.eql(2));"
                 ]
               }
@@ -466,6 +869,12 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
+                  "pm.test(\"body has the next-applicant shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"sessionId\", \"applicantId\", \"queuePosition\", \"presentedAt\");",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "  pm.expect(body.applicantId).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(Date.parse(body.presentedAt)).to.not.be.NaN;",
+                  "});",
                   "pm.test(\"queuePosition is 3\", () => pm.expect(body.queuePosition).to.eql(3));",
                   "pm.collectionVariables.set(\"lastQueuePosition\", body.queuePosition);"
                 ]
@@ -496,8 +905,7 @@
                   "} else {",
                   "  pm.collectionVariables.set(\"extraPulls\", 0);",
                   "  pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "  const body = pm.response.json();",
-                  "  pm.test(\"error code is QUEUE_EMPTY\", () => pm.expect(body.error).to.eql(\"QUEUE_EMPTY\"));",
+                  "  pm.test(\"error code is QUEUE_EMPTY\", () => pm.expect(pm.response.json().error).to.eql(\"QUEUE_EMPTY\"));",
                   "}"
                 ]
               }
@@ -516,7 +924,10 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn('{{$guid}}'));"
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }",
+                  "pm.collectionVariables.set(\"decisionEventId\", pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -525,7 +936,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));"
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"no body\", () => pm.expect(pm.response.text()).to.be.empty);"
                 ]
               }
             }
@@ -539,12 +951,26 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Session Reflects Processed Applicant",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -568,6 +994,17 @@
           "name": "Replay Same Decision Event Is No-Op",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
@@ -586,20 +1023,33 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{decisionEventId}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Get Session After Replay Still Shows One Processed",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"applicantsProcessed unchanged by replay\", () => pm.expect(body.applicantsProcessed).to.eql(1));"
+                  "pm.test(\"applicantsProcessed unchanged by replay\", () => pm.expect(pm.response.json().applicantsProcessed).to.eql(1));"
                 ]
               }
             }
@@ -610,16 +1060,109 @@
           }
         },
         {
+          "name": "Record Decision With An Unknown Action Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"action\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"MAYBE\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "description": "`action` must be ACCEPT, REJECT, FLAG or BAN; anything else is refused as never valid since Lab 4.",
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Record Decision Missing RecordedAt Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().message).to.include(\"recordedAt\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{queueApplicantId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
           "name": "Record Decision For Nonexistent Session Returns 404",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"SESSION_NOT_FOUND\"));"
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
                 ]
               }
             }
@@ -633,20 +1176,33 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
           }
         },
         {
           "name": "Record Decision For Unmatched Applicant Returns 404",
           "event": [
             {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is QUEUE_ENTRY_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"QUEUE_ENTRY_NOT_FOUND\"));"
+                  "pm.test(\"error code is QUEUE_ENTRY_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"QUEUE_ENTRY_NOT_FOUND\"));"
                 ]
               }
             }
@@ -660,7 +1216,40 @@
               "mode": "raw",
               "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"ACCEPT\",\n  \"recordedAt\": \"{{$isoTimestamp}}\"\n}"
             },
-            "url": { "raw": "{{baseUrl}}/internal/mock-events/decision-recorded", "host": ["{{baseUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] }
+            "url": { "raw": "{{standInUrl}}/internal/mock-events/decision-recorded", "host": ["{{standInUrl}}"], "path": ["internal", "mock-events", "decision-recorded"] },
+            "auth": {
+              "type": "noauth"
+            }
+          }
+        },
+        {
+          "name": "Get Session After Refused Events Still Shows One Processed",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Local only (Lab 4): the REST stand-in exists only on an instance started with",
+                  "// MOCK_EVENTS_ENABLED=true, never in the CPR Compose setup. Without standInUrl this is skipped.",
+                  "if (!pm.variables.get(\"standInUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"refused events changed nothing\", () => pm.expect(pm.response.json().applicantsProcessed).to.eql(1));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] }
           }
         },
         {
@@ -673,8 +1262,13 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"status is CLOSED\", () => pm.expect(body.status).to.eql(\"CLOSED\"));",
-                  "pm.test(\"summary applicantsProcessed is 1\", () => pm.expect(body.summary.applicantsProcessed).to.eql(1));"
+                  "pm.test(\"body has the close shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"status\", \"closedAt\", \"summary\");",
+                  "  pm.expect(body.status).to.eql(\"CLOSED\");",
+                  "  pm.expect(Date.parse(body.closedAt)).to.not.be.NaN;",
+                  "  pm.expect(body.summary).to.include.all.keys(\"applicantsProcessed\", \"correctDecisions\", \"incorrectDecisions\", \"score\");",
+                  "});",
+                  "// One decision was recorded through the stand-in when standInUrl is set; none otherwise.\nconst processed = pm.variables.get(\"standInUrl\") ? 1 : 0;\npm.test(\"summary applicantsProcessed counts the recorded decisions\", () => pm.expect(body.summary.applicantsProcessed).to.eql(processed));"
                 ]
               }
             }
@@ -682,6 +1276,371 @@
           "request": {
             "method": "POST",
             "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/close", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "close"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Live Updates (SSE)",
+      "description": "The shift's live updates. Event names and bodies: the CPR README, `server-moderation-session-service`, `GET /sessions/{id}/events`.",
+      "item": [
+        {
+          "name": "Open Session For Live Updates",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the session shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"id\", \"moderatorId\", \"juniorModeratorIds\", \"status\", \"startedAt\");",
+                  "  pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);",
+                  "  pm.expect(body.juniorModeratorIds).to.be.an(\"array\");",
+                  "  pm.expect([\"OPEN\", \"CLOSED\"]).to.include(body.status);",
+                  "  pm.expect(Date.parse(body.startedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.collectionVariables.set(\"streamSessionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"juniorModeratorIds\": []\n}"
+            },
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] }
+          }
+        },
+        {
+          "name": "Watch Session Live (send by hand)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// A stream stays open until the shift closes, so a run would wait here. Set watchLive to",
+                  "// true and send this request by hand; then close the session from another tab.",
+                  "if (pm.variables.get(\"watchLive\") !== \"true\") { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Runs only when you send it yourself with watchLive = true: the request ends when the stream does.",
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is an event stream\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/event-stream\"));",
+                  "const text = pm.response.text();",
+                  "pm.test(\"starts with the session's state\", () => pm.expect(text).to.match(/^event:\\s?state/m));",
+                  "pm.test(\"ends with closed or deleted\", () => pm.expect(text).to.match(/^event:\\s?(closed|deleted)/m));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": { "raw": "{{baseUrl}}/sessions/{{streamSessionId}}/events", "host": ["{{baseUrl}}"], "path": ["sessions", "{{streamSessionId}}", "events"] },
+            "description": "`GET /sessions/{id}/events`, Server-Sent Events through the Gateway. Set the variable `watchLive` to `true` and send this request: Postman shows `state` at once, then `applicant-presented` and `decision-recorded` as you send the matching requests from another tab, and `closed` (or `deleted`), which ends the stream. Skipped in runs (`watchLive` empty), because the request only ends with the stream. From a terminal: `curl -N -H \"Authorization: Bearer <key>\" http://localhost:8080/sessions/<id>/events`."
+          }
+        },
+        {
+          "name": "Close Session For Live Updates",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// While you watch live, you may already have closed the shift from another tab (409).",
+                  "if (pm.variables.get(\"watchLive\") === \"true\" && pm.response.code === 409) {",
+                  "  pm.test(\"already closed while watching\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_ALREADY_CLOSED\"));",
+                  "} else {",
+                  "  pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/sessions/{{streamSessionId}}/close", "host": ["{{baseUrl}}"], "path": ["sessions", "{{streamSessionId}}", "close"] },
+            "description": "Ends the stream opened by \"Watch Session Live\": it gets `closed` and stops."
+          }
+        },
+        {
+          "name": "Watch A Closed Session Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error code is SESSION_ALREADY_CLOSED\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_ALREADY_CLOSED\"));",
+                  "pm.test(\"error is JSON, not a stream\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/json\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": { "raw": "{{baseUrl}}/sessions/{{streamSessionId}}/events", "host": ["{{baseUrl}}"], "path": ["sessions", "{{streamSessionId}}", "events"] },
+            "description": "A closed shift answers 409 before any stream starts, which also stops a browser `EventSource` from reconnecting."
+          }
+        },
+        {
+          "name": "Watch A Nonexistent Session Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is SESSION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SESSION_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Accept", "value": "text/event-stream" }
+            ],
+            "url": { "raw": "{{baseUrl}}/sessions/00000000-0000-0000-0000-000000000000/events", "host": ["{{baseUrl}}"], "path": ["sessions", "00000000-0000-0000-0000-000000000000", "events"] }
+          }
+        },
+        {
+          "name": "Delete Session For Live Updates",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/sessions/{{streamSessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{streamSessionId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Instance Status And Metrics (direct, local only)",
+      "description": "`GET /health` (status with load and SSE streams, polled by the Service Discovery), `GET /actuator/prometheus` (scraped by Prometheus) and `GET /internal/logs` (the requests the Gateway's `GET /logs` collects, Lab 4) aren't routed by the Gateway, and Compose doesn't publish the instances' ports. Set `sessionInstanceUrl` to reach one instance directly (e.g. `http://localhost:8082` for a jar run locally, or `http://server-moderation-session-service:8082` for newman on the Compose network); empty, the two requests are skipped.",
+      "item": [
+        {
+          "name": "Metrics Are Not Routed By The Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/actuator/prometheus", "host": ["{{baseUrl}}"], "path": ["actuator", "prometheus"] },
+            "description": "The metrics endpoint is for Prometheus on the Compose network only; the Gateway has no route to it."
+          }
+        },
+        {
+          "name": "Get Instance Status With Load And Streams",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"sessionInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the status shape\", () => {",
+                  "  pm.expect(body.status).to.eql(\"Healthy\");",
+                  "  pm.expect(body.service).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/);",
+                  "  pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty;",
+                  "  pm.expect(body.checks.database).to.eql(\"Healthy\");",
+                  "  pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0);",
+                  "  pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads);",
+                  "  pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load);",
+                  "});",
+                  "pm.test(\"reports the SSE streams\", () => {",
+                  "  pm.expect(body.maxStreams).to.be.a(\"number\").and.above(0);",
+                  "  pm.expect(body.openStreams).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxStreams);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": { "raw": "{{sessionInstanceUrl}}/health", "host": ["{{sessionInstanceUrl}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "Get Prometheus Metrics",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"sessionInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Prometheus text format\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\"));",
+                  "const text = pm.response.text();",
+                  "pm.test(\"tagged with application and instance\", () => {",
+                  "  pm.expect(text).to.include('application=\"server-moderation-session-service\"');",
+                  "  pm.expect(text).to.match(/instance=\"[^\"]+\"/);",
+                  "});",
+                  "pm.test(\"publishes the business metrics\", () => {",
+                  "  [\"sessions_opened_total\", \"sessions_closed_total\", \"session_decision_events_total\"].forEach((m) => pm.expect(text).to.include(m));",
+                  "  // Circuits exist only for a dependency called through the Gateway (http mode); through the",
+                  "  // broker (or with the mocks) the broker's breakers decide and there is no session_circuit_state.",
+                  "  if (text.includes(\"session_circuit_state\")) { pm.expect(text).to.include(\"session_circuit_opens_total\"); }",
+                  "});",
+                  "pm.test(\"publishes the task, stream and HTTP metrics\", () => {",
+                  "  [\"tasks_active\", \"tasks_max\", \"sse_streams_open\", \"sse_streams_max\", \"http_server_requests_seconds_count\"].forEach((m) => pm.expect(text).to.include(m));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": { "raw": "{{sessionInstanceUrl}}/actuator/prometheus", "host": ["{{sessionInstanceUrl}}"], "path": ["actuator", "prometheus"] }
+          }
+        },
+        {
+          "name": "Logs Are Not Routed By The Gateway",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/internal/logs", "host": ["{{baseUrl}}"], "path": ["internal", "logs"] },
+            "description": "Each instance's request log is collected by the Gateway's own GET /logs (Lab 4, Grade 4); the Gateway has no route to /internal/**."
+          }
+        },
+        {
+          "name": "Get Instance Request Log",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"sessionInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"NDJSON, not cached\", () => {",
+                  "  pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/x-ndjson\");",
+                  "  pm.expect(pm.response.headers.get(\"Cache-Control\")).to.include(\"no-store\");",
+                  "});",
+                  "const lines = pm.response.text().split(\"\\n\").filter((line) => line.length > 0).map((line) => JSON.parse(line));",
+                  "pm.test(\"every line has the contract fields\", () => {",
+                  "  lines.forEach((line) => {",
+                  "    pm.expect(line.service).to.eql(\"server-moderation-session-service\");",
+                  "    [\"timestamp\", \"instanceId\", \"requestId\", \"method\", \"path\", \"status\", \"durationMs\", \"transport\"].forEach((f) => pm.expect(line).to.have.property(f));",
+                  "    pm.expect(line.path).to.not.include(\"?\");",
+                  "  });",
+                  "});",
+                  "pm.test(\"oldest first, health checks and metrics left out\", () => {",
+                  "  const times = lines.map((line) => Date.parse(line.timestamp));",
+                  "  pm.expect(times).to.eql([...times].sort((a, b) => a - b));",
+                  "  lines.forEach((line) => pm.expect(line.path).to.not.match(/^\\/(health|actuator|internal\\/logs)/));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": { "raw": "{{sessionInstanceUrl}}/internal/logs", "host": ["{{sessionInstanceUrl}}"], "path": ["internal", "logs"] },
+            "description": "This instance's last 1,000 business requests (Lab 4, Grade 4), as the Gateway's GET /logs collects them."
           }
         }
       ]

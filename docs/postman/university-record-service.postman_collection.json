@@ -5,6 +5,7 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
+    { "key": "expectedGatewayVersion", "value": "0.4.1", "type": "string", "description": "Gateway 0.5.0 image currently reports runtime 0.4.1; update after a release changes the application version." },
     {
       "key": "baseUrl",
       "value": "http://localhost:8080",
@@ -19,6 +20,12 @@
       "key": "seededStudentId",
       "value": "1234567890",
       "type": "string"
+    },
+    {
+      "key": "serviceUrl",
+      "value": "http://localhost:8086",
+      "type": "string",
+      "description": "Direct service URL (bypass gateway \u2014 for metrics and health)"
     }
   ],
   "auth": {
@@ -47,7 +54,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports the configured Gateway runtime version\", () => pm.expect(body.version).to.eql(pm.variables.get(\"expectedGatewayVersion\")));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
                   "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
@@ -581,6 +588,109 @@
                 "records",
                 "students",
                 "lookup"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lab 4 \u2014 Observability",
+      "item": [
+        {
+          "name": "Get Prometheus Metrics (direct)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"content type is Prometheus text format\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\"));",
+                  "pm.test(\"contains http_threads_active gauge\", () => pm.expect(pm.response.text()).to.include(\"http_threads_active\"));",
+                  "pm.test(\"contains http_threads_max gauge\", () => pm.expect(pm.response.text()).to.include(\"http_threads_max\"));",
+                  "pm.test(\"contains service tag\", () => pm.expect(pm.response.text()).to.include(\"service=\\\"university-record-service\\\"\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{serviceUrl}}/actuator/prometheus",
+              "host": [
+                "{{serviceUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "prometheus"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Spring Actuator Health (direct)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is UP\", () => pm.expect(pm.response.json().status).to.eql(\"UP\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{serviceUrl}}/actuator/health",
+              "host": [
+                "{{serviceUrl}}"
+              ],
+              "path": [
+                "actuator",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Service Health (custom /health, direct)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
+                  "pm.test(\"reports service name\", () => pm.expect(body.service).to.eql(\"university-record-service\"));",
+                  "pm.test(\"reports load level\", () => pm.expect([\"NORMAL\",\"HIGH\",\"CRITICAL\"]).to.include(body.load));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{serviceUrl}}/health",
+              "host": [
+                "{{serviceUrl}}"
+              ],
+              "path": [
+                "health"
               ]
             }
           }

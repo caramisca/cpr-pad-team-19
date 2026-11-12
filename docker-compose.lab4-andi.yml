@@ -1,0 +1,31 @@
+# Apply only after the shared Lab 4 broker is in the stack. docker-compose.yml pins the 0.5.0 images
+# of both services with the broker mode off; this overlay turns it on for Andi's two services. The
+# broker/release integration belongs to Daria (#243).
+# docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml config
+#
+# moderation-service serves the broker's gRPC ServiceEndpoint on 9087, publishes its outbox with
+# MessageBroker.Publish and calls credential/rules/records with MessageBroker.Call.
+# discord-dms-service and its replicas serve ServiceEndpoint on 9088 and consume verdict.issued,
+# session.started, session.closed and ruleset.updated. REST, GET /health, GET /metrics and
+# GET /internal/logs stay on 8087 and 8088. The gRPC ports are not published to the host.
+# Compose merges environment by key, so the Laboratory 3 settings of docker-compose.yml are kept.
+x-dms-messaging: &dms-messaging
+  Messaging__Enabled: "true"
+  Messaging__HttpPort: "8088"
+  Messaging__GrpcPort: "9088"
+  Messaging__BrokerUrl: http://message-broker:9091
+
+services:
+  moderation-service:
+    environment:
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8087"
+      Messaging__GrpcPort: "9087"
+      Messaging__BrokerUrl: http://message-broker:9091
+      Downstream__Credential__Mode: Grpc
+      Downstream__Rules__Mode: Grpc
+      Downstream__Records__Mode: Grpc
+  discord-dms-service:
+    environment: *dms-messaging
+  discord-dms-service-replica:
+    environment: *dms-messaging

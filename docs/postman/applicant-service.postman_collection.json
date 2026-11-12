@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "applicant-service",
-    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 — Student ID, Please). Runs against the shared docker-compose.yml through the API Gateway (baseUrl http://localhost:8080) with collection-level Authorization: Bearer {{apiKey}}. The Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order.",
+    "description": "Applicant endpoints of applicant-service (Team 19, Topic 3 â€” Student ID, Please). Runs against the shared docker-compose.yml through the API Gateway (baseUrl http://localhost:8080) with collection-level Authorization: Bearer {{apiKey}}. The Happy Path folder generates, updates and removes applicants of a fresh session, so it can be run repeatedly. The Integration folder checks, in credential-service, the bundle attached to a generated applicant. Run the folders in order. Lab 4: service calls use gRPC through the Message Broker when enabled. Public business requests keep their REST contract. The optional Internal diagnostics folder uses internalBaseUrl and needs a local test port-forward; these routes must not be public Gateway routes.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -15,6 +15,7 @@
     ]
   },
   "variable": [
+    { "key": "expectedGatewayVersion", "value": "0.4.1", "type": "string", "description": "Gateway 0.5.0 image currently reports runtime 0.4.1; update after a release changes the application version." },
     {
       "key": "baseUrl",
       "value": "http://localhost:8080",
@@ -54,6 +55,21 @@
       "key": "credentialId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "internalBaseUrl",
+      "value": "http://localhost:8083",
+      "type": "string"
+    },
+    {
+      "key": "runInternalDiagnostics",
+      "value": "false",
+      "type": "string"
+    },
+    {
+      "key": "runLab4GatewayChecks",
+      "value": "false",
+      "type": "string"
     }
   ],
   "item": [
@@ -72,7 +88,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports the configured Gateway runtime version\", () => pm.expect(body.version).to.eql(pm.variables.get(\"expectedGatewayVersion\")));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
                   "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
@@ -830,6 +846,112 @@
           }
         }
       ]
+    },
+    {
+      "name": "Lab 4 Internal diagnostics (private network or test port-forward only)",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Prometheus metrics",
+          "request": {
+            "method": "GET",
+            "url": "{{internalBaseUrl}}/metrics"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Lab 4 contract\", () => { pm.expect(pm.response.text()).to.include('service_requests_total'); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Structured logs",
+          "request": {
+            "method": "GET",
+            "url": "{{internalBaseUrl}}/internal/logs"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Lab 4 contract\", () => { pm.response.text().trim().split('\\n').filter(Boolean).forEach(line => pm.expect(JSON.parse(line)).to.have.property('requestId')); });"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Own service health",
+          "request": {
+            "method": "GET",
+            "url": "{{internalBaseUrl}}/health"
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"HTTP 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Lab 4 contract\", () => { pm.expect(pm.response.json().service).to.eql('applicant-service'); });"
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('runInternalDiagnostics') !== 'true') pm.execution.skipRequest();"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Enable only for the final Lab 4 Gateway integration; diagnostics have separate tests.",
+          "if (pm.variables.get(\"runLab4GatewayChecks\") === \"true\") {",
+          "  const path = pm.request.url.getPath();",
+          "  if (path === \"/applicants/generate\" && pm.response.code === 201) { const input = JSON.parse(pm.variables.replaceIn(pm.request.body.raw)); const known = JSON.parse(pm.collectionVariables.get(\"lab4ApplicantIdsBySession\") || \"{}\"); known[input.sessionId] = Array.from(new Set([...(known[input.sessionId] || []), pm.response.json().id])); pm.collectionVariables.set(\"lab4ApplicantIdsBySession\", JSON.stringify(known)); }",
+          "  if (path === \"/applicants\" || path.startsWith(\"/applicants/\")) {",
+          "    if (pm.response.code !== 204 && pm.response.text().trim()) {",
+          "      pm.test(\"Lab 4: HTTP JSON Content-Type survives the broker\", function () {",
+          "        pm.expect(pm.response.headers.get(\"Content-Type\")).to.match(/^application\\/json(?:;|$)/i);",
+          "      });",
+          "    }",
+          "    const filter = pm.variables.replaceIn(pm.request.url.query.get(\"sessionId\") || \"\");",
+          "    if (pm.request.method === \"GET\" && path === \"/applicants\" && filter && pm.response.code === 200) {",
+          "      pm.test(\"Lab 4: Gateway retains the query filter\", function () {",
+          "        const rows = pm.response.json().applicants;",
+          "        pm.expect(rows).to.be.an(\"array\");",
+          "        const known = JSON.parse(pm.collectionVariables.get(\"lab4ApplicantIdsBySession\") || \"{}\"); const expected = filter === pm.variables.get(\"demoSessionId\") ? Array.from({length: 6}, (_, i) => \"a0000000-0000-4000-8000-00000000000\" + (i + 1)) : known[filter]; pm.expect(expected, \"known IDs for the requested session\").to.be.an(\"array\"); pm.expect(rows.map(row => row.id)).to.have.members(expected);",
+          "      });",
+          "    }",
+          "  }",
+          "}"
+        ]
+      }
     }
   ]
 }

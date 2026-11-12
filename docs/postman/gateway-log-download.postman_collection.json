@@ -1,0 +1,422 @@
+{
+  "info": {
+    "name": "gateway-log-download",
+    "description": "GET /logs on gateway-service 0.5.0 (Team 19, Topic 3: Student ID, Please; Laboratory 4, Grade 4): the logs of every instance of every service, and of the Gateway, as one NDJSON file. Run the requests top to bottom: Trace A Request sends a business request with a generated X-Request-Id, and Download The Logs Of That Request finds it again. The Gateway is at baseUrl (http://localhost:8080) and every request sends the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). A service that does not serve GET /internal/logs yet, or is down, does not fail the download: the Gateway names it in X-Log-Sources-Failed and its lines are missing.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Trace A Request",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"traceRequestId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"unknownNotificationId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"reaches discord-dms-service\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"keeps the request ID it was sent\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(pm.collectionVariables.get(\"traceRequestId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{traceRequestId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{unknownNotificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{unknownNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download The Logs Of That Request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is NDJSON\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/x-ndjson\"));",
+                  "const lines = pm.response.text().split(\"\\n\").filter(line => line.trim() !== \"\").map(line => JSON.parse(line));",
+                  "const traced = pm.collectionVariables.get(\"traceRequestId\");",
+                  "pm.test(\"X-Log-Lines counts the lines\", () => pm.expect(Number(pm.response.headers.get(\"X-Log-Lines\"))).to.eql(lines.length));",
+                  "pm.test(\"every line is that request\", () => lines.forEach(line => pm.expect(line.requestId).to.eql(traced)));",
+                  "pm.test(\"the Gateway logged it\", () => pm.expect(lines.some(line => line.service === \"gateway-service\" && line.path === \"/notifications/\" + pm.collectionVariables.get(\"unknownNotificationId\") && line.status === 404)).to.be.true);",
+                  "pm.test(\"every line names its instance\", () => lines.forEach(line => pm.expect(line.instanceId).to.be.a(\"string\").and.not.empty));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?requestId={{traceRequestId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "requestId",
+                  "value": "{{traceRequestId}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download The Logs Of The Whole System",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is NDJSON\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/x-ndjson\"));",
+                  "pm.test(\"is a file\", () => pm.expect(pm.response.headers.get(\"Content-Disposition\")).to.match(/^attachment; filename=\"system-logs-\\d{8}T\\d{6}Z\\.ndjson\"$/));",
+                  "pm.test(\"is not cached\", () => pm.expect(pm.response.headers.get(\"Cache-Control\")).to.eql(\"no-store\"));",
+                  "pm.test(\"the Gateway answered\", () => pm.expect(Number(pm.response.headers.get(\"X-Log-Sources\"))).to.be.at.least(1));",
+                  "pm.test(\"reports the skipped lines\", () => pm.expect(pm.response.headers.get(\"X-Log-Lines-Skipped\")).to.match(/^\\d+$/));",
+                  "const lines = pm.response.text().split(\"\\n\").filter(line => line.trim() !== \"\").map(line => JSON.parse(line));",
+                  "pm.test(\"X-Log-Lines counts the lines\", () => pm.expect(Number(pm.response.headers.get(\"X-Log-Lines\"))).to.eql(lines.length));",
+                  "pm.test(\"every line has a UTC time, a service and a request ID field\", () => lines.forEach(line => { pm.expect(line.timestamp).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z$/); pm.expect(line.service).to.be.a(\"string\").and.not.empty; pm.expect(line).to.have.property(\"instanceId\"); pm.expect(line).to.have.property(\"requestId\"); }));",
+                  "pm.test(\"the oldest line comes first\", () => lines.slice(1).forEach((line, i) => pm.expect(line.timestamp >= lines[i].timestamp).to.be.true));",
+                  "pm.test(\"holds the traced request\", () => pm.expect(lines.some(line => line.requestId === pm.collectionVariables.get(\"traceRequestId\"))).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download The Logs Of Two Services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const lines = pm.response.text().split(\"\\n\").filter(line => line.trim() !== \"\").map(line => JSON.parse(line));",
+                  "pm.test(\"X-Log-Lines counts the lines\", () => pm.expect(Number(pm.response.headers.get(\"X-Log-Lines\"))).to.eql(lines.length));",
+                  "pm.test(\"keeps at most 50 lines\", () => pm.expect(lines.length).to.be.at.most(50));",
+                  "pm.test(\"keeps only those services\", () => lines.forEach(line => pm.expect([\"moderation-service\", \"discord-dms-service\"]).to.include(line.service)));",
+                  "const failed = pm.response.headers.get(\"X-Log-Sources-Failed\");",
+                  "pm.test(\"names only those services when an instance failed\", () => { if (failed) failed.split(\", \").forEach(name => pm.expect(name).to.match(/^(moderation-service|discord-dms-service)(\\/|$)/)); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?service=moderation-service,discord-dms-service&limit=50",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "service",
+                  "value": "moderation-service,discord-dms-service"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Invalid Since Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a validation error\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the parameter\", () => pm.expect(body.message).to.include(\"since\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?since=yesterday",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "yesterday"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Service Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a validation error\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the parameter\", () => pm.expect(body.message).to.include(\"service\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?service=billing-service",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "service",
+                  "value": "billing-service"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Limit Zero Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a validation error\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the parameter\", () => pm.expect(body.message).to.include(\"limit\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?limit=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Since After Until Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a validation error\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the parameter\", () => pm.expect(body.message).to.include(\"since\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?since=2026-11-12T10:00:00Z&until=2026-11-12T09:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "since",
+                  "value": "2026-11-12T10:00:00Z"
+                },
+                {
+                  "key": "until",
+                  "value": "2026-11-12T09:00:00Z"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Parameter Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a validation error\", () => pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"names the parameter\", () => pm.expect(body.message).to.include(\"level\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs?level=error",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "level",
+                  "value": "error"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Download Without An API Key Returns 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"is unauthorized\", () => pm.expect(pm.response.json().error).to.eql(\"UNAUTHORIZED\"));",
+                  "pm.test(\"asks for a bearer key\", () => pm.expect(pm.response.headers.get(\"WWW-Authenticate\")).to.include(\"Bearer\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "logs"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "traceRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "unknownNotificationId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}

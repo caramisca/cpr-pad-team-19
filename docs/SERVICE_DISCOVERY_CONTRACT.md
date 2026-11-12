@@ -37,6 +37,7 @@ The address is illustrative, discovered at runtime, and must not be hard-coded i
 | `instanceId` | Required; letters, digits, `.`, `_`, `:`, `-`, maximum 64 characters; unique within the service |
 | `url` | Required; absolute HTTP(S) URL with a host, no query/fragment, maximum 2048 characters; trailing slash removed |
 | `healthUrl` | Optional HTTP(S) URL; defaults to `url` + `/health` |
+| `topics` | Optional (Lab 4, SD `0.5.0`). The topics whose events this instance wants, e.g. `["decision.evaluated"]`: at most 64 names, each lower-case letters and digits joined by `.`, `-` or `_` (at most 128 characters). Repeats are dropped, order is kept. Missing, `null` or `[]`: no topics. Registering again replaces them |
 
 A new registration returns `201 Created`; re-registering the same ID returns `200 OK` and updates
 its address while retaining registry order. Response:
@@ -47,6 +48,7 @@ its address while retaining registry order. Response:
   "instanceId": "applicant-1",
   "url": "http://172.18.0.7:8083",
   "healthUrl": "http://172.18.0.7:8083/health",
+  "topics": [],
   "registeredAt": "2026-10-29T09:00:00Z",
   "lastHeartbeat": "2026-10-29T09:00:00Z",
   "ttlSeconds": 30.0,
@@ -65,9 +67,14 @@ backoff and jitter while continuing to serve business requests.
 | Deregister | `DELETE /instances/{serviceName}/{instanceId}`, no body | `204` | `404 INSTANCE_NOT_FOUND`; already absent |
 | Service lookup | `GET /services/{serviceName}/instances` | `200`, `{"serviceName":"applicant-service","instances":[...]}` | `200` with an empty list |
 | Full lookup | `GET /instances` | `200`, `{"instances":[...]}` | `200` with an empty list |
+| Subscribers of a topic (Lab 4) | `GET /topics/{topic}/subscribers` | `200`, `{"topic":"decision.evaluated","services":[{"serviceName":"player-service","instances":[...]}]}` | `200` with an empty `services` list; an invalid name `400 VALIDATION_ERROR` |
+| Every topic (Lab 4) | `GET /topics` | `200`, `{"topics":[{"topic":"decision.evaluated","services":["player-service"]}]}`, sorted | `200` with an empty list |
 
-Each lookup entry has `serviceName`, `instanceId`, `url`, `healthUrl`, `registeredAt` and
-`lastHeartbeat`, using the registration response's types. Timestamps are UTC ISO 8601 strings.
+Each lookup entry has `serviceName`, `instanceId`, `url`, `healthUrl`, `topics` (`[]` for none),
+`registeredAt` and `lastHeartbeat`, using the registration response's types. The topic lookups
+count only live instances: an expired or deregistered instance drops out of every topic at once.
+The message broker uses them to fan an event out, one copy per subscribing service, to one of its
+instances (topic names: [message contract](MESSAGE_BROKER_CONTRACT.md#topic-catalog)). Timestamps are UTC ISO 8601 strings.
 Entries retain registration order. Heartbeat cadence comes from the registration response, by
 default TTL / 3. An instance expires after its last heartbeat is older than the TTL; lookups and
 the background sweep remove expired entries. Graceful shutdown attempts a bounded best-effort

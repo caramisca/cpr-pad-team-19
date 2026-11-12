@@ -1,0 +1,38 @@
+groups:
+  - name: lab4
+    rules:
+      - alert: ServiceScrapeDown
+        expr: up{job=~"applicant-service|credential-service|message-broker|moderation-service|discord-dms-service"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Metrics unavailable for {{ $labels.job }} at {{ $labels.instance }}'
+      - alert: ServiceErrorRate
+        expr: rate(service_errors_total[2m]) / clamp_min(rate(service_requests_total[2m]), 0.01) > 0.05
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'More than 5 percent 5xx replies at {{ $labels.instance }}'
+      - alert: BrokerEventBacklog
+        expr: broker_pending_event_copies > 100
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Broker has more than 100 unacknowledged event copies'
+      - alert: SpringServiceScrapeDown
+        expr: up{job=~"server-rules-service|university-record-service|player-service|server-moderation-session-service"} == 0
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Metrics unavailable for {{ $labels.job }} at {{ $labels.instance }}'
+      - alert: SpringServiceHighThreadLoad
+        expr: http_threads_active / clamp_min(http_threads_max, 1) > 0.8
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Thread load above 80% for {{ $labels.service }}'

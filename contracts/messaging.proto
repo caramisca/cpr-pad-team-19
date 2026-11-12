@@ -1,0 +1,50 @@
+syntax = "proto3";
+package pad.messaging.v1;
+option csharp_namespace = "Pad.Messaging.V1";
+
+// Private network only. Deadlines and request IDs propagate across both hops.
+service MessageBroker {
+  rpc Call(ServiceRequest) returns (ServiceReply);
+  rpc Publish(Event) returns (PublishReply);
+  rpc ListTopics(Empty) returns (TopicsReply);
+}
+service ServiceEndpoint {
+  rpc Call(ServiceRequest) returns (ServiceReply);
+  rpc Deliver(Event) returns (DeliveryReply);
+}
+message Empty {}
+message ServiceRequest {
+  string message_id = 1;
+  string source = 2;
+  string target = 3;
+  string method = 4;
+  string path = 5;
+  bytes body = 6;
+  string request_id = 7;
+  map<string, string> headers = 8;
+}
+message ServiceReply {
+  int32 status = 1;
+  bytes body = 2;
+  map<string, string> headers = 3;
+}
+message Event {
+  string message_id = 1;
+  string source = 2;
+  string topic = 3;
+  string occurred_at = 4;
+  int32 schema_version = 5;
+  bytes payload = 6; // UTF-8 JSON object, existing CPR domain payloads unchanged.
+  string request_id = 7;
+}
+message PublishReply {
+  string message_id = 1;
+  repeated string queued_services = 2;
+}
+message DeliveryReply {
+  enum Outcome { RETRY = 0; COMMITTED = 1; REJECTED = 2; }
+  Outcome outcome = 1;
+  string reason = 2;
+}
+message Topic { string name = 1; repeated string services = 2; }
+message TopicsReply { repeated Topic topics = 1; }

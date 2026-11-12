@@ -1,0 +1,18 @@
+# Apply only after the shared Lab 4 broker, SD and dependency adapters are integrated.
+# This overlay configures Mihai's two services; the broker/release integration belongs to Daria.
+# docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml config
+services:
+  applicant-service:
+    environment:
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8083"
+      Messaging__GrpcPort: "9083"
+      Messaging__BrokerUrl: http://message-broker:9091
+      Services__CredentialServiceMode: Grpc
+  credential-service:
+    environment:
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8084"
+      Messaging__GrpcPort: "9084"
+      Messaging__BrokerUrl: http://message-broker:9091
+      Services__UniversityRecordMode: Grpc

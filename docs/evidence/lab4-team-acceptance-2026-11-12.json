@@ -1,0 +1,1068 @@
+{
+  "checkedAt": "2026-11-12T14:11:46.955891+00:00",
+  "scope": "Dedicated local real-service stack. Final collection run uses unpublished local Broker #11 build; all other images public 0.5.0. Fresh synthetic databases and test-only secrets. No external alerts or Discord delivery.",
+  "cprIntegratedCommit": "55564fac1f7751fd5ac5d5fccf5c9113dfe106ef",
+  "publishedBrokerMainCommit": "b0b3dbacfe6a3747df63f8e10bbe277efd5cfea1",
+  "brokerReviewCommit": "5ac3e35ddc048ba4f7e5da4bffce63901d87f51c",
+  "brokerReviewImage": "pad-lab4-broker:review-5ac3e35",
+  "releaseDecision": "NO-GO: failed functional assertions, partial request queues/routing, missing load/rerouting, incomplete dashboard coverage; no main promotion or gitlink update performed",
+  "checks": {
+    "brokerExistingTests": 161,
+    "releaseCheckerTests": 13,
+    "publicMultiArchImages": 11,
+    "postmanRequests": 254,
+    "postmanAssertions": 860,
+    "postmanFailedAssertions": 28
+  },
+  "postman": {
+    "checkedAt": "2026-11-12T14:09:26.299107+00:00",
+    "collections": [
+      {
+        "collection": "server-rules-service",
+        "exitCode": 1,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 52,
+            "pending": 0,
+            "failed": 6
+          },
+          "testScripts": {
+            "total": 20,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 0,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": [
+          {
+            "source": "Publish Ruleset Missing Rules Returns 400",
+            "message": "expected response to have status code 400 but got 201"
+          },
+          {
+            "source": "Publish Ruleset Missing Rules Returns 400",
+            "message": "expected undefined to deeply equal 'VALIDATION_ERROR'"
+          },
+          {
+            "source": "Publish Ruleset Missing EffectiveFrom Returns 400",
+            "message": "expected response to have status code 400 but got 201"
+          },
+          {
+            "source": "Publish Ruleset Missing EffectiveFrom Returns 400",
+            "message": "expected undefined to deeply equal 'VALIDATION_ERROR'"
+          },
+          {
+            "source": "Invalid JSON Body Returns 400",
+            "message": "expected response to have status code 400 but got 500"
+          },
+          {
+            "source": "Invalid JSON Body Returns 400",
+            "message": "expected 'INTERNAL_ERROR' to deeply equal 'MALFORMED_REQUEST_BODY'"
+          }
+        ]
+      },
+      {
+        "collection": "university-record-service",
+        "exitCode": 1,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 47,
+            "pending": 0,
+            "failed": 10
+          },
+          "testScripts": {
+            "total": 18,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 0,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": [
+          {
+            "source": "Update Student",
+            "message": "expected response to have status code 200 but got 405"
+          },
+          {
+            "source": "Update Student",
+            "message": "expected undefined to deeply equal 'Diana Updated'"
+          },
+          {
+            "source": "Restore Student (undo previous update)",
+            "message": "expected response to have status code 200 but got 405"
+          },
+          {
+            "source": "Restore Student (undo previous update)",
+            "message": "expected undefined to deeply equal 'Diana Popescu'"
+          },
+          {
+            "source": "Update Student With Unknown Id Returns 404",
+            "message": "expected response to have status code 404 but got 405"
+          },
+          {
+            "source": "Update Student With Unknown Id Returns 404",
+            "message": "expected 'METHOD_NOT_ALLOWED' to deeply equal 'STUDENT_NOT_FOUND'"
+          },
+          {
+            "source": "Wrong Method Returns 405",
+            "message": "expected response to have status code 405 but got 404"
+          },
+          {
+            "source": "Wrong Method Returns 405",
+            "message": "expected 'ROUTE_NOT_FOUND' to deeply equal 'METHOD_NOT_ALLOWED'"
+          },
+          {
+            "source": "Invalid JSON Body Returns 400",
+            "message": "expected response to have status code 400 but got 500"
+          },
+          {
+            "source": "Invalid JSON Body Returns 400",
+            "message": "expected 'INTERNAL_ERROR' to deeply equal 'MALFORMED_REQUEST_BODY'"
+          }
+        ]
+      },
+      {
+        "collection": "applicant-service",
+        "exitCode": 1,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 24,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 52,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 24,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 24,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 24,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 87,
+            "pending": 0,
+            "failed": 6
+          },
+          "testScripts": {
+            "total": 48,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 4,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": [
+          {
+            "source": "Generate With Malformed Json",
+            "message": "expected 'VALIDATION_ERROR' to deeply equal 'MALFORMED_REQUEST'"
+          },
+          {
+            "source": "Generate With Wrong Content Type",
+            "message": "expected response to have status code 415 but got 400"
+          },
+          {
+            "source": "Generate With Wrong Content Type",
+            "message": "expected 'VALIDATION_ERROR' to deeply equal 'UNSUPPORTED_MEDIA_TYPE'"
+          },
+          {
+            "source": "Unknown Route",
+            "message": "expected 'ROUTE_NOT_FOUND' to deeply equal 'NOT_FOUND'"
+          },
+          {
+            "source": "Unsupported Method",
+            "message": "expected response to have status code 405 but got 404"
+          },
+          {
+            "source": "Unsupported Method",
+            "message": "expected 'ROUTE_NOT_FOUND' to deeply equal 'METHOD_NOT_ALLOWED'"
+          }
+        ]
+      },
+      {
+        "collection": "credential-service",
+        "exitCode": 1,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 29,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 62,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 29,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 29,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 29,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 109,
+            "pending": 0,
+            "failed": 6
+          },
+          "testScripts": {
+            "total": 58,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 4,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": [
+          {
+            "source": "Issue With Malformed Json",
+            "message": "expected 'VALIDATION_ERROR' to deeply equal 'MALFORMED_REQUEST'"
+          },
+          {
+            "source": "Issue With Wrong Content Type",
+            "message": "expected response to have status code 415 but got 400"
+          },
+          {
+            "source": "Issue With Wrong Content Type",
+            "message": "expected 'VALIDATION_ERROR' to deeply equal 'UNSUPPORTED_MEDIA_TYPE'"
+          },
+          {
+            "source": "Unknown Route",
+            "message": "expected 'ROUTE_NOT_FOUND' to deeply equal 'NOT_FOUND'"
+          },
+          {
+            "source": "Unsupported Method",
+            "message": "expected response to have status code 405 but got 404"
+          },
+          {
+            "source": "Unsupported Method",
+            "message": "expected 'ROUTE_NOT_FOUND' to deeply equal 'METHOD_NOT_ALLOWED'"
+          }
+        ]
+      },
+      {
+        "collection": "player-service",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 40,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 110,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 40,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 26,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 26,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 111,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 52,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 58,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      },
+      {
+        "collection": "server-moderation-session-service",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 59,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 178,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 59,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 49,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 49,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 185,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 98,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 80,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      },
+      {
+        "collection": "moderation-service",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 28,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 34,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 28,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 28,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 28,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 88,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 28,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 6,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      },
+      {
+        "collection": "discord-dms-service",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 31,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 40,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 31,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 31,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 31,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 90,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 31,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 9,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      },
+      {
+        "collection": "gateway-log-download",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 10,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 11,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 10,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 10,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 10,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 41,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 10,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      },
+      {
+        "collection": "message-broker",
+        "exitCode": 0,
+        "stats": {
+          "iterations": {
+            "total": 1,
+            "pending": 0,
+            "failed": 0
+          },
+          "items": {
+            "total": 19,
+            "pending": 0,
+            "failed": 0
+          },
+          "scripts": {
+            "total": 23,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequests": {
+            "total": 19,
+            "pending": 0,
+            "failed": 0
+          },
+          "requests": {
+            "total": 19,
+            "pending": 0,
+            "failed": 0
+          },
+          "tests": {
+            "total": 19,
+            "pending": 0,
+            "failed": 0
+          },
+          "assertions": {
+            "total": 50,
+            "pending": 0,
+            "failed": 0
+          },
+          "testScripts": {
+            "total": 19,
+            "pending": 0,
+            "failed": 0
+          },
+          "prerequestScripts": {
+            "total": 4,
+            "pending": 0,
+            "failed": 0
+          }
+        },
+        "failures": []
+      }
+    ]
+  },
+  "streamingAndRealSession": {
+    "passed": true,
+    "checks": [
+      "Real Session -> broker -> Applicant -> Credential generates a queue applicant",
+      "Real Session session.closed publisher triggers Applicant and Credential cleanup",
+      "Real Session session.closed credits one Player shift through broker",
+      "SSE through Gateway delivers initial state and closed event on real session"
+    ],
+    "sseEvents": [
+      "state",
+      "applicant-presented",
+      "closed"
+    ],
+    "requestId": "team-flow-e57d8688-c218-4a73-a854-4cd18b48daeb"
+  },
+  "websocket": {
+    "passed": true,
+    "checks": [
+      "Gateway issues chat tickets accepted by real DMS",
+      "WebSocket message reaches both clients"
+    ],
+    "clientsReceived": [
+      true,
+      true
+    ]
+  },
+  "ownedGatewayPublishedBroker": {
+    "timestamp": "2026-11-12T13:56:21.915992+00:00",
+    "passed": true,
+    "checks": [
+      "Real Gateway -> broker -> Applicant -> broker -> Credential creates two isolated session datasets",
+      "Gateway retains JSON Content-Type, Location, request/instance IDs and both query filters with distractor data",
+      "JSON 400/404 errors retain content type and correlation headers through Gateway",
+      "session.closed commits Applicant cleanup and Credential cleanup while preserving the other session",
+      "Duplicate delivery to both physical Applicant replicas returns COMMITTED using the shared inbox",
+      "Real Applicant REJECTED payload is transferred to the integrated broker DLC with its reason"
+    ],
+    "scope": "Real Gateway + broker + Applicant/Credential/Redis/SD; manual session publisher; no Record fixture",
+    "legitimateRecordRequestStatus": 201,
+    "realUniversityRecordVerified": true,
+    "applicantReplicaIds": [
+      "2ab90855fab4",
+      "9b8e1f35b7b8"
+    ],
+    "invalidMessageId": "a0808dbd-65be-4835-a654-7a72061af95c"
+  },
+  "ownedGatewayBroker11": {
+    "timestamp": "2026-11-12T14:05:00.518145+00:00",
+    "passed": true,
+    "checks": [
+      "Real Gateway -> broker -> Applicant -> broker -> Credential creates two isolated session datasets",
+      "Gateway retains JSON Content-Type, Location, request/instance IDs and both query filters with distractor data",
+      "JSON 400/404 errors retain content type and correlation headers through Gateway",
+      "session.closed commits Applicant cleanup and Credential cleanup while preserving the other session",
+      "Duplicate delivery to both physical Applicant replicas returns COMMITTED using the shared inbox",
+      "Real Applicant REJECTED payload is transferred to the integrated broker DLC with its reason"
+    ],
+    "scope": "Real Gateway + broker + Applicant/Credential/Redis/SD; manual session publisher; no Record fixture",
+    "legitimateRecordRequestStatus": 201,
+    "realUniversityRecordVerified": true,
+    "applicantReplicaIds": [
+      "2ab90855fab4",
+      "9b8e1f35b7b8"
+    ],
+    "invalidMessageId": "45581487-972a-4846-a402-d03d8894320b"
+  },
+  "dlcRestartBroker11": {
+    "passed": true,
+    "brokerCommit": "5ac3e35ddc048ba4f7e5da4bffce63901d87f51c",
+    "scope": "DLC persistence across local image replacement and SIGKILL/restart on the same named SQLite volume; not pending request durability",
+    "retainedMessages": 2
+  },
+  "monitoring": {
+    "targets": [
+      {
+        "labels": {
+          "instance": "172.21.0.28:8083",
+          "job": "applicant-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.26:8083",
+          "job": "applicant-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.24:8084",
+          "job": "credential-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.25:8084",
+          "job": "credential-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.17:8088",
+          "job": "discord-dms-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.16:8088",
+          "job": "discord-dms-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "message-broker:8091",
+          "job": "message-broker"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.23:8087",
+          "job": "moderation-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.19:8087",
+          "job": "moderation-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.21:8081",
+          "job": "player-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.15:8081",
+          "job": "player-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "localhost:9090",
+          "job": "prometheus"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.27:8082",
+          "job": "server-moderation-session-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.29:8082",
+          "job": "server-moderation-session-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.14:8085",
+          "job": "server-rules-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.20:8085",
+          "job": "server-rules-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.18:8086",
+          "job": "university-record-service"
+        },
+        "health": "up",
+        "lastError": ""
+      },
+      {
+        "labels": {
+          "instance": "172.21.0.22:8086",
+          "job": "university-record-service"
+        },
+        "health": "up",
+        "lastError": ""
+      }
+    ],
+    "dashboardQueries": [
+      {
+        "panelId": 1,
+        "title": "HTTP Request Rate (req/s)",
+        "query": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"server-rules-service|university-record-service\"}[1m]))",
+        "status": "success",
+        "seriesCount": 2
+      },
+      {
+        "panelId": 2,
+        "title": "HTTP Error Rate (5xx req/s)",
+        "query": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"server-rules-service|university-record-service\",status=~\"5..\"}[1m]))",
+        "status": "success",
+        "seriesCount": 0
+      },
+      {
+        "panelId": 3,
+        "title": "P95 Latency (s)",
+        "query": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_requests_seconds_bucket{job=~\"server-rules-service|university-record-service\"}[5m])))",
+        "status": "success",
+        "seriesCount": 0
+      },
+      {
+        "panelId": 4,
+        "title": "Active Threads",
+        "query": "http_threads_active{job=~\"server-rules-service|university-record-service\"}",
+        "status": "success",
+        "seriesCount": 4
+      },
+      {
+        "panelId": 4,
+        "title": "Active Threads",
+        "query": "http_threads_max{job=~\"server-rules-service|university-record-service\"}",
+        "status": "success",
+        "seriesCount": 4
+      },
+      {
+        "panelId": 5,
+        "title": "Broker Event Deliveries by Outcome",
+        "query": "sum by (outcome) (rate(broker_event_deliveries_total[2m]))",
+        "status": "success",
+        "seriesCount": 2
+      },
+      {
+        "panelId": 6,
+        "title": "Broker Active Requests",
+        "query": "broker_active_requests",
+        "status": "success",
+        "seriesCount": 1
+      },
+      {
+        "panelId": 7,
+        "title": "Broker Pending Event Copies",
+        "query": "broker_pending_event_copies",
+        "status": "success",
+        "seriesCount": 1
+      },
+      {
+        "panelId": 8,
+        "title": "Services Up",
+        "query": "up{job=~\"server-rules-service|university-record-service|message-broker|applicant-service|credential-service\"}",
+        "status": "success",
+        "seriesCount": 9
+      },
+      {
+        "panelId": 9,
+        "title": "Applicant / Credential \u2014 Request Rate (req/s)",
+        "query": "rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
+        "status": "success",
+        "seriesCount": 4
+      },
+      {
+        "panelId": 10,
+        "title": "Applicant / Credential \u2014 Error Rate (5xx req/s)",
+        "query": "rate(service_errors_total{job=~\"applicant-service|credential-service\"}[1m])",
+        "status": "success",
+        "seriesCount": 4
+      },
+      {
+        "panelId": 11,
+        "title": "Applicant / Credential \u2014 Avg Request Duration (s)",
+        "query": "rate(service_request_duration_seconds_sum{job=~\"applicant-service|credential-service\"}[1m]) / rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
+        "status": "success",
+        "seriesCount": 4
+      },
+      {
+        "panelId": 12,
+        "title": "Applicant / Credential \u2014 Active Requests",
+        "query": "service_active_requests{job=~\"applicant-service|credential-service\"}",
+        "status": "success",
+        "seriesCount": 4
+      }
+    ],
+    "visualBrowserVerification": false,
+    "limits": [
+      "Missing business panels for Player/Session/Moderation/DMS",
+      "Rules/Record HTTP P95 query returns no series (no matching HTTP buckets)",
+      "HTTP request panels do not automatically cover gRPC business traffic",
+      "Empty 5xx series is not itself proof of application failure"
+    ]
+  },
+  "gitlinks": [
+    {
+      "service": "applicant-service",
+      "repository": "caramisca/applicant-service",
+      "pin": "341e8c36e10830a83ff2fe5596ce8b493b35edf2",
+      "main": "341e8c36e10830a83ff2fe5596ce8b493b35edf2",
+      "matchesMain": true,
+      "accessError": null
+    },
+    {
+      "service": "credential-service",
+      "repository": "caramisca/credential-service",
+      "pin": "a05ba8bd8e5103de4d3efd343cf8254b59c0bb79",
+      "main": "a05ba8bd8e5103de4d3efd343cf8254b59c0bb79",
+      "matchesMain": true,
+      "accessError": null
+    },
+    {
+      "service": "gateway-service",
+      "repository": "diana7376/gateway-service",
+      "pin": "3789113b0a5d62e5b0c939f78ebd6fb092a6eb32",
+      "main": "3789113b0a5d62e5b0c939f78ebd6fb092a6eb32",
+      "matchesMain": true,
+      "accessError": null
+    },
+    {
+      "service": "service-discovery",
+      "repository": "DariaRateeva/service-discovery",
+      "pin": "2081f9cd46ffc363cfc0f2ec064687bdbae80c2f",
+      "main": "2081f9cd46ffc363cfc0f2ec064687bdbae80c2f",
+      "matchesMain": true,
+      "accessError": null
+    },
+    {
+      "service": "message-broker",
+      "repository": "DariaRateeva/message-broker",
+      "pin": "b0b3dbacfe6a3747df63f8e10bbe277efd5cfea1",
+      "main": "b0b3dbacfe6a3747df63f8e10bbe277efd5cfea1",
+      "matchesMain": true,
+      "accessError": null
+    },
+    {
+      "service": "player-service",
+      "repository": "DariaRateeva/player-service",
+      "pin": "40d80d051ae1c4c572fad8a9d1cdf976ee866b0a",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    },
+    {
+      "service": "server-moderation-session-service",
+      "repository": "DariaRateeva/server-moderation-session-service",
+      "pin": "71ec04a2c96363a010c26b12c6d5e6019aa7e636",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    },
+    {
+      "service": "server-rules-service",
+      "repository": "diana7376/server-rules-service",
+      "pin": "3c20fd8fa86d475bc770c741bb50a9fb026ffb14",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    },
+    {
+      "service": "university-record-service",
+      "repository": "diana7376/university-record-service",
+      "pin": "e56c875c8f6b926fd637172a6e98db33151c53f1",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    },
+    {
+      "service": "moderation-service",
+      "repository": "blinduandi/moderation-service",
+      "pin": "13c149e9288ab70c1e9ab647e34c94510ad78ced",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    },
+    {
+      "service": "discord-dms-service",
+      "repository": "blinduandi/discord-dms-service",
+      "pin": "7bb5862c31ef4f64655ee739bd4475a401ea32a1",
+      "main": null,
+      "matchesMain": null,
+      "accessError": "gh: Not Found (HTTP 404)"
+    }
+  ]
+}
