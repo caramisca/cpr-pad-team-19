@@ -1,6 +1,6 @@
-# Apply only after the shared Lab 4 broker is in the stack and the 0.5.0 images of both services are
-# pinned in docker-compose.yml. This overlay configures Andi's two services; the broker/release
-# integration belongs to Daria (#243).
+# Apply only after the shared Lab 4 broker is in the stack. docker-compose.yml pins the 0.5.0 images
+# of both services with the broker mode off; this overlay turns it on for Andi's two services. The
+# broker/release integration belongs to Daria (#243).
 # docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml config
 #
 # moderation-service serves the broker's gRPC ServiceEndpoint on 9087, publishes its outbox with

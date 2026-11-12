@@ -21,7 +21,7 @@ services:
   moderation-service:
     deploy:
       replicas: ${MODERATION_REPLICAS:-2}
-    image: andiblindu1/moderation-service:0.4.0
+    image: andiblindu1/moderation-service:0.5.0
     environment:
       ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
@@ -65,7 +65,7 @@ services:
   # gateway returns. Every instance registers with service-discovery under its container hostname,
   # and the gateway finds the instances there (Lab 3).
   discord-dms-service:
-    image: andiblindu1/discord-dms-service:0.4.0
+    image: andiblindu1/discord-dms-service:0.5.0
     ports:
       - "8088:8088"
     environment: &dms-environment
@@ -95,7 +95,7 @@ services:
   discord-dms-service-replica:
     deploy:
       replicas: ${DMS_EXTRA_REPLICAS:-1}
-    image: andiblindu1/discord-dms-service:0.4.0
+    image: andiblindu1/discord-dms-service:0.5.0
     environment: *dms-environment
     healthcheck: *dms-healthcheck
     depends_on: *dms-depends-on

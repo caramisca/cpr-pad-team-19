@@ -25,8 +25,8 @@ IMAGES = {
     "credential-service": "caramisca/credential-service:0.5.0",
     "server-rules-service": "diana7376/server-rules-service:0.4.2",
     "university-record-service": "diana7376/university-record-service:0.4.2",
-    "moderation-service": "andiblindu1/moderation-service:0.4.0",
-    "discord-dms-service": "andiblindu1/discord-dms-service:0.4.0",
+    "moderation-service": "andiblindu1/moderation-service:0.5.0",
+    "discord-dms-service": "andiblindu1/discord-dms-service:0.5.0",
     "gateway-service": "diana7376/gateway-service:0.4.1",
     "service-discovery": "drateeva/service-discovery:0.4.0",
 }
