@@ -5,6 +5,7 @@
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
+    { "key": "expectedGatewayVersion", "value": "0.4.1", "type": "string", "description": "Gateway 0.5.0 image currently reports runtime 0.4.1; update after a release changes the application version." },
     {
       "key": "baseUrl",
       "value": "http://localhost:8080",
@@ -53,7 +54,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports the configured Gateway runtime version\", () => pm.expect(body.version).to.eql(pm.variables.get(\"expectedGatewayVersion\")));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
                   "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",

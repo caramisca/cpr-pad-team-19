@@ -21,18 +21,29 @@ client requests through the broker is the Gateway owner's switch (`BROKER_GRPC_U
 Daria's services already answer `ServiceEndpoint.Call` the same way as HTTP (all endpoints but the
 SSE stream).
 
-## Start
+## Start the complete Lab 4 mode
 
-```bash
-cp .env.example .env            # then fill in the passwords and the API key
-docker compose up -d
-docker compose ps               # every service healthy after ~2 min (the Java replicas start last)
+Create `.env` from `.env.example` if it does not exist, then set passwords, the API key and
+WebSocket secret. Set `BROKER_GRPC_URL=message-broker:9091`,
+`SESSION_APPLICANT_CLIENT_MODE=broker` and `SESSION_RULES_CLIENT_MODE=broker`.
+Rules/Record also require `BROKER_GRPC_URL` at startup; base Compose supplies it after CPR #292.
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab4-andi.yml -f docker-compose.monitoring.yml --profile monitoring up -d
+python scripts/check_lab4_release.py --require-published
+python scripts/check_lab4_monitoring.py --scope team
 ```
 
-With monitoring: `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d`.
-Applicant and credential over gRPC (Mihai's overlay, once University Record has its gRPC adapter):
-add `-f docker-compose.lab4-mihai.yml` and set `SESSION_APPLICANT_CLIENT_MODE=broker` in `.env`, so
-session's `next-applicant` reaches applicant-service through the broker too.
+This applies both owners' gRPC overlays and starts monitoring. Base Compose alone retains
+HTTP dependency modes for Applicant/Credential and Moderation/DMS. Gateway's optional gRPC
+proxy covers four services; Player/Session/Moderation/DMS client routes still use HTTP.
+Grafana: `http://localhost:3000/d/lab4-services`; Prometheus: `http://localhost:9090`.
+
+Broker PR #11 is integrated into dev with in-memory request queues defaulting to Rules/Record.
+The public `drateeva/message-broker:0.5.0` predates that merge. Do not treat a locally built
+review image as released or point the CPR gitlink at dev. A new version/main/public image,
+then a reviewed CPR update, is required. See the
+[12 November acceptance report](LAB_4_RELEASE_READINESS_2026-11-12.md) for remaining gates.
 
 ## Check the broker and the subscriptions
 
