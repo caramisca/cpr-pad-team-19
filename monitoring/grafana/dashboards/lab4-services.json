@@ -229,7 +229,7 @@
       "targets": [
         {
           "expr": "rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}}"
+          "legendFormat": "{{job}} {{instance}}"
         }
       ],
       "fieldConfig": {
@@ -251,7 +251,7 @@
       "targets": [
         {
           "expr": "rate(service_errors_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}}"
+          "legendFormat": "{{job}} {{instance}}"
         }
       ],
       "fieldConfig": {
@@ -273,7 +273,7 @@
       "targets": [
         {
           "expr": "rate(service_request_duration_seconds_sum{job=~\"applicant-service|credential-service\"}[1m]) / rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}}"
+          "legendFormat": "{{job}} {{instance}}"
         }
       ],
       "fieldConfig": {

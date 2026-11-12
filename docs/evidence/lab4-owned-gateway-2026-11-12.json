@@ -1,0 +1,20 @@
+{
+  "timestamp": "2026-11-12T12:52:03.237908+00:00",
+  "passed": true,
+  "checks": [
+    "Real Gateway -> broker -> Applicant -> broker -> Credential creates two isolated session datasets",
+    "Gateway retains JSON Content-Type, Location, request/instance IDs and both query filters with distractor data",
+    "JSON 400/404 errors retain content type and correlation headers through Gateway",
+    "session.closed commits Applicant cleanup and Credential cleanup while preserving the other session",
+    "Duplicate delivery to both physical Applicant replicas returns COMMITTED using the shared inbox",
+    "Real Applicant REJECTED payload is transferred to the integrated broker DLC with its reason"
+  ],
+  "scope": "Real Gateway + broker + Applicant/Credential/Redis/SD; manual session publisher; no Record fixture",
+  "legitimateRecordRequestStatus": 503,
+  "realUniversityRecordVerified": false,
+  "applicantReplicaIds": [
+    "baf9d026f0ac",
+    "1e13d5788eb8"
+  ],
+  "invalidMessageId": "4b2bf735-1fe2-4eb6-bd6b-ac33f572ba8b"
+}
