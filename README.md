@@ -61,6 +61,11 @@ The Lab 4 contribution by **Andi (@blinduandi)**:
   durable in SQLite (`QUEUE_STORE_PATH`, on the image's `/data` volume), a copy the consumer answers
   `REJECTED` goes to the dead-letter channel with its reason, and `GET /dead-letters` lists the
   channel (Grade 9).
+- **Broker Postman collection** (`docs/postman/message-broker.postman_collection.json`). The HTTP
+  API of the broker: `GET /health`, `GET /metrics`, `GET /topics`, `POST /events` and
+  `GET /dead-letters`, with their `400`, `404` and `405` answers. It publishes a `session.started`
+  event with an empty payload, which `discord-dms-service` 0.5.0 answers `REJECTED`, and finds it
+  again in `GET /dead-letters`. See [Message Broker (Lab 4)](#message-broker-lab-4).
 - **Log download** (Gateway branch `feat/gateway/log-download`, issue
   [#276](https://github.com/caramisca/cpr-pad-team-19/issues/276)). `GET /logs` on the Gateway
   collects `GET /internal/logs` from every replica of every service, adds the Gateway's own
@@ -2122,6 +2127,29 @@ service is in the stack ([#243](https://github.com/caramisca/cpr-pad-team-19/iss
 ```bash
 docker compose logs -f discord-dms-service discord-dms-service-replica | grep DELIVER
 curl -OJ -H "Authorization: Bearer <key>" "http://localhost:8080/logs?service=moderation-service,discord-dms-service"
+```
+
+The broker's own HTTP API is in `docs/postman/message-broker.postman_collection.json`. It needs no
+API key, as the broker is not a Gateway route, and reaches it at `brokerUrl` (`http://localhost:8091`,
+the broker's HTTP port). Run the folders top to bottom:
+
+- **Status And Metrics.** `GET /health` (load and `X-Request-Id`) and the `broker_*` metrics of
+  `GET /metrics`.
+- **Topics.** `GET /topics`: each topic the live instances subscribe to, with its services.
+- **Publish Events.** `POST /events` to a topic nobody subscribes to (`202`, `queuedServices: []`),
+  then a `session.started` event with an empty payload. `discord-dms-service` answers it `REJECTED`
+  without notifying anyone.
+- **Dead Letter Channel.** `GET /dead-letters` finds that event with the consumer's reason, then
+  lists and filters the channel.
+- **Error Cases.** The `400 VALIDATION_ERROR` answers to an invalid event or query, plus `405` and
+  `404`.
+
+Where `rejectService` (`discord-dms-service`) does not subscribe to `rejectTopic`
+(`session.started`), the dead-letter check is skipped.
+
+```bash
+npx newman run docs/postman/message-broker.postman_collection.json
+npx newman run docs/postman/message-broker.postman_collection.json --env-var brokerUrl=http://localhost:<port>
 ```
 
 #### Service Discovery
