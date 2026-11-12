@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "moderation-service",
-    "description": "Decision endpoints for moderation-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on {{acceptDecisionId}} and {{rejectDecisionId}} captured from the Record Accept Decision and Record Reject Decision responses. Every run records its decisions in a new random session, so the collection can be run again without clearing the database. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). The credentials are the demo bundles loaded by the seed of credential-service (docs/db/credential-service): c0000000-0000-4000-8000-00000000000N is issued to applicant a0000000-0000-4000-8000-00000000000N. The assertions hold whichever ruleset server-rules-service has active.",
+    "description": "Decision endpoints for moderation-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on {{acceptDecisionId}} and {{rejectDecisionId}} captured from the Record Accept Decision and Record Reject Decision responses. Every run records its decisions in a new random session, so the collection can be run again without clearing the database. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). The credentials are the demo bundles loaded by the seed of credential-service (docs/db/credential-service): c0000000-0000-4000-8000-00000000000N is issued to applicant a0000000-0000-4000-8000-00000000000N. The assertions hold whichever ruleset server-rules-service has active. Lab 4: the Lab 4 Internal diagnostics folder reads GET /metrics, GET /internal/logs and GET /health on the instance itself (internalBaseUrl, port 8087); these routes are not Gateway routes and docker-compose.yml publishes no port for moderation-service, so the folder is skipped unless runInternalDiagnostics is true and internalBaseUrl reaches an instance (the private network, or a port published for the test).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -23,6 +23,16 @@
     {
       "key": "apiKey",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "internalBaseUrl",
+      "value": "http://localhost:8087",
+      "type": "string"
+    },
+    {
+      "key": "runInternalDiagnostics",
+      "value": "false",
       "type": "string"
     },
     {
@@ -82,7 +92,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports a version\", () => pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
                   "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
@@ -1039,6 +1049,118 @@
                 "{{seededDecisionId}}"
               ]
             }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lab 4 Internal diagnostics (private network or a published test port only)",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Prometheus metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is the Prometheus text format\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain; version=0.0.4\"));",
+                  "const text = pm.response.text();",
+                  "pm.test(\"reports the Lab 4 metrics\", () => [\"service_requests_total\", \"service_errors_total\", \"service_request_duration_seconds_sum\", \"service_request_duration_seconds_count\", \"service_active_requests\", \"service_events_published_total\"].forEach(name => pm.expect(text).to.match(new RegExp(\"^\" + name + \" \", \"m\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/metrics",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Structured logs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is NDJSON\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/x-ndjson\"));",
+                  "const lines = pm.response.text().split(\"\\n\").filter(line => line.trim() !== \"\").map(line => JSON.parse(line));",
+                  "pm.test(\"keeps at most 1,000 requests\", () => pm.expect(lines.length).to.be.at.most(1000));",
+                  "pm.test(\"every line has the contract fields\", () => lines.forEach(line => pm.expect(line).to.include.all.keys([\"timestamp\", \"service\", \"instanceId\", \"requestId\", \"method\", \"path\", \"status\", \"durationMs\", \"transport\"])));",
+                  "pm.test(\"every line is moderation-service\", () => lines.forEach(line => pm.expect(line.service).to.eql(\"moderation-service\")));",
+                  "pm.test(\"every line has a UTC time and a transport\", () => lines.forEach(line => { pm.expect(line.timestamp).to.match(/Z$/); pm.expect([\"http\", \"grpc\"]).to.include(line.transport); }));",
+                  "pm.test(\"the oldest line comes first\", () => lines.slice(1).forEach((line, i) => pm.expect(Date.parse(line.timestamp)).to.be.at.least(Date.parse(lines[i].timestamp))));",
+                  "pm.test(\"no query values are logged\", () => lines.forEach(line => pm.expect(line.path).to.not.include(\"?\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/logs",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "logs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Own Instance Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is moderation-service\", () => pm.expect(body.service).to.eql(\"moderation-service\"));",
+                  "pm.test(\"reports a version\", () => pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/health",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('runInternalDiagnostics') !== 'true') pm.execution.skipRequest();"
+            ]
           }
         }
       ]

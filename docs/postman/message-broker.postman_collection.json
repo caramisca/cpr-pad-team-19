@@ -1,0 +1,922 @@
+{
+  "info": {
+    "name": "message-broker",
+    "description": "The HTTP API of message-broker 0.5.0 (Team 19, Topic 3: Student ID, Please; Laboratory 4, Grades 6, 7, 9 and 10): status and metrics, the topic list, publishing an event, and the dead letter channel. The broker is at brokerUrl (http://localhost:8091, its HTTP port; gRPC is on 9091) and needs no API key: it is not a Gateway route. Run the folders top to bottom. Publish An Event Its Consumer Rejects sends an empty session.started payload, which discord-dms-service 0.5.0 answers REJECTED, and Find The Rejected Event finds it in GET /dead-letters; where rejectService does not subscribe to rejectTopic, that check is skipped. Service-to-service calls (MessageBroker.Call, MessageBroker.Publish) are gRPC, per contracts/messaging.proto, and are not part of this collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Status And Metrics",
+      "description": "GET /health and GET /metrics of the broker instance at brokerUrl. Both are status probes: they are answered even while the broker is saturated and are not counted as business requests.",
+      "item": [
+        {
+          "name": "Health",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"traceRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\").slice(0, 8));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 Healthy\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.json().status).to.eql(\"Healthy\");",
+                  "});",
+                  "const health = pm.response.json();",
+                  "pm.test(\"reports the service, its version and the instance\", () => {",
+                  "    pm.expect(health.service).to.eql(\"message-broker\");",
+                  "    pm.expect(health.version).to.match(/^\\d+\\.\\d+\\.\\d+$/);",
+                  "    pm.expect(health.instanceId).to.be.a(\"string\").and.not.empty;",
+                  "    pm.expect(health.checks).to.be.an(\"object\");",
+                  "});",
+                  "pm.test(\"reports its load (thread-per-request)\", () => {",
+                  "    pm.expect(health.activeThreads).to.be.a(\"number\");",
+                  "    pm.expect(health.maxThreads).to.be.a(\"number\").and.above(0);",
+                  "    pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(health.load);",
+                  "});",
+                  "pm.test(\"keeps the request ID it was sent\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(pm.collectionVariables.get(\"traceRequestId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{traceRequestId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/health",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200 in the Prometheus text format\", () => {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\").and.include(\"version=0.0.4\");",
+                  "});",
+                  "const text = pm.response.text();",
+                  "[",
+                  "    \"broker_events_accepted_total\",",
+                  "    \"broker_event_deliveries_total\",",
+                  "    \"broker_circuit_transitions_total\",",
+                  "    \"broker_open_circuits\",",
+                  "    \"broker_pending_event_copies\",",
+                  "    \"broker_dead_letter_messages\",",
+                  "    \"broker_active_requests\",",
+                  "].forEach((name) => pm.test(`exposes ${name}`, () => pm.expect(text).to.include(`# TYPE ${name}`)));",
+                  "const accepted = text.split(/\\r?\\n/).find((line) => line.startsWith(\"broker_events_accepted_total \"));",
+                  "pm.collectionVariables.set(\"acceptedBefore\", accepted ? accepted.split(\" \")[1] : \"\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Topics",
+      "description": "Grade 6 and 7: the topics the live instances subscribe to, read from the Service Discovery registrations, with the services that receive a copy of every event published to each.",
+      "item": [
+        {
+          "name": "List Topics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const topics = pm.response.json().topics;",
+                  "pm.test(\"lists each topic with its subscribing services\", () => {",
+                  "    pm.expect(topics).to.be.an(\"array\");",
+                  "    topics.forEach((entry) => {",
+                  "        pm.expect(entry.topic).to.match(/^[a-z0-9]+(?:[._-][a-z0-9]+)*$/);",
+                  "        pm.expect(entry.services).to.be.an(\"array\").and.not.empty;",
+                  "    });",
+                  "});",
+                  "const reject = topics.find((entry) => entry.topic === pm.variables.get(\"rejectTopic\"));",
+                  "console.log(\"rejectTopic subscribers:\", reject ? reject.services.join(\", \") : \"none\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/topics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Publish Events",
+      "description": "POST /events: the HTTP way to publish one event (services publish with MessageBroker.Publish over gRPC). The broker stores one copy per subscribing service before it answers 202, and names those services in queuedServices.",
+      "item": [
+        {
+          "name": "Publish An Event Nobody Subscribes To",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"messageId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"202 Accepted\", () => pm.response.to.have.status(202));",
+                  "const reply = pm.response.json();",
+                  "pm.test(\"answers the messageId it was sent\", () => pm.expect(reply.messageId).to.eql(pm.collectionVariables.get(\"messageId\")));",
+                  "pm.test(\"queues no copy: the topic has no subscriber\", () => pm.expect(reply.queuedServices).to.eql([]));",
+                  "pm.test(\"keeps the request ID it was sent\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(pm.collectionVariables.get(\"traceRequestId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{traceRequestId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "unsubscribedTopic (postman.check) is a valid topic name nobody registers, so nothing is delivered.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{messageId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"{{unsubscribedTopic}}\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"payload\": {\n    \"check\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Publish An Event Its Consumer Rejects",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"rejectedMessageId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"202 Accepted\", () => pm.response.to.have.status(202));",
+                  "const reply = pm.response.json();",
+                  "pm.test(\"answers the messageId it was sent\", () => pm.expect(reply.messageId).to.eql(pm.collectionVariables.get(\"rejectedMessageId\")));",
+                  "pm.test(\"names the services it queued a copy for\", () => pm.expect(reply.queuedServices).to.be.an(\"array\"));",
+                  "pm.collectionVariables.set(\"rejectQueued\", String(reply.queuedServices.includes(pm.variables.get(\"rejectService\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "X-Request-Id",
+                "value": "{{traceRequestId}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "description": "A valid v1 envelope whose payload is empty. Its consumer (rejectService, discord-dms-service for session.started) answers REJECTED, as the event can never be processed, so the broker moves the copy to the dead letter channel instead of retrying it. Nothing is sent to Discord.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{rejectedMessageId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"{{rejectTopic}}\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Accepted Events Are Counted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const line = pm.response.text().split(/\\r?\\n/).find((l) => l.startsWith(\"broker_events_accepted_total \"));",
+                  "const before = Number(pm.collectionVariables.get(\"acceptedBefore\"));",
+                  "pm.test(\"broker_events_accepted_total went up by at least 2\", () => pm.expect(Number(line.split(\" \")[1])).to.be.at.least(before + 2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/metrics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dead Letter Channel",
+      "description": "Grade 9: GET /dead-letters lists the copies that can never be delivered, the newest first: those a consumer answered REJECTED, and those that failed MAX_DELIVERY_ATTEMPTS times when it is set. Each entry keeps the whole event, the reason and the attempts. With QUEUE_STORE_PATH set they are kept on disk with the queues and survive a broker restart.",
+      "item": [
+        {
+          "name": "Find The Rejected Event",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// The delivery worker hands the copy to the consumer within a moment; give it time.",
+                  "const wait = Number(pm.variables.get(\"deadLetterWaitMs\")) || 0;",
+                  "if (pm.collectionVariables.get(\"rejectQueued\") === \"true\" && wait > 0) setTimeout(() => {}, wait);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test(\"only entries of that topic and service\", () => reply.deadLetters.forEach((e) => {",
+                  "    pm.expect(e.topic).to.eql(pm.variables.get(\"rejectTopic\"));",
+                  "    pm.expect(e.service).to.eql(pm.variables.get(\"rejectService\"));",
+                  "}));",
+                  "const queued = pm.collectionVariables.get(\"rejectQueued\") === \"true\";",
+                  "(queued ? pm.test : pm.test.skip)(\"holds the rejected event with the reason\", () => {",
+                  "    const entry = reply.deadLetters.find((e) => e.messageId === pm.collectionVariables.get(\"rejectedMessageId\"));",
+                  "    pm.expect(entry, \"no dead letter for the rejected event yet\").to.be.an(\"object\");",
+                  "    pm.expect(entry.queue).to.eql(`topics/${entry.topic}/${entry.service}`);",
+                  "    pm.expect(entry.reason).to.be.a(\"string\").and.not.empty;",
+                  "    pm.expect(entry.attempts).to.be.at.least(1);",
+                  "    pm.expect(entry.source).to.eql(\"postman\");",
+                  "    pm.expect(entry.requestId).to.eql(pm.collectionVariables.get(\"traceRequestId\"));",
+                  "    pm.expect(entry.event.payload).to.eql({});",
+                  "});",
+                  "if (!queued) console.log(\"rejectService does not subscribe to rejectTopic here, so nothing was dead-lettered\");"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters?topic={{rejectTopic}}&service={{rejectService}}&limit=10",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "topic",
+                  "value": "{{rejectTopic}}"
+                },
+                {
+                  "key": "service",
+                  "value": "{{rejectService}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Dead Letters",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test(\"total and at most 100 entries, the newest first\", () => {",
+                  "    pm.expect(reply.total).to.be.a(\"number\");",
+                  "    pm.expect(reply.deadLetters).to.be.an(\"array\");",
+                  "    pm.expect(reply.deadLetters.length).to.be.at.most(Math.min(100, reply.total));",
+                  "    const ids = reply.deadLetters.map((e) => e.id);",
+                  "    pm.expect(ids).to.eql([...ids].sort((a, b) => b - a));",
+                  "});",
+                  "pm.test(\"every entry keeps the event and why it was dead-lettered\", () => reply.deadLetters.forEach((e) => {",
+                  "    pm.expect(e).to.include.all.keys(\"id\", \"messageId\", \"topic\", \"service\", \"queue\", \"source\", \"requestId\", \"reason\", \"attempts\", \"deadLetteredAt\", \"event\");",
+                  "    pm.expect(e.deadLetteredAt).to.match(/^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z$/);",
+                  "}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Filter By Service With A Limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"200\", () => pm.response.to.have.status(200));",
+                  "const reply = pm.response.json();",
+                  "pm.test(\"at most one entry, of that service\", () => {",
+                  "    pm.expect(reply.deadLetters.length).to.be.at.most(1);",
+                  "    reply.deadLetters.forEach((e) => pm.expect(e.service).to.eql(pm.variables.get(\"rejectService\")));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters?service={{rejectService}}&limit=1",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "service",
+                  "value": "{{rejectService}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "description": "Every error is {\"error\": \"CODE\", \"message\": \"...\"}. An invalid event is refused before anything is queued.",
+      "item": [
+        {
+          "name": "Event Without A messageId",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"UUID messageId\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source\": \"postman\",\n  \"topic\": \"{{unsubscribedTopic}}\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Event With An Unsupported schemaVersion",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"v1 event\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{$guid}}\",\n  \"source\": \"postman\",\n  \"topic\": \"{{unsubscribedTopic}}\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 2,\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Event With occurredAt Without A Time Zone",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"timezone-aware occurredAt\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{$guid}}\",\n  \"source\": \"postman\",\n  \"topic\": \"{{unsubscribedTopic}}\",\n  \"occurredAt\": \"2026-11-12T09:00:00\",\n  \"schemaVersion\": 1,\n  \"payload\": {}\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Event That Is Not An Object",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"Expected an event object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"messageId\": \"{{$guid}}\",\n    \"source\": \"postman\",\n    \"topic\": \"{{unsubscribedTopic}}\",\n    \"occurredAt\": \"{{$isoTimestamp}}\",\n    \"schemaVersion\": 1,\n    \"payload\": {}\n  }\n]",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Body That Is Not JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"not valid JSON\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{brokerUrl}}/events",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "events"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{not json",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Dead Letters With A limit Of 0",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"limit must be a whole number from 1 to 1000\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters?limit=0",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dead Letters With An Invalid topic",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"topic must be a lower-case topic name\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters?topic=Not%20A%20Topic",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "topic",
+                  "value": "Not%20A%20Topic"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Dead Letters With An Invalid service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"400 VALIDATION_ERROR\", () => {",
+                  "    pm.response.to.have.status(400);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\");",
+                  "});",
+                  "pm.test(\"names what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"service must be a lower-case service name\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/dead-letters?service=Discord_DMS",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "dead-letters"
+              ],
+              "query": [
+                {
+                  "key": "service",
+                  "value": "Discord_DMS"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Wrong Method",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"405 METHOD_NOT_ALLOWED\", () => {",
+                  "    pm.response.to.have.status(405);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"METHOD_NOT_ALLOWED\");",
+                  "});",
+                  "pm.test(\"names the allowed method\", () => pm.expect(pm.response.headers.get(\"Allow\")).to.eql(\"GET\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/topics",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "topics"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Unknown Route",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"404 ROUTE_NOT_FOUND\", () => {",
+                  "    pm.response.to.have.status(404);",
+                  "    pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{brokerUrl}}/queues",
+              "host": [
+                "{{brokerUrl}}"
+              ],
+              "path": [
+                "queues"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8091",
+      "type": "string"
+    },
+    {
+      "key": "unsubscribedTopic",
+      "value": "postman.check",
+      "type": "string"
+    },
+    {
+      "key": "rejectTopic",
+      "value": "session.started",
+      "type": "string"
+    },
+    {
+      "key": "rejectService",
+      "value": "discord-dms-service",
+      "type": "string"
+    },
+    {
+      "key": "deadLetterWaitMs",
+      "value": "3000",
+      "type": "string"
+    },
+    {
+      "key": "traceRequestId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "messageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectedMessageId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "rejectQueued",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "acceptedBefore",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
