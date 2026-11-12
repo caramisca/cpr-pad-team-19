@@ -1,0 +1,20 @@
+{
+  "startedAt": "2026-11-12T12:58:55.264025+00:00",
+  "scope": "Dedicated real owned-service container stack; no Record/Session fixture or full-team claim",
+  "checks": [
+    "Broker accepted a real Credential cleanup copy while the dedicated Redis was unavailable",
+    "Real Credential Deliver returned RETRY during the Redis outage: Storage temporarily unavailable",
+    "Broker container killed before the accepted copy was acknowledged",
+    "Same-volume broker restart recovered the accepted copy; Credential cleanup committed and Gateway returned 404",
+    "Previous real Applicant REJECTED dead letter remained available after broker restart"
+  ],
+  "passed": true,
+  "completedAt": "2026-11-12T13:00:52.417010+00:00",
+  "retryTestConfiguration": {
+    "credentialTaskTimeoutSeconds": 30,
+    "directProbeDeadlineSeconds": 20,
+    "brokerDeliveryDeadlineSeconds": 3,
+    "publishedImageDefaultsChanged": false
+  },
+  "defaultTimeoutObservation": "Default five-second task timeout expired before the Redis backlog error; observed gRPC UNKNOWN, with the queue copy retained and later processed after Redis recovery."
+}

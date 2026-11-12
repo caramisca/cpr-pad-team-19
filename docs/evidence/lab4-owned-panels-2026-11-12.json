@@ -1,0 +1,216 @@
+{
+  "timestamp": "2026-11-12T12:52:53.936329+00:00",
+  "passed": true,
+  "scope": "Exact four panel expressions from merged CPR PR285, real metrics from both replicas; no full-team claim",
+  "prHead": "cc42ae657e3fac54889a10f19f5eb58024cc8fea",
+  "panels": [
+    {
+      "panelId": 9,
+      "title": "Applicant / Credential \u2014 Request Rate (req/s)",
+      "expression": "rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
+      "finiteSeriesPerService": {
+        "applicant-service": 2,
+        "credential-service": 2
+      },
+      "series": [
+        {
+          "metric": {
+            "instance": "172.20.0.8:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487967.842,
+            "0.12727272727272726"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.9:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487967.842,
+            "0.10364909090909091"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.10:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487967.842,
+            "0.14545454545454545"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.7:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487967.842,
+            "0.12345242424242425"
+          ]
+        }
+      ]
+    },
+    {
+      "panelId": 10,
+      "title": "Applicant / Credential \u2014 Error Rate (5xx req/s)",
+      "expression": "rate(service_errors_total{job=~\"applicant-service|credential-service\"}[1m])",
+      "finiteSeriesPerService": {
+        "applicant-service": 2,
+        "credential-service": 2
+      },
+      "series": [
+        {
+          "metric": {
+            "instance": "172.20.0.8:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487969.867,
+            "0.03581151515151515"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.9:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487969.867,
+            "0.03577696969696969"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.10:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487969.867,
+            "0.0507009090909091"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.7:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487969.867,
+            "0.03346909090909091"
+          ]
+        }
+      ]
+    },
+    {
+      "panelId": 11,
+      "title": "Applicant / Credential \u2014 Avg Request Duration (s)",
+      "expression": "rate(service_request_duration_seconds_sum{job=~\"applicant-service|credential-service\"}[1m]) / rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
+      "finiteSeriesPerService": {
+        "applicant-service": 2,
+        "credential-service": 2
+      },
+      "series": [
+        {
+          "metric": {
+            "instance": "172.20.0.8:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487971.907,
+            "0.03371742857142858"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.9:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487971.907,
+            "0.0949295"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.10:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487971.907,
+            "0.021486000000000005"
+          ]
+        },
+        {
+          "metric": {
+            "instance": "172.20.0.7:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487971.907,
+            "0.10409957142857143"
+          ]
+        }
+      ]
+    },
+    {
+      "panelId": 12,
+      "title": "Applicant / Credential \u2014 Active Requests",
+      "expression": "service_active_requests{job=~\"applicant-service|credential-service\"}",
+      "finiteSeriesPerService": {
+        "applicant-service": 2,
+        "credential-service": 2
+      },
+      "series": [
+        {
+          "metric": {
+            "__name__": "service_active_requests",
+            "instance": "172.20.0.8:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487973.933,
+            "0"
+          ]
+        },
+        {
+          "metric": {
+            "__name__": "service_active_requests",
+            "instance": "172.20.0.9:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487973.933,
+            "0"
+          ]
+        },
+        {
+          "metric": {
+            "__name__": "service_active_requests",
+            "instance": "172.20.0.10:8084",
+            "job": "credential-service"
+          },
+          "value": [
+            1794487973.933,
+            "0"
+          ]
+        },
+        {
+          "metric": {
+            "__name__": "service_active_requests",
+            "instance": "172.20.0.7:8083",
+            "job": "applicant-service"
+          },
+          "value": [
+            1794487973.933,
+            "0"
+          ]
+        }
+      ]
+    }
+  ]
+}

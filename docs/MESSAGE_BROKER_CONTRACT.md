@@ -29,9 +29,15 @@ Channels are reused per physical instance, preserving HTTP/2 connections across 
 The caller's deadline is bounded to five seconds at broker forwarding; cancellation propagates.
 `X-Request-Id` is also gRPC metadata for correlated HTTP/2 access logs.
 
-The initial broker `request_dispatch` invokes the transport directly. Diana replaces that hook
-with subscriber request/reply queues; the existing selector/breaker hooks are used for instance
-selection. This contract does not claim her queued RPC routing or Andi's breaker is implemented.
+The integrated broker `request_dispatch` still invokes the transport directly. Diana replaces that
+hook with subscriber request/reply queues; topic queues do not implement that request/reply layer.
+Instance selection already uses Andi's per-instance circuit breaker and Diana's selector. Open
+circuits are excluded; if every instance is open, the call fails fast with `CIRCUIT_OPEN`.
+The defaults are three failures within 17.5 seconds, a 17.5-second open period and one permitted
+half-open trial. A transport failure or `Deliver` RETRY counts against the instance; application
+503, 4xx and REJECTED do not. The integrated `Call` makes one selected downstream attempt;
+retrying that same failed call on another instance and feeding real load into the selector remain
+separate integration work. Excluding an already-open circuit is not proof of same-call retry.
 Mutating requests must not be replayed automatically after an ambiguous timeout without domain
 idempotency. Transport failure is gRPC UNAVAILABLE; validation failure is INVALID_ARGUMENT.
 Application errors remain `ServiceReply.status` with the existing JSON error shape.
@@ -75,15 +81,68 @@ Only instances currently subscribed to that topic can receive it. `GET /topics` 
 |---|---|---|
 | `COMMITTED` | Domain mutation and necessary outbox writes completed; duplicates already committed count too | Acknowledge that service copy |
 | `RETRY` | Temporary storage/dependency failure | Retain; retry after lease |
-| `REJECTED` | Invalid envelope/payload or unsupported topic | Retain for Andi's dead-letter handoff; acknowledge only after DLC persistence |
+| `REJECTED` | Invalid envelope/payload or unsupported topic | Store the copy in the dead letter channel, then acknowledge only after successful storage |
 
-The supplied bounded memory store is a development implementation: 10,000 pending copies, FIFO
-per topic/service, 10 s lease, atomic capacity check for fan-out. It does **not** survive broker
-restart. Grade 9 reliability requires Andi to inject a durable `topic_store` into `Broker`, implement
-`put_many` atomically, `queues`, leased `take`, `size`, `acknowledge`, and connect
-`topic_bus.on_rejected(queue,event)` to a durable DLC. Until then, accepted events can be lost on
-broker restart; a service outbox alone does not fix that gap. `REJECTED` intentionally blocks its
-queue's FIFO head until the DLC handoff is installed.
+If the RPC deadline or request cancellation occurs before storage reports its failure, the
+caller can receive a transport error instead of a `DeliveryReply`. This never authorizes ACK:
+the broker keeps that copy pending. Explicit RETRY requires the storage operation to fail within
+the remaining RPC/request budget; align storage timeouts with that budget when integrating.
+
+## Integrated durable queues and dead letter channel
+
+Broker #9 implements SQLite topic queues and a dead letter channel. Set `QUEUE_STORE_PATH` to
+enable them; the Docker image defaults to `/data/broker.sqlite3`. Mount a persistent volume at
+`/data` and keep the same file when restarting or replacing the broker. The database uses WAL and
+`synchronous=FULL`. All subscriber copies are committed before publication succeeds, or none are
+accepted. A pending copy is removed only after COMMITTED or successful dead-letter storage.
+
+If `QUEUE_STORE_PATH` is empty, the broker uses `MemoryTopicStore` and `MemoryDeadLetters` for
+development. They do **not** survive restart. Service outboxes cannot recover an event that the
+broker accepted into memory and then lost after the publisher removed its outbox entry.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `QUEUE_STORE_PATH` | empty in native configuration; `/data/broker.sqlite3` in the image | SQLite file for queues and dead letters |
+| `QUEUE_CAPACITY` | 10000 | Maximum pending copies across topic queues; over-capacity fan-out is refused atomically |
+| `QUEUE_LEASE_SECONDS` | 10 | FIFO head lease; must exceed the three-second delivery deadline |
+| `MAX_DELIVERY_ATTEMPTS` | 0 | Retry until COMMITTED/REJECTED; a positive value also dead-letters repeatedly failing copies |
+
+SQLite stores wall-clock lease deadlines, so an unacknowledged copy becomes eligible again after
+its lease expires even across broker restart. FIFO remains per `topics/<topic>/<service>`, not a
+global order across topics. A missing subscriber instance or an open circuit is not a delivery
+attempt. The optional attempt counter is held in the running broker, so a positive retry limit is
+not a lifetime attempt budget persisted across restarts.
+
+The internal Python hook is now:
+
+```python
+topic_bus.on_rejected(queue, event, reason, attempts) -> bool
+```
+
+The broker wires it to `dead_letters.add`. Return True only when that service copy is stored
+(including an already-stored copy); False or a storage exception keeps the original copy pending.
+This ordering also handles a crash after DLC insertion but before queue acknowledgement: replay
+does not create another dead letter for the same queue/message ID. The durable store and DLC must
+both be enabled for this guarantee; custom injected stores must supply a matching DLC explicitly.
+`GrpcDelivery.deliver` passes both the outcome and the consumer's reason to the topic bus.
+These Python integration changes do **not** change `messaging.proto` or the protobuf outcomes.
+
+### Dead-letter inspection and health
+
+Private HTTP `GET /dead-letters?topic=session.closed&service=applicant-service&limit=20` returns
+`{total, deadLetters}` with the newest matching entries first. Filters are optional; `limit`
+defaults to 100 and must be 1..1000. Each entry contains `messageId`, `topic`, `service`, `queue`,
+`source`, `requestId`, `reason`, `attempts`, `deadLetteredAt`, its numeric `id`, and the full `event`.
+`total` counts all matching entries before the limit. Invalid filters return 400 VALIDATION_ERROR.
+This is an internal diagnostic API: unlike the sanitized request logs, a dead letter includes
+its business payload. An envelope rejected at publication with 400 never entered the queues and
+does not by itself demonstrate the dead letter channel.
+
+With SQLite active, `/health` includes `checks.queues`; unreadable storage makes health unhealthy
+and queue operations return 503 QUEUE_UNAVAILABLE. A file that cannot be opened prevents startup.
+Broker reliability can be repeated with `python scripts/probe_reliability.py` from its repository:
+the probe kills/restarts a real broker against one file, with explicitly labelled SD/consumer
+fixtures. That scoped proof is separate from acceptance with all real team services.
 
 ## Topic catalog
 
@@ -134,7 +193,10 @@ The ring is volatile, so it is a live diagnostic window, not a permanent audit a
 `service_errors_total` (5xx), `service_request_duration_seconds_sum`, and `service_active_requests`.
 Health, metrics and log polling do not count as business work. Broker exposes
 `broker_events_accepted_total`, `broker_event_deliveries_total{outcome}`, `broker_active_requests`,
-`broker_pending_event_copies`. Labels intentionally exclude message/request/entity IDs.
+`broker_pending_event_copies`. Reliability adds `broker_open_circuits`,
+`broker_circuit_transitions_total{state}` and `broker_dead_letter_messages`. Storage-backed gauges
+report NaN if storage cannot be read rather than making the entire metrics endpoint fail.
+Labels intentionally exclude message/request/entity IDs.
 The Prometheus job labels supply the service and physical instance address.
 
 Protocol references: [gRPC Python](https://grpc.io/docs/languages/python/basics/),
