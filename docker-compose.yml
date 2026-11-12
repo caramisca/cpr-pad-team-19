@@ -35,6 +35,12 @@ services:
       Downstream__Credential__BaseUrl: http://gateway-service:8090
       Limits__RequestTimeoutMs: ${MODERATION_REQUEST_TIMEOUT_MS:-8000}
       Limits__MaxConcurrentRequests: ${MODERATION_MAX_CONCURRENT_REQUESTS:-100}
+      # Lab 4: ServiceEndpoint on 9087, outbox published with MessageBroker.Publish. The three
+      # dependencies stay on Http until credential, rules and records all serve ServiceEndpoint.
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8087"
+      Messaging__GrpcPort: "9087"
+      Messaging__BrokerUrl: http://message-broker:9091
     # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8087 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
@@ -77,6 +83,12 @@ services:
       Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
       Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
       Limits__MaxConcurrentRequests: ${DMS_MAX_CONCURRENT_REQUESTS:-100}
+      # Lab 4: ServiceEndpoint on 9088; consumes verdict.issued, session.started, session.closed and
+      # ruleset.updated from the broker. The replicas share this block and one queue per topic.
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8088"
+      Messaging__GrpcPort: "9088"
+      Messaging__BrokerUrl: http://message-broker:9091
     # The image has no curl, so the healthcheck sends GET /health through bash's /dev/tcp.
     healthcheck: &dms-healthcheck
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8088 && printf 'GET /health HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
@@ -425,7 +437,7 @@ services:
 
 
   # Message Broker (Lab 4), private to this Compose network: HTTP 8091 (/health, /metrics, /topics),
-  # gRPC 9091 (MessageBroker.Call, Publish, ListTopics). One instance: its topic queues are in memory.
+  # gRPC 9091 (MessageBroker.Call, Publish, ListTopics). One instance: its topic queues are durable in SQLite.
   # It registers with service-discovery and finds each subscriber's instances (and their topics)
   # there, reaching an instance on its registered port + 1000.
   message-broker:
