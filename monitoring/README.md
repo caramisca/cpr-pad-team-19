@@ -1,10 +1,23 @@
 # Lab 4 Prometheus (Mihai)
 
-Use `docker compose -f docker-compose.yml -f docker-compose.monitoring.yml --profile monitoring up -d prometheus`
-once the team's Lab 4 broker and service images are integrated. The current root Compose remains
-the published Lab 3 stack until the release PR pins reviewed Lab 4 commits/images; it does not
-pretend that older 0.4.x images expose these metrics. Prometheus is local-only at http://localhost:9090.
-Use `prometheus:9090` as Diana's Grafana datasource on the same Compose network.
+The root Compose now pins the eleven published Lab 4 0.5.0 images. Start the complete mode:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab4-andi.yml -f docker-compose.monitoring.yml --profile monitoring up -d
+```
+
+Set `BROKER_GRPC_URL=message-broker:9091`, `SESSION_APPLICANT_CLIENT_MODE=broker` and
+`SESSION_RULES_CLIENT_MODE=broker` in `.env`; supply fresh local secrets. Prometheus is
+local-only at http://localhost:9090 and Grafana at http://localhost:3000/d/lab4-services.
+Grafana uses `prometheus:9090` as its provisioned datasource.
+
+On 12 November the isolated full-stack check found 18 UP targets, including both replicas of
+all eight domain services. This proves scraping; the dashboard currently has business panels
+for Rules/Record and Applicant/Credential plus broker/up panels. Player/Session/Moderation/DMS
+business panels remain to be added. The current Rules/Record P95 panel has no matching HTTP
+histogram buckets, so returns no series. HTTP panels do not automatically measure gRPC business
+calls; Rules/Record publish separate `grpc_server_*` metrics. See the
+[acceptance report](../docs/LAB_4_RELEASE_READINESS_2026-11-12.md) for exact scope and evidence.
 
 DNS service discovery scrapes **each physical replica**, not one random replica behind a shared
 service address. The configuration includes all eight domain services, the broker and Prometheus.
@@ -44,8 +57,8 @@ up
 
 For Applicant/Credential panels, select `job=~"applicant-service|credential-service"` on the
 `service_*` series above. The duration sum divided by request count is **mean latency**, not P95.
-These services do not currently publish histogram buckets. Diana's Spring-only HTTP/P95 panels
-do not automatically include the C# counters; add the corresponding panels in her dashboard PR.
+These services do not currently publish histogram buckets. The integrated Applicant/Credential panels use these counters and distinguish physical replicas.
+Do not label a mean as P95 or assume an HTTP-only panel covers gRPC traffic.
 
 Alert rules cover missing scrapes, more than 5 percent 5xx, and sustained event backlog. They are
 visible in Prometheus; configuring an external Alertmanager notification is separate work.

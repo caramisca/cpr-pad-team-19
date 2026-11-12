@@ -2,101 +2,71 @@
 
 Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (FAF.PAD21.1, Autumn 2026).
 
-A distributed system of 9 microservices powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
+A distributed system of eight domain services, Gateway, Service Discovery and Message Broker powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
-## Laboratory 4: broker communication and monitoring
+## Laboratory 4: Breaking and Brokering
 
-The Lab 4 contribution by **Mihai (@caramisca)** adds the versioned
-[protobuf/message contract](docs/MESSAGE_BROKER_CONTRACT.md), topic fan-out and listing in the
-custom Python broker, and gRPC adapters, subscriptions, Redis inbox/outbox, structured logs and
-Prometheus metrics in Applicant and Credential. See the [delivery and integration checklist](docs/LAB_4_MIHAI_DELIVERY.md).
-The older Lab 2/3 REST-via-Gateway instructions below describe the published stack retained in
-`docker-compose.yml`; the new behavior is explicitly enabled with `Messaging__Enabled=true` and
-dependency mode `Grpc` in the new service builds. Full Lab 4 rollout still needs the other owners'
-adapters, queued Gateway routing, durable broker store/DLC and reviewed release images.
+The common Compose configuration pins **all eleven application images to 0.5.0**. The
+published images have linux/amd64 and linux/arm64 manifests. Source gitlinks pin reviewed
+service main commits; private repository main tips still require confirmation by their owners.
+The [current acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records exact commits,
+test results and the remaining release gates. These version pins alone do not certify Lab 4.
 
-**Daria (@DariaRateeva)** adds the [Message Broker](services/message-broker) repository, its
-skeleton, Docker image and thread-per-request server, the Service Discovery's `topics` in the
-registration with the topic lookups ([SD contract](docs/SERVICE_DISCOVERY_CONTRACT.md)), and the
-broker side of `player-service` and `server-moderation-session-service` (`0.5.0`): both serve the
-contract's gRPC `ServiceEndpoint` (`Deliver` for their topics, `Call` for every client endpoint
-except the SSE stream), Player consumes `decision.evaluated` and `session.closed` (shifts worked),
-Session consumes `decision.recorded`, publishes `session.started` / `session.closed` and can call
-applicant-service and server-rules-service through the broker (whose circuit breakers then guard
-those calls instead of Session's own), and both expose Prometheus metrics and their requests for the
-Gateway's log download (`GET /internal/logs`). `docker-compose.yml` runs `message-broker` (private,
-`0.5.0`, durable queues on the `broker-data` volume) with Player and Session in broker mode; see the
-[Lab 4 runbook](docs/LAB_4_RUNBOOK.md) and `scripts/check_lab4_release.py`.
+Start the complete documented Lab 4 mode after creating `.env` from `.env.example` and setting
+local credentials. Set `BROKER_GRPC_URL=message-broker:9091`,
+`SESSION_APPLICANT_CLIENT_MODE=broker` and `SESSION_RULES_CLIENT_MODE=broker` in `.env`:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab4-andi.yml -f docker-compose.monitoring.yml --profile monitoring up -d
+python scripts/check_lab4_release.py --require-published
+python scripts/check_lab4_monitoring.py --scope team
+```
+
+Grafana is at `http://localhost:3000/d/lab4-services` and Prometheus at `http://localhost:9090`.
+The isolated acceptance instance uses ports 13000 and 19090; see the report. Business HTTP enters
+through Gateway on 8080; DMS exposes 8088 for direct ticket-authenticated WebSockets. Private
+gRPC ports, logs, metrics and health endpoints stay inside the Compose network.
+
+| Component | Current implementation |
+|---|---|
+| Gateway | Optional gRPC `MessageBroker.Call` for Applicant/Credential/Rules/Record; other client routes and Session SSE still use HTTP. `GET /logs` downloads correlated NDJSON; retired internal event routes are blocked |
+| Broker 0.5.0 main | Thread-per-request gRPC; service-instance selection and breakers; per-subscriber topic fan-out, SQLite topic queues and DLC; `/topics` and `/dead-letters` |
+| Broker current dev | PR #11 adds in-memory subscriber request queues, default Rules/Record only; a new release is pending |
+| Service Discovery | Physical instance registry with topic subscriptions; broker uses instance and topic lookups over the HTTP control plane |
+| Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled by the Mihai overlay |
+| Player / Session (Daria) | gRPC adapters, topic consumers and Session publisher; broker dependency modes configured in `.env` |
+| Moderation / DMS (Andi) | gRPC adapters, outbox/consumers, private logs/metrics and DMS Redis chat relay; enabled by the Andi overlay |
+| Rules / Record (Diana) | gRPC adapters; both require `BROKER_GRPC_URL=message-broker:9091` at startup (configured in base Compose) |
+| Monitoring | All eight domain services scraped per replica plus Broker/Prometheus. Dashboard coverage and P95 still have gaps documented in the report |
 
 ```mermaid
 flowchart LR
-  UI[Client] -->|REST + API key| GW[Gateway - Diana / Andi]
-  GW -->|Subscriber request queues - Diana| MB[Custom Python Message Broker]
-  MB <-->|HTTP registration / topic subscriptions| SD[Service Discovery]
-  MB <-->|gRPC Call / Deliver| APP[Applicant - Mihai]
-  MB <-->|gRPC Call / Deliver| CRED[Credential - Mihai]
-  APP -->|gRPC Call credential-service| MB
-  CRED -->|gRPC Call university-record-service| MB
-  MB <-->|gRPC adapters - respective owners| OTHER[Other six services]
-  APP --> AR[(Applicant Redis + inbox/outbox)]
-  CRED --> CR[(Credential Redis + inbox/outbox)]
-  MB -.->|QueueStore adapter - Andi| DQ[(Durable queues + DLC)]
-  PROM[Prometheus] -->|metrics, every replica| APP
-  PROM -->|metrics, every replica| CRED
+  UI[Client] -->|HTTP + API key| GW[Gateway]
+  GW -->|gRPC Call: Applicant / Credential / Rules / Record| MB[Python Message Broker]
+  GW -->|HTTP: Player / Session / Moderation / DMS; SSE| HTTP[Remaining public service routes]
+  MB <-->|gRPC Call / Publish / Deliver| DOMAIN[Eight domain services]
+  DOMAIN -->|HTTP registration + subscriptions| SD[Service Discovery]
+  MB -->|HTTP instance + topic lookup| SD
+  MB -->|Durable topic copies + dead letters| STORE[(SQLite /data on broker-data)]
+  DOMAIN --> DATA[(Owned databases + inbox / outbox)]
+  PROM[Prometheus] -->|metrics per replica| DOMAIN
   PROM -->|metrics| MB
-  GRAF[Grafana - Diana] --> PROM
+  GRAF[Grafana] --> PROM
 ```
 
-Detailed [architecture source](docs/architecture-diagram-lab4.mmd),
-[Prometheus setup and dashboard queries](monitoring/README.md), and
-[scoped integration evidence](docs/evidence/lab4-mihai-smoke-2026-11-09.json).
-New private log/metrics endpoints must remain excluded from the public Gateway routes.
+The diagram shows the current mixed transport. Subscriber request queues in Broker dev do not
+yet cover every Gateway route. Live service-load feeding and same-call rerouting remain
+unverified/incomplete; do not claim all cumulative grade criteria from a successful basic flow.
 
-Mihai's **Applicant/Credential 0.5.0 releases** are now published for linux/amd64 and linux/arm64,
-with matching `latest` digests; CPR pins their final main commits. See the current
-[delivery evidence](docs/LAB_4_MIHAI_DELIVERY.md) and
-[team integration/presentation checklist](docs/LAB_4_PRESENTATION_READINESS.md).
-`docker-compose.lab4-mihai.yml` prepares their opt-in gRPC settings for the common Lab 4 stack;
-apply it only after the broker and the real University Record adapter are integrated. The base
-Compose retains the working legacy HTTP mode during that integration.
+Use the [Lab 4 runbook](docs/LAB_4_RUNBOOK.md), [message contract](docs/MESSAGE_BROKER_CONTRACT.md),
+[Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md) and
+[monitoring guide](monitoring/README.md). Run Postman collections from `docs/postman` on a test
+stack, set `baseUrl`/`apiKey`, and enable `runLab4GatewayChecks=true` for Applicant/Credential.
+Full-stack tests now confirm real University Record issuance, real Session cleanup, SSE and
+two-client WebSocket delivery. Error-contract failures remain listed in the acceptance report.
 
-Prometheus has scrape definitions for all eight domain services. Validate actual replicas with
-`python scripts/check_lab4_monitoring.py --scope team`; missing DNS targets also fail this check.
-For Mihai's explicitly scoped test stack use `--scope owned`, which does not certify team readiness.
-
-The Lab 4 contribution by **Andi (@blinduandi)**:
-
-- **Broker reliability**
-  ([Broker #9](https://github.com/DariaRateeva/message-broker/pull/9), issues
-  [#274](https://github.com/caramisca/cpr-pad-team-19/issues/274) and
-  [#275](https://github.com/caramisca/cpr-pad-team-19/issues/275)). The circuit breaker moves from
-  the Gateway into the broker, one circuit per service instance (Grade 5). The topic queues become
-  durable in SQLite (`QUEUE_STORE_PATH`, on the image's `/data` volume), a copy the consumer answers
-  `REJECTED` goes to the dead-letter channel with its reason, and `GET /dead-letters` lists the
-  channel (Grade 9).
-- **Broker Postman collection** (`docs/postman/message-broker.postman_collection.json`). The HTTP
-  API of the broker: `GET /health`, `GET /metrics`, `GET /topics`, `POST /events` and
-  `GET /dead-letters`, with their `400`, `404` and `405` answers. It publishes a `session.started`
-  event with an empty payload, which `discord-dms-service` 0.5.0 answers `REJECTED`, and finds it
-  again in `GET /dead-letters`. See [Message Broker (Lab 4)](#message-broker-lab-4).
-- **Log download** (Gateway branch `feat/gateway/log-download`, issue
-  [#276](https://github.com/caramisca/cpr-pad-team-19/issues/276)). `GET /logs` on the Gateway
-  collects `GET /internal/logs` from every replica of every service, adds the Gateway's own
-  requests, and returns one NDJSON file correlated by `requestId` and `instanceId` (Grade 4). See
-  [`gateway-service` — log download](#gateway-service--log-download).
-- **`moderation-service`** ([#24](https://github.com/blinduandi/moderation-service/pull/24)) and
-  **`discord-dms-service`** ([#18](https://github.com/blinduandi/discord-dms-service/pull/18)).
-  Both serve `ServiceEndpoint` over gRPC and expose the private `GET /internal/logs` and
-  `GET /metrics`. `moderation-service` publishes its outbox with `MessageBroker.Publish` and calls
-  its three dependencies with `MessageBroker.Call`. `discord-dms-service` registers the four topics
-  it consumes in the Service Discovery and answers `COMMITTED` only after the Redis transaction.
-
-`docker-compose.yml` pins the 0.5.0 images of both services with the broker mode off, so the base
-Compose keeps them in the Laboratory 3 HTTP mode. `docker-compose.lab4-andi.yml` turns the broker
-mode on; apply it only once the broker is in the stack, as the broker's `/data` volume belongs to
-the Compose broker service ([#243](https://github.com/caramisca/cpr-pad-team-19/issues/243)).
-`discord-dms-service` 0.5.0 no longer accepts the Laboratory 3 stand-in
-`POST /internal/events/{eventType}` (`404 NOT_FOUND`), so it receives events only through the broker.
+The inherited Lab 1–3 API descriptions below describe retained capabilities and historical
+release behavior. Current deployment versions and transport modes are the Lab 4 settings above.
 
 ## Team Definition & Microservice Allocation
 
@@ -114,8 +84,8 @@ The team works in **2 polyglot backend languages** (Java and C#) for domain serv
 
 Every microservice encapsulates a single business capability and owns its own datastore
 (Database-per-Service). No service reads or writes another service's database; all data crossing a
-boundary travels over an explicit contract — a synchronous REST call or an asynchronous domain
-event. Each boundary below states what the service owns, what it deliberately does not own, and the
+boundary travels over an explicit contract — gRPC request/reply or asynchronous domain
+events in Lab 4, with public HTTP at the Gateway and the remaining HTTP routes described above. Each boundary below states what the service owns, what it deliberately does not own, and the
 operations it exposes to the rest of the system.
 
 ### 1. `player-service`
@@ -2016,16 +1986,16 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
-| `service-discovery` | [`drateeva/service-discovery`](https://hub.docker.com/r/drateeva/service-discovery) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | No external database; in-memory registry with one Uvicorn worker. Port `8089` (internal only, never published to the host). Optional: `INSTANCE_TTL_SECONDS` (default `30`), `POLL_INTERVAL_SECONDS` (default `10`), `REQUEST_TIMEOUT_SECONDS` (default `5`), `MAX_CONCURRENT_REQUESTS` (default `200`). Developer alerts are optional; see the [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md). |
+| `service-discovery` | [`drateeva/service-discovery`](https://hub.docker.com/r/drateeva/service-discovery) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | No external database; in-memory registry with one Uvicorn worker. Port `8089` (internal only, never published to the host). Optional: `INSTANCE_TTL_SECONDS` (default `30`), `POLL_INTERVAL_SECONDS` (default `10`), `REQUEST_TIMEOUT_SECONDS` (default `5`), `MAX_CONCURRENT_REQUESTS` (default `200`). Developer alerts are optional; see the [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md). |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8087` (internal only — route through the gateway on `8080`). |
 | `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.1` | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
-| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.2` | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
-| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.2` | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
+| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
+| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 3: `0.4.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
 
 
 ## Getting Started
@@ -2146,7 +2116,7 @@ shows `healthy`); they and `GET /health` are not routed through the Gateway.
 
 ### Running `moderation-service` and `discord-dms-service`
 
-The root `docker-compose.yml` runs both services from their DockerHub images (`0.4.0`), each
+The root `docker-compose.yml` runs both services from their DockerHub images (`0.5.0`), each
 against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
 `moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
 persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
@@ -2374,7 +2344,7 @@ at `/swagger` on both.
 
 
 
-## Laboratory 3 integration and release
+## Historical Laboratory 3 integration and release
 
 The Lab 3 Compose configuration pins a version for each application image. The initial ten
 releases use **0.4.0**; a service can move to **0.4.1** without moving the others. PostgreSQL,

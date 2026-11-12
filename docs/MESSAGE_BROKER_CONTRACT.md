@@ -29,8 +29,12 @@ Channels are reused per physical instance, preserving HTTP/2 connections across 
 The caller's deadline is bounded to five seconds at broker forwarding; cancellation propagates.
 `X-Request-Id` is also gRPC metadata for correlated HTTP/2 access logs.
 
-The integrated broker `request_dispatch` still invokes the transport directly. Diana replaces that
-hook with subscriber request/reply queues; topic queues do not implement that request/reply layer.
+The published Broker 0.5.0 main invokes the transport directly through `request_dispatch`.
+PR #11 in current dev connects `RequestQueue.enqueue`: FIFO request/reply queues for
+`REQUEST_QUEUE_SERVICES` (Rules/Record by default); other targets still call transport directly.
+These request queues and reply slots are in memory, separate from SQLite topic queues.
+A new reviewed main release/public image and a CPR pin update are needed to deploy PR #11.
+Gateway's broker allowlist and request-queue membership must both cover each intended route.
 Instance selection already uses Andi's per-instance circuit breaker and Diana's selector. Open
 circuits are excluded; if every instance is open, the call fails fast with `CIRCUIT_OPEN`.
 The defaults are three failures within 17.5 seconds, a 17.5-second open period and one permitted
