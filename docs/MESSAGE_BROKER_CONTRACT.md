@@ -151,11 +151,12 @@ intended subscriptions; adapters in teammates' services are their owners' work.
 
 | Topic | Producer | Consumers |
 |---|---|---|
-| `decision.recorded` | Moderation | Session |
-| `decision.evaluated`, `decision.amended`, `decision.voided` | Moderation | Player |
+| `decision.recorded` | Moderation | Session (implemented) |
+| `decision.evaluated` | Moderation | Player (implemented) |
+| `decision.amended`, `decision.voided` | Moderation | Player (planned, not registered yet) |
 | `verdict.issued` | Moderation | DMS |
-| `session.started` | Session | DMS |
-| `session.closed` | Session | DMS; Applicant (implemented) |
+| `session.started` | Session (implemented) | DMS |
+| `session.closed` | Session (implemented) | DMS; Applicant (implemented); Player (implemented: counts `totalShifts`) |
 | `ruleset.updated` | Rules | DMS |
 | `applicant.generated` | Applicant (implemented) | Optional observers; none required |
 | `applicant.deleted` | Applicant (implemented) | Credential (implemented) |
@@ -166,7 +167,13 @@ New payloads: `applicant.generated {applicantId,sessionId,credentialId}`;
 {credentialId,applicantId}`. The last two cleanup topics concern explicit lifecycle deletion;
 normal TTL expiry remains the existing independent Redis retention policy.
 
-Applicant registers `topics: ["session.closed"]`; Credential registers `["applicant.deleted"]`.
+Applicant registers `topics: ["session.closed"]`; Credential registers `["applicant.deleted"]`;
+Player registers `["decision.evaluated", "session.closed"]`; Session registers `["decision.recorded"]`.
+Since session `0.5.0`, `session.closed` also carries `moderatorId` and `juniorModeratorIds` (README,
+"Endpoint Contracts"), so Player credits the shift without having kept `session.started`.
+Player and Session serve `ServiceEndpoint.Call` for every client endpoint except Session's SSE stream
+`GET /sessions/{id}/events`, which stays direct HTTP through the Gateway (through `Call` it is
+answered `406 NOT_ACCEPTABLE`).
 Session close deletes that session's applicants. Each Applicant deletion atomically emits
 `applicant.deleted`; Credential deletes that applicant's bundles and emits `credential.revoked`.
 Shared Redis inbox markers make redelivery to another replica safe. Cleanup itself is idempotent;

@@ -15,6 +15,19 @@ The older Lab 2/3 REST-via-Gateway instructions below describe the published sta
 dependency mode `Grpc` in the new service builds. Full Lab 4 rollout still needs the other owners'
 adapters, queued Gateway routing, durable broker store/DLC and reviewed release images.
 
+**Daria (@DariaRateeva)** adds the [Message Broker](services/message-broker) repository, its
+skeleton, Docker image and thread-per-request server, the Service Discovery's `topics` in the
+registration with the topic lookups ([SD contract](docs/SERVICE_DISCOVERY_CONTRACT.md)), and the
+broker side of `player-service` and `server-moderation-session-service` (`0.5.0`): both serve the
+contract's gRPC `ServiceEndpoint` (`Deliver` for their topics, `Call` for every client endpoint
+except the SSE stream), Player consumes `decision.evaluated` and `session.closed` (shifts worked),
+Session consumes `decision.recorded`, publishes `session.started` / `session.closed` and can call
+applicant-service and server-rules-service through the broker (whose circuit breakers then guard
+those calls instead of Session's own), and both expose Prometheus metrics and their requests for the
+Gateway's log download (`GET /internal/logs`). `docker-compose.yml` runs `message-broker` (private,
+`0.5.0`, durable queues on the `broker-data` volume) with Player and Session in broker mode; see the
+[Lab 4 runbook](docs/LAB_4_RUNBOOK.md) and `scripts/check_lab4_release.py`.
+
 ```mermaid
 flowchart LR
   UI[Client] -->|REST + API key| GW[Gateway - Diana / Andi]
@@ -117,7 +130,11 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
 - **Exposes:** `GET /players/{id}`, `POST /players`, `PATCH /players/{id}`, `DELETE /players/{id}`,
   `GET /players/{id}/stats`, `GET /players/{id}/rank`, and the status of each instance,
   `GET /health` (Lab 3).
-- **Consumes:** `decision.evaluated` events to recompute score and rank.
+- **Consumes:** `decision.evaluated` events to recompute score and rank, and `session.closed` to
+  count the shifts each moderator worked (`totalShifts`, `lastShiftAt`), from the message broker over
+  gRPC (Lab 4).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /actuator/prometheus`, on port `8081` (Lab 4).
 
 ### 2. `server-moderation-session-service`
 
@@ -135,7 +152,10 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
   `GET /sessions/{id}/events` (Server-Sent Events), and the status of each instance, `GET /health`
   (Lab 3).
 - **Consumes:** `decision.recorded` events to resolve the applicant's queue entry and advance the
-  queue.
+  queue, from the message broker over gRPC (Lab 4).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /actuator/prometheus`, on port `8082` (Lab 4).
+- **Publishes:** `session.started` and `session.closed` to their topics on the message broker (Lab 4).
 
 ### 3. `applicant-service`
 
@@ -338,17 +358,19 @@ arrow denotes direct client WebSocket streaming following Gateway ticket negotia
 | `gateway-service` | `server-moderation-session-service` | Sync REST | Forward shift lifecycle requests (`/sessions/**`) |
 | `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/decisions/**`) |
 | `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/players/**`) |
-| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift |
+| `gateway-service` | `message-broker` $\rightarrow$ `player-service`, `server-moderation-session-service` | gRPC `Call` (Lab 4) | Every client endpoint of both services can also be served through the broker, with the same answers; the SSE stream `GET /sessions/{id}/events` stays direct REST |
+| `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift (Lab 4: or gRPC `MessageBroker.Call` through `message-broker`, `APPLICANT_CLIENT_MODE=broker`) |
 | `server-moderation-session-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Fetch active ruleset in force for current session |
 | `applicant-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Attach issued credential bundle to generated applicant |
 | `credential-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Cross-reference student registry for authentic credentials |
 | `moderation-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Read applicant credential bundle for evaluation |
 | `moderation-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Read ruleset to evaluate decision against |
 | `moderation-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Verify registry enrollment standing for verdict |
-| `moderation-service` | `server-moderation-session-service` | Async event | `decision.recorded` advances shift queue |
-| `moderation-service` | `player-service` | Async event | `decision.evaluated` updates score, rank, penalties |
+| `moderation-service` | `server-moderation-session-service` | Async event (broker topic, Lab 4) | `decision.recorded` advances shift queue |
+| `moderation-service` | `player-service` | Async event (broker topic, Lab 4) | `decision.evaluated` updates score, rank, penalties |
 | `moderation-service` | `discord-dms-service` | Async event | `verdict.issued` delivers the DM to the applicant |
-| `server-moderation-session-service` | `discord-dms-service` | Async event | `session.started` and `session.closed` notify moderators |
+| `server-moderation-session-service` | `discord-dms-service` | Async event (broker topic, Lab 4) | `session.started` and `session.closed` notify moderators |
+| `server-moderation-session-service` | `player-service` | Async event (broker topic, Lab 4) | `session.closed` credits the shift to the moderator and every junior moderator (`totalShifts`) |
 | `server-rules-service` | `discord-dms-service` | Async event | `ruleset.updated` announces a mid-shift rule change |
 
 Synchronous REST is routed centrally through the API Gateway, ensuring unified access logging, task
@@ -462,6 +484,10 @@ Response `200 OK`:
   "lastShiftAt": "string (ISO-8601 datetime) | null"
 }
 ```
+`accuracyScore` = `correctDecisions / (correctDecisions + incorrectDecisions)` (`0` before the first
+decision). `totalShifts` counts the shifts the player worked as moderator or junior moderator and
+`lastShiftAt` is the end of the latest one, both from `session.closed` (Lab 4; `null` before the
+first shift).
 
 **`GET /players/{id}/rank`** — fetch current rank standing.
 
@@ -490,16 +516,35 @@ the event carries no penalty data.
   "evaluatedAt": "string (ISO-8601 datetime)"
 }
 ```
+Every field is required and `xpAwarded` must be `0` or more (moderation-service awards 0 to 15);
+anything else is never valid. Deduplicated on `eventId`. Delivered by the broker (Lab 4,
+`decision.evaluated` topic) the answer is `COMMITTED`, `RETRY` (temporary failure) or `REJECTED`
+(invalid payload, unknown player), see the [message contract](docs/MESSAGE_BROKER_CONTRACT.md).
 
-**`POST /internal/mock-events/decision-evaluated`** — no message broker is wired up yet, so this
-endpoint stands in for the `decision.evaluated` consumer above: same request body as the event
-payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing, `404 Not Found`
-(`PLAYER_NOT_FOUND`) when `playerId` is not a registered player. Will be replaced by a real broker
-listener without changing the underlying handler.
+**Consumes `session.closed`** (Lab 4, broker only) — credits the shift to the `moderatorId` and every
+`juniorModeratorIds` entry: `totalShifts` + 1, `lastShiftAt` = `closedAt` (unless a later shift was
+already counted). Uses only `eventId`, `sessionId`, `moderatorId`, `juniorModeratorIds` and
+`closedAt` of the payload published by `server-moderation-session-service` (below); `moderatorId` is
+required (`REJECTED` without it). A moderator who isn't a registered player is skipped, not an error.
+Deduplicated on `eventId`.
+
+**`POST /internal/mock-events/decision-evaluated`** — the REST stand-in for the `decision.evaluated`
+consumer above, for local runs without a broker: same request body as the event payload, same
+handler. Since Lab 4 it exists only with `MOCK_EVENTS_ENABLED=true` (never in the CPR Compose
+setup); otherwise `404 ROUTE_NOT_FOUND`. Response `202 Accepted`, empty body. Deduplicates on
+`eventId`, safe to replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing or
+invalid, `404 Not Found` (`PLAYER_NOT_FOUND`) when `playerId` is not a registered player.
 
 **Common to every `player-service` endpoint:**
 - Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`).
+- Every error is `{ "error", "message" }` JSON, also the ones Spring used to answer itself: a body
+  that isn't JSON `400 MALFORMED_REQUEST_BODY` (a field of the wrong type `400 VALIDATION_ERROR`
+  naming it), an unknown path `404 ROUTE_NOT_FOUND`, another method `405 METHOD_NOT_ALLOWED` with
+  `Allow`, a body without a JSON `Content-Type` `415 UNSUPPORTED_MEDIA_TYPE`, anything unexpected
+  `500 INTERNAL_ERROR` (no internals in the message).
+- **Through the message broker** (Lab 4): every endpoint above is also served by gRPC
+  `ServiceEndpoint.Call` on port 9081 (private), with the same status, body and headers as over HTTP
+  (see the [message contract](docs/MESSAGE_BROKER_CONTRACT.md)).
 - **Task timeout and concurrent task limit** (Lab 2): a request that runs longer than `TASK_TIMEOUT`
   (default `10s`) gets `504 Gateway Timeout` (`REQUEST_TIMEOUT`); a request while
   `MAX_CONCURRENT_TASKS` (default `20`) are running gets `503 Service Unavailable` (`SERVICE_BUSY`)
@@ -529,6 +574,13 @@ listener without changing the underlying handler.
   once are applied once.
 - Makes no business calls (its only outgoing calls register it with `service-discovery`), so it has
   no circuit breaker of its own; and it has nothing to push to clients live.
+- **`GET /internal/logs`** (Lab 4, Grade 4): this instance's last 1,000 business requests as NDJSON
+  (`application/x-ndjson`, oldest first), the collection interface of the Gateway's `GET /logs`
+  ([message contract](docs/MESSAGE_BROKER_CONTRACT.md), "Logs and metrics"). Each line has `timestamp`,
+  `service`, `instanceId`, `requestId`, `method`, `path` (no query string), `status`, `durationMs` and
+  `transport` (`http`, or `grpc` through the broker; a delivery is `DELIVER topics/<topic>` with its
+  `outcome`). Not a task (answers while the service is busy), not routed through the Gateway, and
+  it leaves out the health checks, the metrics and itself.
 
 #### `server-moderation-session-service`
 
@@ -551,6 +603,9 @@ Response `201 Created`:
   "startedAt": "string (ISO-8601 datetime)"
 }
 ```
+`400 Bad Request` (`VALIDATION_ERROR`): `moderatorId` missing, a `null` in `juniorModeratorIds`, the
+same junior listed twice, or the moderator listed as their own junior. `juniorModeratorIds` may be
+omitted (no juniors).
 
 **`GET /sessions/{id}`** — fetch session state.
 
@@ -605,7 +660,8 @@ could not be reached through the Gateway, timed out, or answered with an error; 
 While that dependency's circuit is open (Lab 3, see the common bullets below), the same `503` comes
 at once, with `Retry-After` set to the seconds left.
 
-**Calls (Lab 2: always through the Gateway's internal port, `GATEWAY_URL`):**
+**Calls (Lab 2: through the Gateway's internal port, `GATEWAY_URL`; Lab 4: the applicant call can go
+through the message broker instead, gRPC `MessageBroker.Call`, `APPLICANT_CLIENT_MODE=broker`):**
 `POST /applicants/generate` with `{ "sessionId", "difficulty" }` on `applicant-service` for the next
 applicant, and `GET /rulesets/active` on `server-rules-service` for the ruleset version in force
 (`404 NO_ACTIVE_RULESET` → the applicant is still presented, without a version).
@@ -628,7 +684,9 @@ Events are sent only after the change is committed. A `:keep-alive` comment come
 stream lasts at most `30m`, then ends without an error (an `EventSource` reconnects and gets a fresh
 `state`). Errors, as JSON before the stream starts: `404 SESSION_NOT_FOUND`,
 `409 SESSION_ALREADY_CLOSED` (also stops an `EventSource` from reconnecting), and
-`503 SERVICE_BUSY` when `100` streams are already open.
+`503 SERVICE_BUSY` when `100` streams are already open. The stream is always direct HTTP through the
+Gateway, never through the message broker (through `ServiceEndpoint.Call` it is answered
+`406 NOT_ACCEPTABLE`, like an HTTP client that doesn't accept `text/event-stream`).
 
 **Consumes `decision.recorded`** — resolves the applicant's queue entry (stores `action` and when it
 was resolved) and counts it in `applicantsProcessed`, which advances the queue.
@@ -642,13 +700,21 @@ was resolved) and counts it in `applicantsProcessed`, which advances the queue.
   "recordedAt": "string (ISO-8601 datetime)"
 }
 ```
+Every field is required and `action` must be one of the four values. A decision recorded after the
+shift closed (`recordedAt` later than `closedAt`) can't belong to it: `409 SESSION_ALREADY_CLOSED`
+(Lab 4); one recorded before the close but delivered later still counts. Deduplicated on `eventId`.
+Delivered by the broker (Lab 4, `decision.recorded` topic) the answer is `COMMITTED`, `RETRY`
+(temporary failure) or `REJECTED` (invalid payload, unknown shift or pending applicant, recorded
+after the close).
 
-**`POST /internal/mock-events/decision-recorded`** — no message broker is wired up yet, so this
-endpoint stands in for the `decision.recorded` consumer above: same request body as the event
-payload, same handler. Response `202 Accepted`, empty body. Deduplicates on `eventId`, safe to
-replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing; `404 Not Found`
-(`SESSION_NOT_FOUND`, or `QUEUE_ENTRY_NOT_FOUND` when no unresolved queue entry matches the
-applicant). Will be replaced by a real broker listener without changing the underlying handler.
+**`POST /internal/mock-events/decision-recorded`** — the REST stand-in for the `decision.recorded`
+consumer above, for local runs without a broker: same request body as the event payload, same
+handler. Since Lab 4 it exists only with `MOCK_EVENTS_ENABLED=true` (never in the CPR Compose
+setup); otherwise `404 ROUTE_NOT_FOUND`. Response `202 Accepted`, empty body. Deduplicates on
+`eventId`, safe to replay. Response `400 Bad Request` (`VALIDATION_ERROR`) when a field is missing or
+invalid; `404 Not Found` (`SESSION_NOT_FOUND`, or `QUEUE_ENTRY_NOT_FOUND` when no unresolved queue
+entry matches the applicant); `409 Conflict` (`SESSION_ALREADY_CLOSED`) for a decision recorded after
+the close.
 
 **Publishes `session.started`:**
 ```json
@@ -656,15 +722,27 @@ applicant). Will be replaced by a real broker listener without changing the unde
 ```
 **Publishes `session.closed`:**
 ```json
-{ "eventId": "string (uuid)", "sessionId": "string (uuid)", "closedAt": "string (ISO-8601 datetime)", "summary": { "applicantsProcessed": "integer", "score": "number" } }
+{ "eventId": "string (uuid)", "sessionId": "string (uuid)", "moderatorId": "string (uuid)", "juniorModeratorIds": ["string (uuid)"], "closedAt": "string (ISO-8601 datetime)", "summary": { "applicantsProcessed": "integer", "score": "number" } }
 ```
-Until the team has a broker, both events go to `discord-dms-service` as
-`POST /internal/events/session.started` / `POST /internal/events/session.closed` through the
-Gateway's internal port, after the commit and off the request thread. A connection error, timeout,
-`5xx` or `429` is retried with the same `eventId` (3 attempts in all). A client of this service
-never waits for or fails because of it.
+`moderatorId` and `juniorModeratorIds` (`[]` when none) were added in Lab 4 (session `0.5.0`), so a
+subscriber such as `player-service` can credit the shift to everyone who worked it; no field changed.
+Since Lab 4 both events are published to their topics on the message broker (gRPC
+`MessageBroker.Publish`, `DMS_CLIENT_MODE=broker`), for every service that registered the topic,
+after the commit and off the request thread; an unavailable broker is retried with the same
+`eventId` (3 attempts in all). A client of this service never waits for or fails because of it. The
+retries stay with the broker's durable queues (Lab 4, Grade 9): the broker keeps an event only once
+it has accepted it, so they carry it over a broker that is down or restarting; a retry never
+duplicates it (the broker never queues a `messageId` twice, subscribers skip a known `eventId`). The
+Lab 2/3 delivery as `POST /internal/events/...` through the Gateway was removed (`DMS_CLIENT_MODE=http`
+now stops the service at startup).
 
 **Common to every `server-moderation-session-service` endpoint:**
+- Every error is `{ "error", "message" }` JSON, as for `player-service` (`MALFORMED_REQUEST_BODY`,
+  `ROUTE_NOT_FOUND`, `METHOD_NOT_ALLOWED` with `Allow`, `UNSUPPORTED_MEDIA_TYPE`, `INTERNAL_ERROR`),
+  also for a client that asked for an event stream.
+- **Through the message broker** (Lab 4): every endpoint above except the event stream is also
+  served by gRPC `ServiceEndpoint.Call` on port 9082 (private), with the same status, body and
+  headers as over HTTP.
 - Any `{id}` that is not a UUID: `400 Bad Request` (`INVALID_PATH_VARIABLE`); a missing required
   field: `400 Bad Request` (`VALIDATION_ERROR`).
 - **Task timeout and concurrent task limit** (Lab 2): `504 Gateway Timeout` (`REQUEST_TIMEOUT`)
@@ -683,13 +761,26 @@ never waits for or fails because of it.
   so concurrent requests on different instances take turns (queue positions stay unique, a shift
   closes once). A change made on one instance reaches the SSE streams open on every instance
   (PostgreSQL `LISTEN`/`NOTIFY` on the shared database).
-- **Circuit breaker** (Lab 3): each dependency (`applicant-service`, `server-rules-service`,
-  `discord-dms-service`) has its own circuit. A connection error, timeout, `5xx` or the Gateway's
+- **Circuit breaker** (Lab 3): each dependency called through the Gateway (`applicant-service`,
+  `server-rules-service`) has its own circuit. A connection error, timeout, `5xx` or the Gateway's
   `404 ROUTE_NOT_FOUND` is a failure; 3 failures within `TASK_TIMEOUT` × 3.5 (35 s) open it for as
   long, then one trial call closes or reopens it. While it is open, `next-applicant` answers
   `503 DEPENDENCY_UNAVAILABLE` at once and event deliveries wait. When a circuit opens, the
   dependency's instances are looked up in `service-discovery`, each one's `healthUrl` is checked,
   and the unhealthy ones are deregistered (`DELETE /instances/{serviceName}/{instanceId}`).
+- **Calls through the message broker** (Lab 4, Grades 5 and 8): with `APPLICANT_CLIENT_MODE` /
+  `RULES_CLIENT_MODE=broker`, `POST /applicants/generate` and `GET /rulesets/active` go as gRPC
+  `MessageBroker.Call`. Then the broker's circuit breakers (one per instance) guard them, not
+  Session's: Session keeps no circuit and removes no instance for them, and passes the broker's
+  `CIRCUIT_OPEN` / `TOO_MANY_REQUESTS` on as `503 DEPENDENCY_UNAVAILABLE` with the broker's
+  `Retry-After`. `404 NO_ACTIVE_RULESET` from server-rules-service still means "no ruleset in force".
+- **`GET /internal/logs`** (Lab 4, Grade 4): this instance's last 1,000 business requests as NDJSON
+  (`application/x-ndjson`, oldest first), the collection interface of the Gateway's `GET /logs`
+  ([message contract](docs/MESSAGE_BROKER_CONTRACT.md), "Logs and metrics"). Each line has `timestamp`,
+  `service`, `instanceId`, `requestId`, `method`, `path` (no query string), `status`, `durationMs` and
+  `transport` (`http`, or `grpc` through the broker; a delivery is `DELIVER topics/<topic>` with its
+  `outcome`). Not a task (answers while the service is busy), not routed through the Gateway, and
+  it leaves out the health checks, the metrics and itself.
 - Known gap: `correctDecisions`, `incorrectDecisions` and `score` in the summary stay `0`, because
   `decision.recorded` carries no verdict; `applicantsProcessed` is counted correctly.
 
@@ -1989,7 +2080,7 @@ variable and uses `baseUrl` `http://localhost:8080`.
 
 ### Running `player-service` and `server-moderation-session-service`
 
-The root `docker-compose.yml` runs both from their DockerHub images (`0.4.0`), each against its own
+The root `docker-compose.yml` runs both from their DockerHub images (`0.5.0`), each against its own
 PostgreSQL 16 (`player-postgres` and `session-postgres`, on the `player-postgres-data` and
 `session-postgres-data` volumes). Set `PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD` and
 `SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD` in `.env`, then `docker compose up`. Each schema
@@ -2019,11 +2110,23 @@ and the request ID (`X-Request-Id`).
 health check are deregistered from `service-discovery`. `player-service` makes no business calls, so
 it has no circuit of its own.
 
+**Message Broker (Lab 4).** Both run with `MESSAGING_ENABLED=true`: each instance serves the
+contract's gRPC `ServiceEndpoint` on its HTTP port + 1000 (9081 / 9082, private) and registers its
+topics with `service-discovery` (player `decision.evaluated`, `session.closed`; session
+`decision.recorded`), so `message-broker` delivers those events to one instance of each, which
+answers `COMMITTED`, `RETRY` or `REJECTED` after its transaction. Session publishes
+`session.started` / `session.closed` to `message-broker:9091` (`DMS_CLIENT_MODE=broker`). Both also
+serve `ServiceEndpoint.Call` for client requests the broker passes on (all endpoints but the SSE
+stream). The REST stand-ins `/internal/mock-events/...` are off (`MOCK_EVENTS_ENABLED` unset).
+Startup order, checks and expected logs: [Lab 4 runbook](docs/LAB_4_RUNBOOK.md).
+
 Neither service publishes its port: clients use `http://localhost:8080/players/...` and
 `http://localhost:8080/sessions/...` with an API key, as above. `server-moderation-session-service`
-calls `applicant-service`, `server-rules-service` and `discord-dms-service` through the Gateway's
-internal port (`GATEWAY_URL=http://gateway-service:8090`, all three `*_CLIENT_MODE=http`). Watch a
-shift live with:
+calls `server-rules-service` through the Gateway's internal port (`GATEWAY_URL=http://gateway-service:8090`,
+`RULES_CLIENT_MODE=http`), and `applicant-service` the same way unless
+`SESSION_APPLICANT_CLIENT_MODE=broker` in `.env` (gRPC `MessageBroker.Call`; set it together with
+`docker-compose.lab4-mihai.yml`, which gives applicant-service its gRPC endpoint). Watch a shift live
+with:
 
 ```bash
 curl -N -H "Authorization: Bearer <key>" http://localhost:8080/sessions/<session-id>/events

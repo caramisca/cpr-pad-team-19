@@ -6,7 +6,9 @@
 # (Andi), player-service/server-moderation-session-service (Daria), plus gateway-service, the
 # single entry point on port 8080 (Lab 2). Clients need an API key there (GATEWAY_API_KEYS in .env,
 # sent as "Authorization: Bearer <key>"); the services call each other through the gateway's
-# internal port 8090, which is not published to the host.
+# internal port 8090, which is not published to the host. Lab 4 adds message-broker: player-service
+# and server-moderation-session-service take their events from it and session publishes its own to
+# it, over gRPC on the private Compose network (CPR docs/MESSAGE_BROKER_CONTRACT.md).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
@@ -263,10 +265,12 @@ services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Every replica
   # registers with service-discovery under its container hostname and its own container address,
   # and the gateway finds the replicas there (Lab 3). All replicas share player-postgres.
+  # Lab 4: each replica serves the broker's gRPC ServiceEndpoint on 9081 (private) and registers the
+  # topics decision.evaluated and session.closed, so the broker delivers those events to it.
   player-service:
     deploy:
       replicas: ${PLAYER_REPLICAS:-2}
-    image: drateeva/player-service:0.4.0
+    image: drateeva/player-service:0.5.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
@@ -274,6 +278,7 @@ services:
       TASK_TIMEOUT: ${PLAYER_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${PLAYER_MAX_CONCURRENT_TASKS:-20}
       DISCOVERY_URL: http://service-discovery:8089
+      MESSAGING_ENABLED: "true"
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
       interval: 10s
@@ -300,26 +305,36 @@ services:
       timeout: 5s
       retries: 12
 
-  # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
-  # applicant-service, server-rules-service and discord-dms-service also go through the gateway, on
-  # the internal port. No depends_on the gateway: the gateway depends on this service, and the calls
-  # only happen once a request arrives. Every replica registers with service-discovery under its
-  # container hostname and its own container address (Lab 3). All replicas share session-postgres,
-  # which also carries the live updates between them (LISTEN/NOTIFY), so an SSE stream open on one
-  # replica gets the changes made on any other.
+  # Not published to the host: clients reach it only through the gateway (Lab 2). Its calls to
+  # applicant-service and server-rules-service go through the gateway's internal port unless
+  # SESSION_APPLICANT_CLIENT_MODE / SESSION_RULES_CLIENT_MODE=broker (Lab 4: through the broker, whose
+  # circuit breakers then guard them; set broker once that service's image serves the gRPC
+  # ServiceEndpoint, e.g. applicant with docker-compose.lab4-mihai.yml). session.started /
+  # session.closed are published to the broker's topics (DMS_CLIENT_MODE=broker), decision.recorded
+  # arrives from it on gRPC 9082 (private). No depends_on the gateway: the gateway depends on this
+  # service, and the calls only happen once a request arrives. Every replica registers with
+  # service-discovery under its container hostname and its own container address (Lab 3). All
+  # replicas share session-postgres, which also carries the live updates between them
+  # (LISTEN/NOTIFY), so an SSE stream open on one replica gets the changes made on any other.
   server-moderation-session-service:
     deploy:
       replicas: ${SESSION_REPLICAS:-2}
-    image: drateeva/server-moderation-session-service:0.4.0
+    image: drateeva/server-moderation-session-service:0.5.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
       SPRING_DATASOURCE_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
       GATEWAY_URL: http://gateway-service:8090
-      APPLICANT_CLIENT_MODE: http
-      RULES_CLIENT_MODE: http
-      DMS_CLIENT_MODE: http
+      APPLICANT_CLIENT_MODE: ${SESSION_APPLICANT_CLIENT_MODE:-http}
+      RULES_CLIENT_MODE: ${SESSION_RULES_CLIENT_MODE:-http}
+      DMS_CLIENT_MODE: broker
+      MESSAGING_ENABLED: "true"
+      MESSAGING_BROKER_ADDRESS: message-broker:9091
       SESSION_MAX_APPLICANTS_PER_SHIFT: ${SESSION_MAX_APPLICANTS_PER_SHIFT:-10}
+      APPLICANT_DIFFICULTY: ${SESSION_APPLICANT_DIFFICULTY:-MEDIUM}
+      SSE_MAX_CONNECTIONS: ${SESSION_SSE_MAX_CONNECTIONS:-100}
+      SSE_TIMEOUT: ${SESSION_SSE_TIMEOUT:-30m}
+      SSE_HEARTBEAT: ${SESSION_SSE_HEARTBEAT:-15s}
       TASK_TIMEOUT: ${SESSION_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${SESSION_MAX_CONCURRENT_TASKS:-20}
       DISCOVERY_URL: http://service-discovery:8089
@@ -333,6 +348,8 @@ services:
       service-discovery:
         condition: service_healthy
       session-postgres:
+        condition: service_healthy
+      message-broker:
         condition: service_healthy
 
   session-postgres:
@@ -405,9 +422,36 @@ services:
         condition: service_started
 
 
+  # Message Broker (Lab 4), private to this Compose network: HTTP 8091 (/health, /metrics, /topics),
+  # gRPC 9091 (MessageBroker.Call, Publish, ListTopics). One instance: its topic queues are in memory.
+  # It registers with service-discovery and finds each subscriber's instances (and their topics)
+  # there, reaching an instance on its registered port + 1000.
+  message-broker:
+    image: drateeva/message-broker:0.5.0
+    environment:
+      BROKER_PORT: 8091
+      BROKER_GRPC_PORT: 9091
+      BROKER_MAX_THREADS: ${BROKER_MAX_THREADS:-32}
+      DISCOVERY_URL: http://service-discovery:8089
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-INFO}
+      # Durable topic queues and the dead letter channel (Grade 9): one SQLite file on the named volume,
+      # so queued events survive a restart, docker compose down and an image update.
+      QUEUE_STORE_PATH: /data/broker.sqlite3
+    volumes:
+      - broker-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8091/health', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    depends_on:
+      service-discovery:
+        condition: service_healthy
+
   # Control plane, private to this Compose network. One process: the registry is in memory.
   service-discovery:
-    image: drateeva/service-discovery:0.4.0
+    image: drateeva/service-discovery:0.5.0
     environment:
       DISCOVERY_PORT: 8089
       INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}
@@ -428,6 +472,7 @@ services:
       start_period: 10s
 
 volumes:
+  broker-data:
   moderation-postgres-data:
   dms-redis-data:
   rules-mongo-data:
