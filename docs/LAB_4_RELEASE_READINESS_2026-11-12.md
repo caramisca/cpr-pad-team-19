@@ -87,7 +87,7 @@ are propriile PR-uri; până la integrarea lor, un submodul main poate avea înc
 
 Nu sunt 28 bug-uri diferite: unele cereri eșuate încalcă atât statusul, cât și corpul așteptat.
 Colecțiile omit intenționat vechile REST stand-ins și live SSE în Runner; SSE a fost testat separat.
-Diagnosticile private sunt activate în rularea finală. Traficul DMS folosește simulatorul proiectului,
+Diagnosticele private sunt activate în rularea finală. Traficul DMS folosește simulatorul proiectului,
 fără trimitere către Discord sau către colegi.
 
 ### Erori care mai trebuie corectate
