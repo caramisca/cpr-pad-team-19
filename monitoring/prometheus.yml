@@ -65,3 +65,22 @@ scrape_configs:
         type: A
         port: 8088
         refresh_interval: 5s
+  # Gateway and Service Discovery have no /metrics; probe their /health through the blackbox exporter.
+  - job_name: service-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets: ['http://gateway-service:8080/health']
+        labels:
+          service: gateway-service
+      - targets: ['http://service-discovery:8089/health']
+        labels:
+          service: service-discovery
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115
