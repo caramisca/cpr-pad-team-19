@@ -10,10 +10,10 @@ routing, their services' gRPC adapters) is theirs; this runbook says where it pl
 
 | Service | Image | Lab 4 role |
 |---|---|---|
-| `message-broker` | `drateeva/message-broker:0.5.0` | One instance, private: HTTP `8091` (`/health`, `/metrics`, `/topics`), gRPC `9091` (`MessageBroker.Call`, `Publish`, `ListTopics`). Registers with the Service Discovery and finds subscribers and instances there |
+| `message-broker` | `drateeva/message-broker:0.5.0` | One instance, private: HTTP `8091` (`/health`, `/metrics`, `/topics`, `/dead-letters`), gRPC `9091` (`MessageBroker.Call`, `Publish`, `ListTopics`). Registers with the Service Discovery and finds subscribers and instances there. Durable topic queues and the dead letter channel in `/data/broker.sqlite3` on the named volume `broker-data` (`QUEUE_STORE_PATH`), so queued events survive a restart and `docker compose down` (not `down -v`) |
 | `service-discovery` | `drateeva/service-discovery:0.5.0` | Registrations carry `topics`; `GET /topics`, `GET /topics/{topic}/subscribers` ([contract](SERVICE_DISCOVERY_CONTRACT.md)) |
 | `player-service` | `drateeva/player-service:0.5.0` | `MESSAGING_ENABLED=true`: gRPC `ServiceEndpoint` on `9081`, topics `decision.evaluated`, `session.closed` |
-| `server-moderation-session-service` | `drateeva/server-moderation-session-service:0.5.0` | `MESSAGING_ENABLED=true`: gRPC on `9082`, topic `decision.recorded`; publishes `session.started` / `session.closed` to `message-broker:9091` (`DMS_CLIENT_MODE=broker`); applicant call `http` by default, `broker` with `SESSION_APPLICANT_CLIENT_MODE=broker` |
+| `server-moderation-session-service` | `drateeva/server-moderation-session-service:0.5.0` | `MESSAGING_ENABLED=true`: gRPC on `9082`, topic `decision.recorded`; publishes `session.started` / `session.closed` to `message-broker:9091` (`DMS_CLIENT_MODE=broker`); applicant and rules calls `http` by default, `broker` with `SESSION_APPLICANT_CLIENT_MODE=broker` / `SESSION_RULES_CLIENT_MODE=broker` (then the broker's circuit breakers guard them, not Session's) |
 
 Nothing of the broker is published to the host, and no REST stand-in is on (`MOCK_EVENTS_ENABLED` is
 never set in Compose). The Gateway still forwards client requests over HTTP; the queued routing of
@@ -74,6 +74,19 @@ server-moderation-session-service -> COMMITTED`. Then the Postman collections (R
 `player-service` and `server-moderation-session-service`"); their stand-in requests are skipped
 unless `standInUrl` names a local instance with `MOCK_EVENTS_ENABLED=true`.
 
+## Log download (Grade 4)
+
+Every replica of Player and Session serves `GET /internal/logs` (NDJSON, its last 1,000 requests);
+the Gateway's `GET /logs` collects them with every other service's (Gateway `dev`, Andi):
+
+```bash
+curl -s -H "Authorization: Bearer $KEY" "http://localhost:8080/logs?service=player-service,server-moderation-session-service&limit=50"
+curl -s -H "Authorization: Bearer $KEY" "http://localhost:8080/logs?requestId=<the X-Request-Id of one request>"
+```
+
+Every line has `service`, `instanceId` and `requestId`, so one request can be followed through every
+replica it reached; the `X-Log-Sources` header says how many instances answered.
+
 ## Release checks
 
 ```bash
@@ -83,8 +96,8 @@ python3 scripts/check_lab4_monitoring.py --scope team      # Prometheus sees the
 ```
 
 `check_lab4_release.py` builds on `check_lab3_release.py` (all application images pinned, nothing
-built locally, private ports) and adds the broker image and the Lab 4 settings of Player and
-Session. Keep the image list in `check_lab3_release.py` and the broker image in
+built locally, private ports) and adds the broker image, its `/data` volume and the Lab 4 settings of
+Player and Session. Keep the image list in `check_lab3_release.py` and the broker image in
 `check_lab4_release.py` in sync with Compose.
 
 ## Release order
@@ -107,11 +120,12 @@ version in the check scripts and its submodule pointer together.
 - Gateway routing of client requests through the broker's queues, and its routes to `/internal/*`
   removed in a release (Gateway `dev`; the published `0.4.1` still forwards them, the services
   answer `404 ROUTE_NOT_FOUND` with the stand-ins off).
-- Durable queues, the dead letter channel and its listing, the broker's breakers, rerouting and
-  load-aware routing: until then the broker keeps its queues in memory.
+- Rerouting after a trip and load-aware routing in the broker (Diana). Durable queues, the dead
+  letter channel and the breakers are in (broker #9, Andi).
 - The broker's `MessageBroker.Call` accepts only `GET`, `POST`, `PUT`, `PATCH` and `DELETE`
   (`INVALID_ARGUMENT` otherwise), so a `HEAD` or `OPTIONS` routed through the broker never reaches a
   service; Player and Session answer both on their own `ServiceEndpoint.Call` as over HTTP.
-- `discord-dms-service` subscribing to `session.started` / `session.closed`, `server-rules-service`
-  over gRPC (session's rules call stays HTTP through the Gateway), the moderation events published
-  to the broker.
+- `discord-dms-service` `0.5.0` subscribes to `session.started` / `session.closed` and moderation
+  publishes through the broker once Andi's pins (CPR #284) and `docker-compose.lab4-andi.yml` are
+  applied. `server-rules-service` serves its gRPC `ServiceEndpoint` on its `dev` (not released yet):
+  set `SESSION_RULES_CLIENT_MODE=broker` once its image does.

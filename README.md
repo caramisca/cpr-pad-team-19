@@ -22,8 +22,10 @@ broker side of `player-service` and `server-moderation-session-service` (`0.5.0`
 contract's gRPC `ServiceEndpoint` (`Deliver` for their topics, `Call` for every client endpoint
 except the SSE stream), Player consumes `decision.evaluated` and `session.closed` (shifts worked),
 Session consumes `decision.recorded`, publishes `session.started` / `session.closed` and can call
-applicant-service through the broker, and both expose Prometheus metrics. `docker-compose.yml` runs
-`message-broker` (private, `0.5.0`) with Player and Session in broker mode; see the
+applicant-service and server-rules-service through the broker (whose circuit breakers then guard
+those calls instead of Session's own), and both expose Prometheus metrics and their requests for the
+Gateway's log download (`GET /internal/logs`). `docker-compose.yml` runs `message-broker` (private,
+`0.5.0`, durable queues on the `broker-data` volume) with Player and Session in broker mode; see the
 [Lab 4 runbook](docs/LAB_4_RUNBOOK.md) and `scripts/check_lab4_release.py`.
 
 ```mermaid
@@ -130,6 +132,8 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
 - **Consumes:** `decision.evaluated` events to recompute score and rank, and `session.closed` to
   count the shifts each moderator worked (`totalShifts`, `lastShiftAt`), from the message broker over
   gRPC (Lab 4).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /actuator/prometheus`, on port `8081` (Lab 4).
 
 ### 2. `server-moderation-session-service`
 
@@ -148,6 +152,8 @@ Owner: Daria — Java (Spring Boot) — PostgreSQL
   (Lab 3).
 - **Consumes:** `decision.recorded` events to resolve the applicant's queue entry and advance the
   queue, from the message broker over gRPC (Lab 4).
+- **Observability:** the private `GET /internal/logs` (the last 1,000 requests as NDJSON, collected
+  by the Gateway's `GET /logs`) and `GET /actuator/prometheus`, on port `8082` (Lab 4).
 - **Publishes:** `session.started` and `session.closed` to their topics on the message broker (Lab 4).
 
 ### 3. `applicant-service`
@@ -567,6 +573,13 @@ invalid, `404 Not Found` (`PLAYER_NOT_FOUND`) when `playerId` is not a registere
   once are applied once.
 - Makes no business calls (its only outgoing calls register it with `service-discovery`), so it has
   no circuit breaker of its own; and it has nothing to push to clients live.
+- **`GET /internal/logs`** (Lab 4, Grade 4): this instance's last 1,000 business requests as NDJSON
+  (`application/x-ndjson`, oldest first), the collection interface of the Gateway's `GET /logs`
+  ([message contract](docs/MESSAGE_BROKER_CONTRACT.md), "Logs and metrics"). Each line has `timestamp`,
+  `service`, `instanceId`, `requestId`, `method`, `path` (no query string), `status`, `durationMs` and
+  `transport` (`http`, or `grpc` through the broker; a delivery is `DELIVER topics/<topic>` with its
+  `outcome`). Not a task (answers while the service is busy), not routed through the Gateway, and
+  it leaves out the health checks, the metrics and itself.
 
 #### `server-moderation-session-service`
 
@@ -716,6 +729,9 @@ Since Lab 4 both events are published to their topics on the message broker (gRP
 `MessageBroker.Publish`, `DMS_CLIENT_MODE=broker`), for every service that registered the topic,
 after the commit and off the request thread; an unavailable broker is retried with the same
 `eventId` (3 attempts in all). A client of this service never waits for or fails because of it. The
+retries stay with the broker's durable queues (Lab 4, Grade 9): the broker keeps an event only once
+it has accepted it, so they carry it over a broker that is down or restarting; a retry never
+duplicates it (the broker never queues a `messageId` twice, subscribers skip a known `eventId`). The
 Lab 2/3 delivery as `POST /internal/events/...` through the Gateway was removed (`DMS_CLIENT_MODE=http`
 now stops the service at startup).
 
@@ -744,13 +760,26 @@ now stops the service at startup).
   so concurrent requests on different instances take turns (queue positions stay unique, a shift
   closes once). A change made on one instance reaches the SSE streams open on every instance
   (PostgreSQL `LISTEN`/`NOTIFY` on the shared database).
-- **Circuit breaker** (Lab 3): each dependency (`applicant-service`, `server-rules-service`,
-  `discord-dms-service`) has its own circuit. A connection error, timeout, `5xx` or the Gateway's
+- **Circuit breaker** (Lab 3): each dependency called through the Gateway (`applicant-service`,
+  `server-rules-service`) has its own circuit. A connection error, timeout, `5xx` or the Gateway's
   `404 ROUTE_NOT_FOUND` is a failure; 3 failures within `TASK_TIMEOUT` × 3.5 (35 s) open it for as
   long, then one trial call closes or reopens it. While it is open, `next-applicant` answers
   `503 DEPENDENCY_UNAVAILABLE` at once and event deliveries wait. When a circuit opens, the
   dependency's instances are looked up in `service-discovery`, each one's `healthUrl` is checked,
   and the unhealthy ones are deregistered (`DELETE /instances/{serviceName}/{instanceId}`).
+- **Calls through the message broker** (Lab 4, Grades 5 and 8): with `APPLICANT_CLIENT_MODE` /
+  `RULES_CLIENT_MODE=broker`, `POST /applicants/generate` and `GET /rulesets/active` go as gRPC
+  `MessageBroker.Call`. Then the broker's circuit breakers (one per instance) guard them, not
+  Session's: Session keeps no circuit and removes no instance for them, and passes the broker's
+  `CIRCUIT_OPEN` / `TOO_MANY_REQUESTS` on as `503 DEPENDENCY_UNAVAILABLE` with the broker's
+  `Retry-After`. `404 NO_ACTIVE_RULESET` from server-rules-service still means "no ruleset in force".
+- **`GET /internal/logs`** (Lab 4, Grade 4): this instance's last 1,000 business requests as NDJSON
+  (`application/x-ndjson`, oldest first), the collection interface of the Gateway's `GET /logs`
+  ([message contract](docs/MESSAGE_BROKER_CONTRACT.md), "Logs and metrics"). Each line has `timestamp`,
+  `service`, `instanceId`, `requestId`, `method`, `path` (no query string), `status`, `durationMs` and
+  `transport` (`http`, or `grpc` through the broker; a delivery is `DELIVER topics/<topic>` with its
+  `outcome`). Not a task (answers while the service is busy), not routed through the Gateway, and
+  it leaves out the health checks, the metrics and itself.
 - Known gap: `correctDecisions`, `incorrectDecisions` and `score` in the summary stay `0`, because
   `decision.recorded` carries no verdict; `applicantsProcessed` is counted correctly.
 
