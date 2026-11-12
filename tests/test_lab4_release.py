@@ -13,17 +13,19 @@ class Lab4ReleaseGateTests(unittest.TestCase):
         services = {service: {"image": image} for service, image in release.lab3.IMAGES.items()}
         for service in ("applicant-service", "credential-service"):
             services[service].update(deploy={"replicas": 2}, environment={"Storage__Provider": "Redis", "ServiceDiscovery__Url": "http://service-discovery:8089"})
-        services["message-broker"] = {"image": release.BROKER_IMAGE, "environment": {"DISCOVERY_URL": "http://service-discovery:8089"}}
+        services["message-broker"] = {"image": release.BROKER_IMAGE, "environment": {"DISCOVERY_URL": "http://service-discovery:8089"},
+                                      "volumes": [{"type": "volume", "source": "broker-data", "target": "/data"}]}
         services["player-service"]["environment"] = {"MESSAGING_ENABLED": "true"}
         services["server-moderation-session-service"]["environment"] = {
             "MESSAGING_ENABLED": "true", "MESSAGING_BROKER_ADDRESS": "message-broker:9091",
-            "DMS_CLIENT_MODE": "broker", "APPLICANT_CLIENT_MODE": "http"}
+            "DMS_CLIENT_MODE": "broker", "APPLICANT_CLIENT_MODE": "http", "RULES_CLIENT_MODE": "http"}
         return {"services": services}
 
     def test_the_wired_lab4_stack_passes(self):
         self.assertEqual([], release.validate_config(self.config()))
         config = self.config()
-        config["services"]["server-moderation-session-service"]["environment"]["APPLICANT_CLIENT_MODE"] = "broker"
+        config["services"]["server-moderation-session-service"]["environment"].update(
+            APPLICANT_CLIENT_MODE="broker", RULES_CLIENT_MODE="broker")
         self.assertEqual([], release.validate_config(config))
 
     def test_the_broker_must_be_there_pinned_private_single_and_registered(self):
@@ -32,7 +34,9 @@ class Lab4ReleaseGateTests(unittest.TestCase):
             (lambda c: c["services"]["message-broker"].update(image="drateeva/message-broker:0.4.0"), "message-broker: expected drateeva/message-broker:0.5.0"),
             (lambda c: c["services"]["message-broker"].update(build="."), "message-broker: root Compose must use the published image, not a build context"),
             (lambda c: c["services"]["message-broker"].update(ports=[{"target": 9091}]), "message-broker: HTTP 8091 and gRPC 9091 must stay private to the Compose network"),
-            (lambda c: c["services"]["message-broker"].update(deploy={"replicas": 2}), "message-broker: one instance only (its topic queues are in memory)"),
+            (lambda c: c["services"]["message-broker"].update(deploy={"replicas": 2}), "message-broker: one instance only (its topic queues are one SQLite file)"),
+            (lambda c: c["services"]["message-broker"].pop("volumes"), "message-broker: a named volume must be mounted on /data (durable queues and dead letters)"),
+            (lambda c: c["services"]["message-broker"].update(volumes=[{"type": "bind", "source": "./data", "target": "/data"}]), "message-broker: a named volume must be mounted on /data (durable queues and dead letters)"),
             (lambda c: c["services"]["message-broker"]["environment"].pop("DISCOVERY_URL"), "message-broker: DISCOVERY_URL must be http://service-discovery:8089"),
         ]:
             config = self.config()
@@ -46,6 +50,7 @@ class Lab4ReleaseGateTests(unittest.TestCase):
             ("server-moderation-session-service", "MESSAGING_BROKER_ADDRESS", "localhost:9091"),
             ("server-moderation-session-service", "DMS_CLIENT_MODE", "http"),
             ("server-moderation-session-service", "APPLICANT_CLIENT_MODE", "mock"),
+            ("server-moderation-session-service", "RULES_CLIENT_MODE", "mock"),
         ]:
             config = self.config()
             config["services"][service]["environment"][key] = value
