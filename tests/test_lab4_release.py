@@ -16,6 +16,8 @@ class Lab4ReleaseGateTests(unittest.TestCase):
         services["message-broker"] = {"image": release.BROKER_IMAGE, "environment": {"DISCOVERY_URL": "http://service-discovery:8089"},
                                       "volumes": [{"type": "volume", "source": "broker-data", "target": "/data"}]}
         services["player-service"]["environment"] = {"MESSAGING_ENABLED": "true"}
+        for service in ("server-rules-service", "university-record-service"):
+            services[service]["environment"] = {"BROKER_GRPC_URL": "message-broker:9091"}
         services["server-moderation-session-service"]["environment"] = {
             "MESSAGING_ENABLED": "true", "MESSAGING_BROKER_ADDRESS": "message-broker:9091",
             "DMS_CLIENT_MODE": "broker", "APPLICANT_CLIENT_MODE": "http", "RULES_CLIENT_MODE": "http"}
@@ -62,6 +64,19 @@ class Lab4ReleaseGateTests(unittest.TestCase):
         config["services"]["player-service"]["environment"]["MOCK_EVENTS_ENABLED"] = "true"
         self.assertIn("player-service: MOCK_EVENTS_ENABLED must not be on in Compose (REST stand-ins are local only)",
                       release.validate_config(config))
+
+    def test_java_services_require_a_nonempty_broker_target_at_startup(self):
+        for service in ("server-rules-service", "university-record-service"):
+            for target in (None, "", "localhost:9091"):
+                with self.subTest(service=service, target=target):
+                    config = self.config()
+                    env = config["services"][service]["environment"]
+                    if target is None:
+                        env.pop("BROKER_GRPC_URL")
+                    else:
+                        env["BROKER_GRPC_URL"] = target
+                    self.assertTrue(any(service in error and "BROKER_GRPC_URL" in error
+                                        for error in release.validate_config(config)))
 
     def test_lab3_rules_still_apply(self):
         config = self.config()
