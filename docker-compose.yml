@@ -390,6 +390,7 @@ services:
       DMS_SERVICE_URL: http://discord-dms-service:8088
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-200}
+      BROKER_GRPC_URL: ${BROKER_GRPC_URL:-}
     # The image has no curl, so the healthcheck uses Python, which it does have.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]

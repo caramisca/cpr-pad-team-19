@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "discord-dms-service",
-    "description": "Notification endpoints for discord-dms-service (Team 19, Topic 3: Student ID, Please). Run requests top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Calls go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder plays one shift through POST /internal/events/{eventType}, which delivers the consumed events until the message broker exists. The Chat folder asks the gateway for a chat ticket through POST /ws/negotiate: open the url it returns with a WebSocket client before expiresAt to join the chat directly on discord-dms-service.",
+    "description": "Endpoints of discord-dms-service 0.5.0 (Team 19, Topic 3: Student ID, Please; Laboratory 4). Run the folders top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Business requests go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder publishes the consumed events to the Message Broker (brokerUrl), which delivers them to the service over gRPC; POST /internal/events is retired. The Chat folder asks the gateway for a chat ticket through POST /ws/negotiate: open the url it returns with a WebSocket client before expiresAt to join the chat directly on discord-dms-service. The Internal diagnostics folder reads GET /metrics and GET /internal/logs on the instance itself (internalBaseUrl); these routes are not public Gateway routes.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -23,6 +23,16 @@
     {
       "key": "apiKey",
       "value": "",
+      "type": "string"
+    },
+    {
+      "key": "internalBaseUrl",
+      "value": "http://localhost:8088",
+      "type": "string"
+    },
+    {
+      "key": "brokerUrl",
+      "value": "http://localhost:8091",
       "type": "string"
     },
     {
@@ -56,32 +66,22 @@
       "type": "string"
     },
     {
-      "key": "sessionStartedNotificationIds",
+      "key": "verdictEventId",
       "value": "",
       "type": "string"
     },
     {
-      "key": "sessionStartedNotificationId",
+      "key": "rulesetEventId",
       "value": "",
       "type": "string"
     },
     {
-      "key": "applicantId",
+      "key": "sessionClosedEventId",
       "value": "",
       "type": "string"
     },
     {
-      "key": "decisionId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "verdictNotificationId",
-      "value": "",
-      "type": "string"
-    },
-    {
-      "key": "sessionClosedNotificationId",
+      "key": "brokerRequestId",
       "value": "",
       "type": "string"
     },
@@ -122,7 +122,7 @@
                   "const body = pm.response.json();",
                   "pm.test(\"reports Healthy\", () => pm.expect(body.status).to.eql(\"Healthy\"));",
                   "pm.test(\"reports Gateway health\", () => pm.expect(body.service).to.eql(\"gateway-service\"));",
-                  "pm.test(\"reports Lab 3 version\", () => pm.expect(body.version).to.eql(\"0.4.0\"));",
+                  "pm.test(\"reports a version\", () => pm.expect(body.version).to.match(/^\\d+\\.\\d+\\.\\d+$/));",
                   "pm.test(\"reports instance identity\", () => pm.expect(body.instanceId).to.be.a(\"string\").and.not.empty);",
                   "pm.test(\"reports valid load\", () => pm.expect([\"NORMAL\", \"HIGH\", \"CRITICAL\"]).to.include(body.load));",
                   "pm.test(\"reports capacity\", () => { pm.expect(body.maxThreads).to.be.a(\"number\").and.above(0); pm.expect(body.activeThreads).to.be.a(\"number\").and.at.least(0).and.at.most(body.maxThreads); });",
@@ -456,10 +456,11 @@
       ]
     },
     {
-      "name": "Event Delivery",
+      "name": "Event Delivery through the Message Broker",
+      "description": "Plays one shift through the Message Broker (brokerUrl, its HTTP port 8091 on the Compose network; publish or forward it for Postman). Each request publishes the event envelope of docs/MESSAGE_BROKER_CONTRACT.md in the CPR, and the broker delivers one copy to one discord-dms-service instance with gRPC ServiceEndpoint.Deliver. The instance answers COMMITTED only after the notifications and the eventId are stored in Redis in one transaction. The broker answers 202 before that delivery, so the notifications are checked in the logs: docker compose logs discord-dms-service discord-dms-service-replica | grep postman- shows one DELIVER line per event, under its X-Request-Id, and the publish of the same event again is COMMITTED as a duplicate that queues nothing.",
       "item": [
         {
-          "name": "Deliver Session Started",
+          "name": "Publish Session Started",
           "event": [
             {
               "listen": "prerequest",
@@ -468,7 +469,8 @@
                 "exec": [
                   "pm.collectionVariables.set(\"sessionStartedEventId\", pm.variables.replaceIn(\"{{$guid}}\"));",
                   "pm.collectionVariables.set(\"sessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
-                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"brokerRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -479,55 +481,9 @@
                 "exec": [
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "const body = pm.response.json();",
-                  "pm.test(\"one notification is queued for the moderator\", () => {",
-                  "  pm.expect(body.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
-                  "  pm.expect(body.duplicate).to.eql(false);",
-                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
-                  "});",
-                  "pm.collectionVariables.set(\"sessionStartedNotificationIds\", JSON.stringify(body.notificationIds));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{sessionStartedEventId}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"startedAt\": \"{{$isoTimestamp}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/internal/events/session.started",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "internal",
-                "events",
-                "session.started"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Redeliver Session Started",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"the redelivery is recognised and changes nothing\", () => {",
-                  "  pm.expect(body.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
-                  "  pm.expect(body.duplicate).to.eql(true);",
-                  "  pm.expect(JSON.stringify(body.notificationIds)).to.eql(pm.collectionVariables.get(\"sessionStartedNotificationIds\"));",
+                  "pm.test(\"a copy is queued for discord-dms-service\", () => {",
+                  "  pm.expect(body.messageId).to.eql(pm.variables.replaceIn(\"{{sessionStartedEventId}}\"));",
+                  "  pm.expect(body.queuedServices).to.include(\"discord-dms-service\");",
                   "});"
                 ]
               }
@@ -539,34 +495,41 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{brokerRequestId}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{sessionStartedEventId}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"startedAt\": \"{{$isoTimestamp}}\"\n}"
+              "raw": "{\n  \"messageId\": \"{{sessionStartedEventId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"session.started\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"requestId\": \"{{brokerRequestId}}\",\n  \"payload\": {\n    \"eventId\": \"{{sessionStartedEventId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"moderatorId\": \"{{moderatorId}}\",\n    \"startedAt\": \"{{$isoTimestamp}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{baseUrl}}/internal/events/session.started",
+              "raw": "{{brokerUrl}}/events",
               "host": [
-                "{{baseUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
-                "internal",
-                "events",
-                "session.started"
+                "events"
               ]
             }
           }
         },
         {
-          "name": "Get Session Started Notification",
+          "name": "Publish Session Started Again (committed as a duplicate)",
           "event": [
             {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"sessionStartedNotificationId\", JSON.parse(pm.collectionVariables.get(\"sessionStartedNotificationIds\"))[0]);"
+                  "pm.collectionVariables.set(\"brokerRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -575,46 +538,58 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "const body = pm.response.json();",
-                  "pm.test(\"the moderator is told the shift has started\", () => {",
-                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
-                  "  pm.expect(body.type).to.eql(\"SESSION_STARTED\");",
-                  "  pm.expect(body.message).to.include(\"has started\");",
-                  "});",
-                  "pm.test(\"metadata traces the message back to the event\", () => {",
-                  "  pm.expect(body.metadata.eventType).to.eql(\"session.started\");",
-                  "  pm.expect(body.metadata.eventId).to.eql(pm.collectionVariables.get(\"sessionStartedEventId\"));",
-                  "  pm.expect(body.metadata.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
+                  "pm.test(\"a copy is queued for discord-dms-service\", () => {",
+                  "  pm.expect(body.messageId).to.eql(pm.variables.replaceIn(\"{{sessionStartedEventId}}\"));",
+                  "  pm.expect(body.queuedServices).to.include(\"discord-dms-service\");",
                   "});"
                 ]
               }
             }
           ],
           "request": {
-            "method": "GET",
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{brokerRequestId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{sessionStartedEventId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"session.started\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"requestId\": \"{{brokerRequestId}}\",\n  \"payload\": {\n    \"eventId\": \"{{sessionStartedEventId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"moderatorId\": \"{{moderatorId}}\",\n    \"startedAt\": \"{{$isoTimestamp}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/notifications/{{sessionStartedNotificationId}}",
+              "raw": "{{brokerUrl}}/events",
               "host": [
-                "{{baseUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
-                "notifications",
-                "{{sessionStartedNotificationId}}"
+                "events"
               ]
             }
           }
         },
         {
-          "name": "Deliver Verdict Issued",
+          "name": "Publish Verdict Issued",
           "event": [
             {
               "listen": "prerequest",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.collectionVariables.set(\"applicantId\", pm.variables.replaceIn(\"{{$guid}}\"));",
-                  "pm.collectionVariables.set(\"decisionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                  "pm.collectionVariables.set(\"verdictEventId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"brokerRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
                 ]
               }
             },
@@ -625,91 +600,9 @@
                 "exec": [
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "const body = pm.response.json();",
-                  "pm.test(\"one notification is queued for the applicant\", () => {",
-                  "  pm.expect(body.duplicate).to.eql(false);",
-                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
-                  "});",
-                  "pm.collectionVariables.set(\"verdictNotificationId\", body.notificationIds[0]);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"decisionId\": \"{{decisionId}}\",\n  \"applicantId\": \"{{applicantId}}\",\n  \"action\": \"REJECT\",\n  \"correct\": true,\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/internal/events/verdict.issued",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "internal",
-                "events",
-                "verdict.issued"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Get Verdict Notification",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"the applicant is told the decision and the reason\", () => {",
-                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"applicantId\"));",
-                  "  pm.expect(body.type).to.eql(\"VERDICT\");",
-                  "  pm.expect(body.message).to.include(\"rejected\");",
-                  "  pm.expect(body.message).to.include(\"Reasons:\");",
-                  "});",
-                  "pm.test(\"metadata traces the message back to the event\", () => {",
-                  "  pm.expect(body.metadata.eventType).to.eql(\"verdict.issued\");",
-                  "  pm.expect(body.metadata.decisionId).to.eql(pm.collectionVariables.get(\"decisionId\"));",
-                  "});"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "url": {
-              "raw": "{{baseUrl}}/notifications/{{verdictNotificationId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "notifications",
-                "{{verdictNotificationId}}"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Deliver Ruleset Updated",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"one notification is queued for each moderator with an open shift\", () => {",
-                  "  pm.expect(body.duplicate).to.eql(false);",
-                  "  pm.expect(body.notificationIds.length).to.be.at.least(1);",
+                  "pm.test(\"a copy is queued for discord-dms-service\", () => {",
+                  "  pm.expect(body.messageId).to.eql(pm.variables.replaceIn(\"{{verdictEventId}}\"));",
+                  "  pm.expect(body.queuedServices).to.include(\"discord-dms-service\");",
                   "});"
                 ]
               }
@@ -721,28 +614,45 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{brokerRequestId}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"rulesetId\": \"{{$guid}}\",\n  \"version\": 2,\n  \"effectiveFrom\": \"{{$isoTimestamp}}\",\n  \"changedFields\": [\n    \"ALLOWED_FACULTY\"\n  ]\n}"
+              "raw": "{\n  \"messageId\": \"{{verdictEventId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"verdict.issued\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"requestId\": \"{{brokerRequestId}}\",\n  \"payload\": {\n    \"eventId\": \"{{verdictEventId}}\",\n    \"decisionId\": \"{{$guid}}\",\n    \"applicantId\": \"{{$guid}}\",\n    \"action\": \"REJECT\",\n    \"correct\": true,\n    \"violatedRules\": [\n      \"RECORD_NOT_FOUND\"\n    ],\n    \"issuedAt\": \"{{$isoTimestamp}}\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{baseUrl}}/internal/events/ruleset.updated",
+              "raw": "{{brokerUrl}}/events",
               "host": [
-                "{{baseUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
-                "internal",
-                "events",
-                "ruleset.updated"
+                "events"
               ]
             }
           }
         },
         {
-          "name": "Deliver Session Closed",
+          "name": "Publish Ruleset Updated",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"rulesetEventId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"brokerRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
@@ -750,11 +660,10 @@
                 "exec": [
                   "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "const body = pm.response.json();",
-                  "pm.test(\"one notification is queued for the moderator of the session\", () => {",
-                  "  pm.expect(body.duplicate).to.eql(false);",
-                  "  pm.expect(body.notificationIds).to.have.lengthOf(1);",
-                  "});",
-                  "pm.collectionVariables.set(\"sessionClosedNotificationId\", body.notificationIds[0]);"
+                  "pm.test(\"a copy is queued for discord-dms-service\", () => {",
+                  "  pm.expect(body.messageId).to.eql(pm.variables.replaceIn(\"{{rulesetEventId}}\"));",
+                  "  pm.expect(body.queuedServices).to.include(\"discord-dms-service\");",
+                  "});"
                 ]
               }
             }
@@ -765,54 +674,88 @@
               {
                 "key": "Content-Type",
                 "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{brokerRequestId}}"
               }
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{$guid}}\",\n  \"sessionId\": \"{{sessionId}}\",\n  \"closedAt\": \"{{$isoTimestamp}}\",\n  \"summary\": {\n    \"applicantsProcessed\": 2,\n    \"score\": 25\n  }\n}"
+              "raw": "{\n  \"messageId\": \"{{rulesetEventId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"ruleset.updated\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"requestId\": \"{{brokerRequestId}}\",\n  \"payload\": {\n    \"eventId\": \"{{rulesetEventId}}\",\n    \"rulesetId\": \"{{$guid}}\",\n    \"version\": 2,\n    \"effectiveFrom\": \"{{$isoTimestamp}}\",\n    \"changedFields\": [\n      \"ALLOWED_FACULTY\"\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
             "url": {
-              "raw": "{{baseUrl}}/internal/events/session.closed",
+              "raw": "{{brokerUrl}}/events",
               "host": [
-                "{{baseUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
-                "internal",
-                "events",
-                "session.closed"
+                "events"
               ]
             }
           }
         },
         {
-          "name": "Get Session Closed Notification",
+          "name": "Publish Session Closed",
           "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionClosedEventId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"brokerRequestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
                   "const body = pm.response.json();",
-                  "pm.test(\"the moderator of the session gets the summary\", () => {",
-                  "  pm.expect(body.recipientId).to.eql(pm.collectionVariables.get(\"moderatorId\"));",
-                  "  pm.expect(body.type).to.eql(\"SESSION_CLOSED\");",
-                  "  pm.expect(body.message).to.include(\"You processed 2 applicants\");",
+                  "pm.test(\"a copy is queued for discord-dms-service\", () => {",
+                  "  pm.expect(body.messageId).to.eql(pm.variables.replaceIn(\"{{sessionClosedEventId}}\"));",
+                  "  pm.expect(body.queuedServices).to.include(\"discord-dms-service\");",
                   "});"
                 ]
               }
             }
           ],
           "request": {
-            "method": "GET",
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Request-Id",
+                "value": "{{brokerRequestId}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messageId\": \"{{sessionClosedEventId}}\",\n  \"source\": \"postman\",\n  \"topic\": \"session.closed\",\n  \"occurredAt\": \"{{$isoTimestamp}}\",\n  \"schemaVersion\": 1,\n  \"requestId\": \"{{brokerRequestId}}\",\n  \"payload\": {\n    \"eventId\": \"{{sessionClosedEventId}}\",\n    \"sessionId\": \"{{sessionId}}\",\n    \"closedAt\": \"{{$isoTimestamp}}\",\n    \"summary\": {\n      \"applicantsProcessed\": 2,\n      \"score\": 25\n    }\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
             "url": {
-              "raw": "{{baseUrl}}/notifications/{{sessionClosedNotificationId}}",
+              "raw": "{{brokerUrl}}/events",
               "host": [
-                "{{baseUrl}}"
+                "{{brokerUrl}}"
               ],
               "path": [
-                "notifications",
-                "{{sessionClosedNotificationId}}"
+                "events"
               ]
             }
           }
@@ -1284,88 +1227,6 @@
           }
         },
         {
-          "name": "Deliver Unknown Event Type Returns 404",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
-                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{$guid}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/internal/events/applicant.arrived",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "internal",
-                "events",
-                "applicant.arrived"
-              ]
-            }
-          }
-        },
-        {
-          "name": "Deliver Event Missing Fields Returns 400",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
-                  "const body = pm.response.json();",
-                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
-                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"eventId\": \"{{$guid}}\"\n}"
-            },
-            "url": {
-              "raw": "{{baseUrl}}/internal/events/session.started",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "internal",
-                "events",
-                "session.started"
-              ]
-            }
-          }
-        },
-        {
           "name": "Negotiate Chat Ticket With Unknown Channel Returns 400",
           "event": [
             {
@@ -1441,6 +1302,122 @@
               "path": [
                 "notifications",
                 "dm"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lab 4 Internal diagnostics (private network or the published instance only)",
+      "description": "Read on one instance (internalBaseUrl, the discord-dms-service container that publishes 8088), not through the gateway. Counters and the log window are per instance, so requests answered by a replica appear on that replica only.",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Prometheus metrics",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Prometheus text format 0.0.4\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain; version=0.0.4\"));",
+                  "const text = pm.response.text();",
+                  "pm.test(\"the service metrics are exposed\", () => {",
+                  "  [\"service_requests_total \", \"service_errors_total \", \"service_request_duration_seconds_sum \", \"service_active_requests \"]",
+                  "    .forEach((name) => pm.expect(text).to.include(\"\\n\" + name));",
+                  "});",
+                  "pm.test(\"every consumed topic has its delivery series\", () => {",
+                  "  [\"verdict.issued\", \"session.started\", \"session.closed\", \"ruleset.updated\"].forEach((topic) =>",
+                  "    [\"COMMITTED\", \"RETRY\", \"REJECTED\"].forEach((outcome) =>",
+                  "      pm.expect(text).to.include(`service_event_deliveries_total{topic=\"${topic}\",outcome=\"${outcome}\"}`)));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/metrics",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "metrics"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Structured logs",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"NDJSON\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"application/x-ndjson\"));",
+                  "const lines = pm.response.text().split(\"\\n\").filter(Boolean).map((line) => JSON.parse(line));",
+                  "pm.test(\"at most the last 1000 business requests\", () => pm.expect(lines.length).to.be.at.most(1000));",
+                  "pm.test(\"every line has the Lab 4 fields\", () => lines.forEach((line) => {",
+                  "  pm.expect(Object.keys(line)).to.eql([\"timestamp\", \"service\", \"instanceId\", \"requestId\", \"method\", \"path\", \"status\", \"durationMs\", \"transport\"]);",
+                  "  pm.expect(line.service).to.eql(\"discord-dms-service\");",
+                  "  pm.expect([\"http\", \"grpc\"]).to.include(line.transport);",
+                  "  pm.expect(line.path).to.not.include(\"?\");",
+                  "}));",
+                  "pm.test(\"health checks, scrapes and log reads are not business requests\", () => lines.forEach((line) =>",
+                  "  pm.expect([\"/health\", \"/metrics\", \"/internal/logs\"]).to.not.include(line.path)));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/logs",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "logs"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Own Instance Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"reports discord-dms-service 0.5.0\", () => {",
+                  "  pm.expect(body.service).to.eql(\"discord-dms-service\");",
+                  "  pm.expect(body.version).to.eql(\"0.5.0\");",
+                  "  pm.expect(body.checks.redis).to.eql(\"Healthy\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/health",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "health"
               ]
             }
           }
