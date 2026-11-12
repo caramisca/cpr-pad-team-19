@@ -100,6 +100,10 @@ fără trimitere către Discord sau către colegi.
 - `PUT /records/students/1234567890` primește 405 pe calea gRPC; actualizarea și restaurarea
   studentului trebuie implementate/aliniate cu API-ul documentat.
 - Pentru metoda greșită, Record întoarce 404 `ROUTE_NOT_FOUND`, nu 405 `METHOD_NOT_ALLOWED`.
+- CI Gateway are încă `startup_failure` înainte de joburi: [rularea 43234266931](https://github.com/diana7376/gateway-service/actions/runs/43234266931), zero joburi.
+  Workflow-ul real este `.github/workflows/build.yml`; imaginea publicată nu dovedește că
+  verificarea curentă de PR pornește. Diana trebuie să citească eroarea exactă din Actions Summary
+  și să obțină o rulare verde înainte de release.
 - Imaginea Gateway 0.5.0 raportează încă runtime 0.4.1. Am făcut versiunea așteptată configurabilă
   în Postman; versiunea aplicației trebuie aliniată la următorul release, fără suprascrierea 0.5.0.
 
@@ -187,7 +191,7 @@ PR-uri de documentație pregătite pentru cele cinci servicii accesibile și pen
 - [Gateway #29](https://github.com/diana7376/gateway-service/pull/29)
 - [Service Discovery #14](https://github.com/DariaRateeva/service-discovery/pull/14)
 - [Broker #12](https://github.com/DariaRateeva/message-broker/pull/12)
-- CPR: ramura `docs/lab4-current-behavior`, împreună cu acest raport, runbook și corecțiile Postman.
+- [CPR #293](https://github.com/caramisca/cpr-pad-team-19/pull/293): README comun, raport, runbook, diagramă și corecțiile Postman.
 
 Pentru cele șase repo-uri private, fiecare proprietar trebuie să alinieze README-ul la Lab 4:
 versiune/imagine publicată, port HTTP și gRPC, variabilele reale, topics publicate/consumate,
