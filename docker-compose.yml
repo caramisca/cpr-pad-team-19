@@ -8,11 +8,70 @@
 # sent as "Authorization: Bearer <key>"); the services call each other through the gateway's
 # internal port 8090, which is not published to the host. Lab 4 adds message-broker: player-service
 # and server-moderation-session-service take their events from it and session publishes its own to
-# it, over gRPC on the private Compose network (CPR docs/MESSAGE_BROKER_CONTRACT.md).
+# it, over gRPC on the private Compose network (CPR docs/MESSAGE_BROKER_CONTRACT.md). Lab 5 replicates
+# player-postgres and session-postgres: three Patroni members each (image drateeva/postgres-ha, built
+# from docker/postgres-ha/), an etcd cluster that elects the primary, and an HAProxy under the old
+# hostname that always leads to the primary (docs/LAB_5_DATABASE_FAILOVER.md).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
 #   docker compose up
+
+# Shared settings of the replicated PostgreSQL clusters (Lab 5, Grade 5), reused below with <<.
+x-postgres-ha-member: &postgres-ha-member
+  image: drateeva/postgres-ha:16.16-patroni4.1.5
+  healthcheck:
+    # Patroni's REST API: 200 once PostgreSQL runs as the primary or as a streaming standby.
+    test: ["CMD-SHELL", "curl -fsS http://localhost:8008/readiness >/dev/null || exit 1"]
+    interval: 5s
+    timeout: 3s
+    retries: 24
+    start_period: 20s
+  depends_on:
+    postgres-etcd-1:
+      condition: service_healthy
+    postgres-etcd-2:
+      condition: service_healthy
+    postgres-etcd-3:
+      condition: service_healthy
+
+x-postgres-ha-router: &postgres-ha-router
+  image: haproxy:3.0.31-alpine
+  volumes:
+    - ./docker/postgres-ha/haproxy-postgres.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  healthcheck:
+    # 200 only while one member is the primary, so the service starts once it can write.
+    test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8404/healthz || exit 1"]
+    interval: 3s
+    timeout: 3s
+    retries: 40
+    start_period: 10s
+
+x-player-postgres-cluster: &player-postgres-cluster
+  PATRONI_SCOPE: player-postgres
+  PATRONI_ETCD3_HOSTS: postgres-etcd-1:2379,postgres-etcd-2:2379,postgres-etcd-3:2379
+  PATRONI_SUPERUSER_PASSWORD: ${PLAYER_POSTGRES_SUPERUSER_PASSWORD}
+  PATRONI_REPLICATION_PASSWORD: ${PLAYER_POSTGRES_REPLICATION_PASSWORD}
+  APP_DB_NAME: playerdb
+  APP_DB_USER: ${PLAYER_POSTGRES_USER}
+  APP_DB_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
+
+x-session-postgres-cluster: &session-postgres-cluster
+  PATRONI_SCOPE: session-postgres
+  PATRONI_ETCD3_HOSTS: postgres-etcd-1:2379,postgres-etcd-2:2379,postgres-etcd-3:2379
+  PATRONI_SUPERUSER_PASSWORD: ${SESSION_POSTGRES_SUPERUSER_PASSWORD}
+  PATRONI_REPLICATION_PASSWORD: ${SESSION_POSTGRES_REPLICATION_PASSWORD}
+  APP_DB_NAME: sessiondb
+  APP_DB_USER: ${SESSION_POSTGRES_USER}
+  APP_DB_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
+
+x-postgres-etcd: &postgres-etcd
+  image: quay.io/coreos/etcd:v3.6.17
+  healthcheck:
+    test: ["CMD", "etcdctl", "endpoint", "health"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
 
 services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
@@ -278,7 +337,8 @@ services:
 
   # Not published to the host: clients reach it only through the gateway (Lab 2). Every replica
   # registers with service-discovery under its container hostname and its own container address,
-  # and the gateway finds the replicas there (Lab 3). All replicas share player-postgres.
+  # and the gateway finds the replicas there (Lab 3). All replicas share player-postgres (since Lab 5
+  # the current primary of a replicated cluster).
   # Lab 4: each replica serves the broker's gRPC ServiceEndpoint on 9081 (private) and registers the
   # topics decision.evaluated and session.closed, so the broker delivers those events to it.
   player-service:
@@ -305,19 +365,53 @@ services:
       player-postgres:
         condition: service_healthy
 
+  # player-service's database (Lab 5, Grade 5: replication + failover). Three Patroni members
+  # (player-postgres-1..3: one primary, a synchronous and a streaming standby) and, under the old
+  # hostname player-postgres, an HAProxy that always forwards to the current primary. Lose the primary
+  # and a standby is promoted within ~15 s; the services keep the same URL.
   player-postgres:
-    image: postgres:16
+    <<: *postgres-ha-router
     environment:
-      POSTGRES_DB: playerdb
-      POSTGRES_USER: ${PLAYER_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${PLAYER_POSTGRES_PASSWORD}
+      PG_MEMBER_1: player-postgres-1
+      PG_MEMBER_2: player-postgres-2
+      PG_MEMBER_3: player-postgres-3
+    depends_on:
+      player-postgres-1:
+        condition: service_started
+      player-postgres-2:
+        condition: service_started
+      player-postgres-3:
+        condition: service_started
+
+  player-postgres-1:
+    <<: *postgres-ha-member
+    environment:
+      <<: *player-postgres-cluster
+      PATRONI_NAME: player-postgres-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: player-postgres-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-1:5432
     volumes:
-      - player-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      - player-postgres-1-data:/var/lib/postgresql/patroni
+
+  player-postgres-2:
+    <<: *postgres-ha-member
+    environment:
+      <<: *player-postgres-cluster
+      PATRONI_NAME: player-postgres-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: player-postgres-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-2:5432
+    volumes:
+      - player-postgres-2-data:/var/lib/postgresql/patroni
+
+  player-postgres-3:
+    <<: *postgres-ha-member
+    environment:
+      <<: *player-postgres-cluster
+      PATRONI_NAME: player-postgres-3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: player-postgres-3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-3:5432
+    volumes:
+      - player-postgres-3-data:/var/lib/postgresql/patroni
 
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its calls to
   # applicant-service and server-rules-service go through the gateway's internal port unless
@@ -366,19 +460,103 @@ services:
       message-broker:
         condition: service_healthy
 
+  # server-moderation-session-service's database, replicated like player-postgres. Its LISTEN/NOTIFY
+  # (live updates between the session replicas) runs on the primary: after a failover the session
+  # replicas reconnect through this HAProxy and resend each open stream its state.
   session-postgres:
-    image: postgres:16
+    <<: *postgres-ha-router
     environment:
-      POSTGRES_DB: sessiondb
-      POSTGRES_USER: ${SESSION_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
+      PG_MEMBER_1: session-postgres-1
+      PG_MEMBER_2: session-postgres-2
+      PG_MEMBER_3: session-postgres-3
+    depends_on:
+      session-postgres-1:
+        condition: service_started
+      session-postgres-2:
+        condition: service_started
+      session-postgres-3:
+        condition: service_started
+
+  session-postgres-1:
+    <<: *postgres-ha-member
+    environment:
+      <<: *session-postgres-cluster
+      PATRONI_NAME: session-postgres-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: session-postgres-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-1:5432
     volumes:
-      - session-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      - session-postgres-1-data:/var/lib/postgresql/patroni
+
+  session-postgres-2:
+    <<: *postgres-ha-member
+    environment:
+      <<: *session-postgres-cluster
+      PATRONI_NAME: session-postgres-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: session-postgres-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-2:5432
+    volumes:
+      - session-postgres-2-data:/var/lib/postgresql/patroni
+
+  session-postgres-3:
+    <<: *postgres-ha-member
+    environment:
+      <<: *session-postgres-cluster
+      PATRONI_NAME: session-postgres-3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: session-postgres-3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-3:5432
+    volumes:
+      - session-postgres-3-data:/var/lib/postgresql/patroni
+
+  # The consensus store of the player and session PostgreSQL clusters (Lab 5, Grade 5): Patroni keeps
+  # each cluster's leader lock here, so exactly one member of each is the primary. Three members, so
+  # it keeps working when one is lost. Private to this Compose network.
+  postgres-etcd-1:
+    <<: *postgres-etcd
+    command:
+      - etcd
+      - --name=postgres-etcd-1
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://postgres-etcd-1:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://postgres-etcd-1:2380
+      - --initial-cluster=postgres-etcd-1=http://postgres-etcd-1:2380,postgres-etcd-2=http://postgres-etcd-2:2380,postgres-etcd-3=http://postgres-etcd-3:2380
+      - --initial-cluster-token=team19-postgres
+      - --initial-cluster-state=new
+    volumes:
+      - postgres-etcd-1-data:/etcd-data
+
+  postgres-etcd-2:
+    <<: *postgres-etcd
+    command:
+      - etcd
+      - --name=postgres-etcd-2
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://postgres-etcd-2:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://postgres-etcd-2:2380
+      - --initial-cluster=postgres-etcd-1=http://postgres-etcd-1:2380,postgres-etcd-2=http://postgres-etcd-2:2380,postgres-etcd-3=http://postgres-etcd-3:2380
+      - --initial-cluster-token=team19-postgres
+      - --initial-cluster-state=new
+    volumes:
+      - postgres-etcd-2-data:/etcd-data
+
+  postgres-etcd-3:
+    <<: *postgres-etcd
+    command:
+      - etcd
+      - --name=postgres-etcd-3
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://postgres-etcd-3:2379
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --initial-advertise-peer-urls=http://postgres-etcd-3:2380
+      - --initial-cluster=postgres-etcd-1=http://postgres-etcd-1:2380,postgres-etcd-2=http://postgres-etcd-2:2380,postgres-etcd-3=http://postgres-etcd-3:2380
+      - --initial-cluster-token=team19-postgres
+      - --initial-cluster-state=new
+    volumes:
+      - postgres-etcd-3-data:/etcd-data
 
   # Single entry point of the system (Lab 2). Clients call http://localhost:8080 with the paths from
   # the communication contract and an API key, and the gateway forwards each request to the service
@@ -493,5 +671,12 @@ volumes:
   record-postgres-data:
   applicant-redis-data:
   credential-redis-data:
-  player-postgres-data:
-  session-postgres-data:
+  player-postgres-1-data:
+  player-postgres-2-data:
+  player-postgres-3-data:
+  session-postgres-1-data:
+  session-postgres-2-data:
+  session-postgres-3-data:
+  postgres-etcd-1-data:
+  postgres-etcd-2-data:
+  postgres-etcd-3-data:
