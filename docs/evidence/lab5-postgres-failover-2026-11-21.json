@@ -1,0 +1,107 @@
+{
+  "timestamp": "2026-11-21T14:28:35.897118+00:00",
+  "clusters": [
+    {
+      "cluster": "player-postgres",
+      "errors": [],
+      "primaryBefore": "player-postgres-1",
+      "membersBefore": [
+        {
+          "Member": "player-postgres-1",
+          "Role": "Leader",
+          "State": "running",
+          "Lag in MB": null
+        },
+        {
+          "Member": "player-postgres-2",
+          "Role": "Replica",
+          "State": "streaming",
+          "Lag in MB": null
+        },
+        {
+          "Member": "player-postgres-3",
+          "Role": "Replica",
+          "State": "streaming",
+          "Lag in MB": null
+        }
+      ],
+      "writesRefusedForSeconds": 19.7,
+      "refusedAttempts": 22,
+      "markerKept": true,
+      "primaryAfter": "player-postgres-3",
+      "oldPrimaryRejoinedAs": "Replica",
+      "rejoinSeconds": 4.4,
+      "membersAfter": [
+        {
+          "Member": "player-postgres-1",
+          "Role": "Replica",
+          "State": "streaming",
+          "Lag in MB": null
+        },
+        {
+          "Member": "player-postgres-2",
+          "Role": "Sync Standby",
+          "State": "streaming",
+          "Lag in MB": null
+        },
+        {
+          "Member": "player-postgres-3",
+          "Role": "Leader",
+          "State": "running",
+          "Lag in MB": null
+        }
+      ]
+    },
+    {
+      "cluster": "session-postgres",
+      "errors": [],
+      "primaryBefore": "session-postgres-1",
+      "membersBefore": [
+        {
+          "Member": "session-postgres-1",
+          "Role": "Leader",
+          "State": "running",
+          "Lag in MB": null
+        },
+        {
+          "Member": "session-postgres-2",
+          "Role": "Sync Standby",
+          "State": "streaming",
+          "Lag in MB": null
+        },
+        {
+          "Member": "session-postgres-3",
+          "Role": "Replica",
+          "State": "streaming",
+          "Lag in MB": null
+        }
+      ],
+      "writesRefusedForSeconds": 20.6,
+      "refusedAttempts": 23,
+      "markerKept": true,
+      "primaryAfter": "session-postgres-2",
+      "oldPrimaryRejoinedAs": "Replica",
+      "rejoinSeconds": 4.6,
+      "membersAfter": [
+        {
+          "Member": "session-postgres-1",
+          "Role": "Replica",
+          "State": "streaming",
+          "Lag in MB": null
+        },
+        {
+          "Member": "session-postgres-2",
+          "Role": "Leader",
+          "State": "running",
+          "Lag in MB": null
+        },
+        {
+          "Member": "session-postgres-3",
+          "Role": "Sync Standby",
+          "State": "streaming",
+          "Lag in MB": null
+        }
+      ]
+    }
+  ]
+}
