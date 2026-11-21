@@ -1,0 +1,74 @@
+# Patroni settings shared by every member of every cluster built from this image. What differs per
+# member comes from Compose as environment variables, which Patroni reads on top of this file:
+#   PATRONI_SCOPE                       the cluster: player-postgres or session-postgres
+#   PATRONI_NAME                        this member, e.g. player-postgres-1
+#   PATRONI_ETCD3_HOSTS                 the etcd cluster that holds the leader lock
+#   PATRONI_RESTAPI_CONNECT_ADDRESS     <member>:8008, where HAProxy and the other members reach it
+#   PATRONI_POSTGRESQL_CONNECT_ADDRESS  <member>:5432, where the standbys stream from
+#   PATRONI_SUPERUSER_PASSWORD, PATRONI_REPLICATION_PASSWORD
+#   APP_DB_NAME, APP_DB_USER, APP_DB_PASSWORD   the service's database and login (post-bootstrap.sh)
+namespace: /team19/
+
+restapi:
+  listen: 0.0.0.0:8008
+
+bootstrap:
+  # Cluster-wide settings, written to etcd once when the cluster is created.
+  dcs:
+    # The primary renews its leader lock every loop_wait seconds; when it can't for ttl seconds (it
+    # crashed, or lost etcd and the other members), a healthy standby takes the lock and is promoted.
+    # Patroni requires loop_wait + 2 x retry_timeout <= ttl.
+    ttl: 12
+    loop_wait: 3
+    retry_timeout: 4
+    # A standby that is more than 1 MiB of WAL behind is never promoted.
+    maximum_lag_on_failover: 1048576
+    # One standby confirms every commit before the client gets its answer, so a failover never loses
+    # a committed transaction. With no standby left, the primary carries on alone (not strict).
+    synchronous_mode: true
+    synchronous_mode_strict: false
+    # Losing etcd alone doesn't demote a primary that can still reach every other member.
+    failsafe_mode: true
+    postgresql:
+      use_pg_rewind: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        hot_standby: "on"
+        wal_log_hints: "on"
+        max_connections: 100
+        max_wal_senders: 10
+        max_replication_slots: 10
+        password_encryption: scram-sha-256
+  initdb:
+    - encoding: UTF8
+    - data-checksums
+  # Runs once, on the member that creates the cluster: the service's login and database.
+  post_bootstrap: /etc/patroni/post-bootstrap.sh
+
+postgresql:
+  listen: 0.0.0.0:5432
+  data_dir: /var/lib/postgresql/patroni/data
+  bin_dir: /usr/lib/postgresql/16/bin
+  pgpass: /tmp/pgpass
+  # A new or rebuilt standby copies the primary with pg_basebackup; a fast checkpoint starts the copy
+  # at once instead of after a spread checkpoint (minutes).
+  basebackup:
+    - checkpoint: fast
+  authentication:
+    superuser:
+      username: postgres
+    replication:
+      username: replicator
+  # Only the Compose network can reach the members (no published ports); every login needs a
+  # password except the local superuser socket Patroni itself uses.
+  pg_hba:
+    - local all all trust
+    - host replication replicator 0.0.0.0/0 scram-sha-256
+    - host all all 0.0.0.0/0 scram-sha-256
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false
