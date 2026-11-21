@@ -20,6 +20,8 @@
 # Shared settings of the replicated PostgreSQL clusters (Lab 5, Grade 5), reused below with <<.
 x-postgres-ha-member: &postgres-ha-member
   image: drateeva/postgres-ha:16.16-patroni4.1.5
+  # Each member also mounts docker/postgres-ha/patroni.yml over the image's copy (below), so a change
+  # to it (Lab 5, Grade 8: max_prepared_transactions) needs no new image.
   healthcheck:
     # Patroni's REST API: 200 once PostgreSQL runs as the primary or as a streaming standby.
     test: ["CMD-SHELL", "curl -fsS http://localhost:8008/readiness >/dev/null || exit 1"]
@@ -353,6 +355,10 @@ services:
       MAX_CONCURRENT_TASKS: ${PLAYER_MAX_CONCURRENT_TASKS:-20}
       DISCOVERY_URL: http://service-discovery:8089
       MESSAGING_ENABLED: "true"
+      # Lab 5, Grade 8: a participant of the two-phase commit that closes a shift
+      # (contracts/two-phase.md); the coordinator is the message-broker.
+      TWO_PHASE_PARTICIPANT_ENABLED: "true"
+      TWO_PHASE_COORDINATOR_URL: http://message-broker:8091
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8081/actuator/health || exit 1"]
       interval: 10s
@@ -392,6 +398,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-1:5432
     volumes:
       - player-postgres-1-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   player-postgres-2:
     <<: *postgres-ha-member
@@ -402,6 +409,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-2:5432
     volumes:
       - player-postgres-2-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   player-postgres-3:
     <<: *postgres-ha-member
@@ -412,6 +420,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: player-postgres-3:5432
     volumes:
       - player-postgres-3-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its calls to
   # applicant-service and server-rules-service go through the gateway's internal port unless
@@ -446,6 +455,12 @@ services:
       TASK_TIMEOUT: ${SESSION_TASK_TIMEOUT:-10s}
       MAX_CONCURRENT_TASKS: ${SESSION_MAX_CONCURRENT_TASKS:-20}
       DISCOVERY_URL: http://service-discovery:8089
+      # Lab 5, Grade 8: POST /sessions/{id}/close closes the shift in this database and credits it in
+      # player-service's as one two-phase commit, coordinated by the message-broker
+      # (contracts/two-phase.md). SESSION_SHIFT_CLOSE_MODE=event: the Lab 4 way (session.closed only).
+      SHIFT_CLOSE_MODE: ${SESSION_SHIFT_CLOSE_MODE:-two-phase}
+      TWO_PHASE_PARTICIPANT_ENABLED: "true"
+      TWO_PHASE_COORDINATOR_URL: http://message-broker:8091
     healthcheck:
       test: ["CMD-SHELL", "curl -f http://localhost:8082/actuator/health || exit 1"]
       interval: 10s
@@ -486,6 +501,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-1:5432
     volumes:
       - session-postgres-1-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   session-postgres-2:
     <<: *postgres-ha-member
@@ -496,6 +512,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-2:5432
     volumes:
       - session-postgres-2-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   session-postgres-3:
     <<: *postgres-ha-member
@@ -506,6 +523,7 @@ services:
       PATRONI_POSTGRESQL_CONNECT_ADDRESS: session-postgres-3:5432
     volumes:
       - session-postgres-3-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   # The consensus store of the player and session PostgreSQL clusters (Lab 5, Grade 5): Patroni keeps
   # each cluster's leader lock here, so exactly one member of each is the primary. Three members, so
@@ -629,6 +647,9 @@ services:
       # Durable topic queues and the dead letter channel (Grade 9): one SQLite file on the named volume,
       # so queued events survive a restart, docker compose down and an image update.
       QUEUE_STORE_PATH: /data/broker.sqlite3
+      # Lab 5, Grade 8: the two-phase commit coordinator keeps its decision log in the same file.
+      # The delay holds phase 2 back after the decision, for demonstrations only (0 = off).
+      TWO_PHASE_PHASE_TWO_DELAY_SECONDS: ${BROKER_TWO_PHASE_PHASE_TWO_DELAY_SECONDS:-0}
     volumes:
       - broker-data:/data
     healthcheck:
