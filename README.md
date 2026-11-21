@@ -519,6 +519,11 @@ invalid, `404 Not Found` (`PLAYER_NOT_FOUND`) when `playerId` is not a registere
   (default `10s`) gets `504 Gateway Timeout` (`REQUEST_TIMEOUT`); a request while
   `MAX_CONCURRENT_TASKS` (default `20`) are running gets `503 Service Unavailable` (`SERVICE_BUSY`)
   with `Retry-After: 1`, straight away.
+- **Database unavailable** (Lab 5): while the replicated `player-postgres` fails over to a new
+  primary (about 20 s), a request that needs the database gets `503 Service Unavailable`
+  (`DATABASE_UNAVAILABLE`, "The database is unavailable right now; retry shortly") with
+  `Retry-After: 5`, within `DATABASE_CONNECTION_TIMEOUT_MS` (default 3 s); the same request succeeds
+  once the new primary is in place. A broker delivery that can't reach the database is answered `RETRY`.
 - **`GET /health`** (Lab 3): the status of this instance, polled by `service-discovery` at the
   `healthUrl` the instance registered; not routed through the Gateway, and never blocked by the task
   limit. `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when PostgreSQL refuses
@@ -719,6 +724,10 @@ now stops the service at startup).
   after `TASK_TIMEOUT` (default `10s`); `503 Service Unavailable` (`SERVICE_BUSY`) with
   `Retry-After: 1` while `MAX_CONCURRENT_TASKS` (default `20`) requests are running. The SSE stream
   has its own limits (above).
+- **Database unavailable** (Lab 5): as in `player-service`, `503 Service Unavailable`
+  (`DATABASE_UNAVAILABLE`) with `Retry-After: 5` while the replicated `session-postgres` fails over;
+  an open SSE stream stays open and gets the session's current `state` again once the instances
+  receive each other's changes again.
 - **`GET /health`** (Lab 3): the status of this instance, polled by `service-discovery`; not routed
   through the Gateway, and never blocked by the task or stream limits. The same shape as
   `player-service`'s (with `"service": "server-moderation-session-service"`), plus the SSE streams:
@@ -1994,8 +2003,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `player-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`: longest wait for a database connection before `503 DATABASE_UNAVAILABLE`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `session-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE` (`mock`, `http` or `broker`) and `DMS_CLIENT_MODE` (`mock` or `broker`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
 
 
 ## Getting Started
@@ -2051,11 +2060,26 @@ variable and uses `baseUrl` `http://localhost:8080`.
 ### Running `player-service` and `server-moderation-session-service`
 
 The root `docker-compose.yml` runs both from their DockerHub images (`0.5.0`), each against its own
-PostgreSQL 16 (`player-postgres` and `session-postgres`, on the `player-postgres-data` and
-`session-postgres-data` volumes). Set `PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD` and
-`SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD` in `.env`, then `docker compose up`. Each schema
-is created by the service's own Flyway migrations (copies in `docs/db/<service>/`), run once even
-when several instances start together.
+PostgreSQL 16 database, `player-postgres` and `session-postgres`. Set
+`PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD`, `SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD`
+and (Lab 5) `PLAYER_POSTGRES_SUPERUSER_PASSWORD`, `PLAYER_POSTGRES_REPLICATION_PASSWORD`,
+`SESSION_POSTGRES_SUPERUSER_PASSWORD`, `SESSION_POSTGRES_REPLICATION_PASSWORD` in `.env`, then
+`docker compose up`. Each schema is created by the service's own Flyway migrations (copies in
+`docs/db/<service>/`), run once even when several instances start together.
+
+**Replicated databases with failover (Lab 5, Grade 5).** Each of the two databases is a cluster of
+three PostgreSQL 16 members (`player-postgres-1..3`, `session-postgres-1..3`, image
+`drateeva/postgres-ha`, built from `docker/postgres-ha/`): Patroni keeps one member the primary and
+the other two streaming standbys, one of them synchronous, so every commit is on two members before
+the service gets its answer. The leader lock lives in a three-member etcd (`postgres-etcd-1..3`). The
+old hostnames `player-postgres` and `session-postgres` are now HAProxy, which always forwards to the
+current primary (it asks each member's Patroni API `GET /primary`), so the services' URLs are
+unchanged. When a primary is lost, a standby is promoted and writes work again after about 20 s
+(the services answer `503 DATABASE_UNAVAILABLE` meanwhile); the old primary rejoins as a standby
+when it comes back. Every member keeps its data on its own volume (`<member>-data`); the Lab 4
+volumes `player-postgres-data` / `session-postgres-data` are no longer used. Runbook, demo and
+measured results: [`docs/LAB_5_DATABASE_FAILOVER.md`](docs/LAB_5_DATABASE_FAILOVER.md); the check:
+`python3 scripts/check_postgres_failover.py`.
 
 **Several instances (Lab 3).** Each service runs `PLAYER_REPLICAS` / `SESSION_REPLICAS` replicas
 (`2` by default), with no fixed container name and no published port, all against the service's one
