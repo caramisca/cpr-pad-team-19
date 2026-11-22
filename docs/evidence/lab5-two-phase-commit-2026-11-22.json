@@ -1,0 +1,236 @@
+{
+  "timestamp": "2026-11-21T22:01:09.764Z",
+  "scenarios": [
+    {
+      "scenario": "commit",
+      "errors": [],
+      "closeStatus": 200,
+      "closeSeconds": 3.58,
+      "checks": {
+        "close answered 200 CLOSED": true,
+        "session closed by the transaction": true,
+        "coordinator COMMITTED and completed": true,
+        "shift credited once to both players": true,
+        "player recorded the transaction as session.closed": true,
+        "no prepared transaction left": true
+      },
+      "transactionId": "62da67b3-aed4-4c3e-971a-68e0876c2146",
+      "coordinator": {
+        "transactionId": "62da67b3-aed4-4c3e-971a-68e0876c2146",
+        "source": "server-moderation-session-service",
+        "state": "COMMITTED",
+        "completed": true,
+        "reason": null,
+        "createdAt": "2026-11-21T22:01:12.491Z",
+        "decidedAt": "2026-11-21T22:01:12.524Z",
+        "completedAt": "2026-11-21T22:01:15.548Z",
+        "participants": [
+          {
+            "service": "server-moderation-session-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          },
+          {
+            "service": "player-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          }
+        ]
+      },
+      "shifts": {
+        "moderator": 1,
+        "junior": 1
+      },
+      "preparedLeft": {
+        "player": [],
+        "session": []
+      }
+    },
+    {
+      "scenario": "no-vote",
+      "errors": [],
+      "closeStatus": 409,
+      "closeBody": {
+        "error": "SHIFT_CLOSE_ABORTED",
+        "message": "Session 42e48d60-1c83-46da-8126-cdcfa535f03a was not closed, nothing changed: player-service voted NO: 409 TRANSACTION_REFUSED: Transaction a8d1c252-b031-4b4a-a76a-cdd678e10233 refused: not registered players: [90ed5aa4-4e98-426d-9ec6-0b1d5ac46c8f]"
+      },
+      "checks": {
+        "close answered 409 SHIFT_CLOSE_ABORTED": true,
+        "session still open": true,
+        "moderator not credited": true,
+        "coordinator ABORTED on player-service's NO": true,
+        "no prepared transaction left": true
+      },
+      "coordinator": {
+        "transactionId": "a8d1c252-b031-4b4a-a76a-cdd678e10233",
+        "source": "server-moderation-session-service",
+        "state": "ABORTED",
+        "completed": true,
+        "reason": "player-service voted NO: 409 TRANSACTION_REFUSED: Transaction a8d1c252-b031-4b4a-a76a-cdd678e10233 refused: not registered players: [90ed5aa4-4e98-426d-9ec6-0b1d5ac46c8f]",
+        "createdAt": "2026-11-21T22:01:24.186Z",
+        "decidedAt": "2026-11-21T22:01:24.214Z",
+        "completedAt": "2026-11-21T22:01:27.276Z",
+        "participants": [
+          {
+            "service": "server-moderation-session-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "ABORTED"
+          },
+          {
+            "service": "player-service",
+            "vote": "NO",
+            "reason": "409 TRANSACTION_REFUSED: Transaction a8d1c252-b031-4b4a-a76a-cdd678e10233 refused: not registered players: [90ed5aa4-4e98-426d-9ec6-0b1d5ac46c8f]",
+            "outcome": "ABORTED"
+          }
+        ]
+      },
+      "preparedLeft": {
+        "player": [],
+        "session": []
+      }
+    },
+    {
+      "scenario": "participant-crash",
+      "errors": [],
+      "transactionId": "ee0ba093-a6fb-4ebe-a909-d0d4e2df91af",
+      "decision": "COMMITTED",
+      "killed": "player-service (every replica), after the decision, before phase 2",
+      "closeStatus": 200,
+      "closeSeconds": 5.58,
+      "checks": {
+        "close answered 200 (session committed its part)": true,
+        "player's part still prepared after the crash": true,
+        "moderator not credited yet": true,
+        "moderator credited once": true,
+        "no prepared transaction left": true
+      },
+      "completedAfterRestartSeconds": 26.0,
+      "coordinator": {
+        "transactionId": "ee0ba093-a6fb-4ebe-a909-d0d4e2df91af",
+        "source": "server-moderation-session-service",
+        "state": "COMMITTED",
+        "completed": true,
+        "reason": null,
+        "createdAt": "2026-11-21T22:01:30.489Z",
+        "decidedAt": "2026-11-21T22:01:30.525Z",
+        "completedAt": "2026-11-21T22:02:02.986Z",
+        "participants": [
+          {
+            "service": "server-moderation-session-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          },
+          {
+            "service": "player-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "coordinator-crash",
+      "errors": [],
+      "transactionId": "3166864d-059b-46ca-a6c4-74ee1b7a0192",
+      "decision": "COMMITTED",
+      "killed": "message-broker, after writing the decision, before phase 2",
+      "closeStatus": 503,
+      "closeBody": {
+        "error": "DEPENDENCY_UNAVAILABLE",
+        "message": "message-broker gave no decision on closing the shift (I/O error on POST request for \"http://message-broker:8091/two-phase/transactions\": HTTP/1.1 header parser received no bytes); it may still close, check GET /sessions/97afe861-406d-4972-a51f-fa091c355f27 before closing again (called through its two-phase commit API)"
+      },
+      "checks": {
+        "close answered 503 DEPENDENCY_UNAVAILABLE (no decision reached session)": true,
+        "both parts prepared while the broker is down": true,
+        "session still open meanwhile": true,
+        "recovered as COMMITTED": true,
+        "session closed by the transaction": true,
+        "moderator credited once": true,
+        "no prepared transaction left": true
+      },
+      "preparedWhileBrokerDown": {
+        "player": [
+          "player-service:3166864d-059b-46ca-a6c4-74ee1b7a0192"
+        ],
+        "session": [
+          "server-moderation-session-service:3166864d-059b-46ca-a6c4-74ee1b7a0192"
+        ]
+      },
+      "completedAfterRestartSeconds": 8.0,
+      "coordinator": {
+        "transactionId": "3166864d-059b-46ca-a6c4-74ee1b7a0192",
+        "source": "server-moderation-session-service",
+        "state": "COMMITTED",
+        "completed": true,
+        "reason": null,
+        "createdAt": "2026-11-21T22:02:05.856Z",
+        "decidedAt": "2026-11-21T22:02:06.202Z",
+        "completedAt": "2026-11-21T22:02:14.260Z",
+        "participants": [
+          {
+            "service": "server-moderation-session-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          },
+          {
+            "service": "player-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          }
+        ]
+      }
+    },
+    {
+      "scenario": "database-failover",
+      "errors": [],
+      "transactionId": "cfdcd5ec-0416-4eea-b2c7-b8d51da46a1b",
+      "primaryKilled": "player-postgres-3",
+      "closeStatus": 200,
+      "checks": {
+        "close answered 200 (session committed its part)": true,
+        "another member is the primary": true,
+        "moderator credited once on the new primary": true,
+        "no prepared transaction left": true
+      },
+      "completedAfterKillSeconds": 36.1,
+      "coordinator": {
+        "transactionId": "cfdcd5ec-0416-4eea-b2c7-b8d51da46a1b",
+        "source": "server-moderation-session-service",
+        "state": "COMMITTED",
+        "completed": true,
+        "reason": null,
+        "createdAt": "2026-11-21T22:02:24.060Z",
+        "decidedAt": "2026-11-21T22:02:24.159Z",
+        "completedAt": "2026-11-21T22:03:00.058Z",
+        "participants": [
+          {
+            "service": "server-moderation-session-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          },
+          {
+            "service": "player-service",
+            "vote": "YES",
+            "reason": null,
+            "outcome": "COMMITTED"
+          }
+        ]
+      },
+      "primaryAfter": "player-postgres-1",
+      "oldPrimaryRejoined": true
+    }
+  ],
+  "maxPreparedTransactions": {
+    "player": 20,
+    "session": 20
+  },
+  "phaseTwoDelaySeconds": 3.0
+}

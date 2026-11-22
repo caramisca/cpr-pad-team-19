@@ -39,6 +39,11 @@ bootstrap:
         max_connections: 100
         max_wal_senders: 10
         max_replication_slots: 10
+        # Lab 5, Grade 8: the services' two-phase commit keeps transactions prepared (PREPARE
+        # TRANSACTION) until the coordinator decides. 0 (PostgreSQL's default) turns that off. A
+        # standby needs at least the primary's value; Patroni keeps it the same on every member.
+        # Existing clusters: patronictl edit-config + restart (docs/LAB_5_TWO_PHASE_COMMIT.md).
+        max_prepared_transactions: 20
         password_encryption: scram-sha-256
   initdb:
     - encoding: UTF8

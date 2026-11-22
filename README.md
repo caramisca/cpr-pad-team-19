@@ -615,6 +615,14 @@ Response `200 OK`:
   }
 }
 ```
+Response `404 Not Found` (`SESSION_NOT_FOUND`), `409 Conflict` (`SESSION_ALREADY_CLOSED`). **Lab 5
+(two-phase commit, `SHIFT_CLOSE_MODE=two-phase`, the Compose default):** the shift is closed in this
+service's database and credited to its moderators in `player-service`'s as one distributed
+transaction, coordinated by `message-broker` ([`contracts/two-phase.md`](contracts/two-phase.md)).
+`409 Conflict` (`SHIFT_CLOSE_ABORTED`): a participant refused (e.g. a moderator of the shift isn't a
+registered player) or didn't answer; the shift stays open and nothing changed anywhere.
+`503 Service Unavailable` (`DEPENDENCY_UNAVAILABLE`) with `Retry-After: 5`: no decision from the
+coordinator; the close may still complete, so read `GET /sessions/{id}` before closing again.
 
 **`GET /sessions/{id}/next-applicant`** — pull the next queued applicant.
 
@@ -2003,8 +2011,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
 | `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
 | `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `player-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`: longest wait for a database connection before `503 DATABASE_UNAVAILABLE`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `session-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE` (`mock`, `http` or `broker`) and `DMS_CLIENT_MODE` (`mock` or `broker`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `player-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`: longest wait for a database connection before `503 DATABASE_UNAVAILABLE`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Lab 5 two-phase commit: `TWO_PHASE_PARTICIPANT_ENABLED` (default `false`, `true` in `docker-compose.yml`), `TWO_PHASE_COORDINATOR_URL` (default `http://localhost:8091`), see [`contracts/two-phase.md`](contracts/two-phase.md). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16 (Lab 5: the replicated `session-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE` (`mock`, `http` or `broker`) and `DMS_CLIENT_MODE` (`mock` or `broker`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Lab 5 two-phase commit: `SHIFT_CLOSE_MODE` (`event` by default, `two-phase` in `docker-compose.yml`), `TWO_PHASE_PARTICIPANT_ENABLED`, `TWO_PHASE_COORDINATOR_URL`, `SHIFT_CLOSE_COORDINATOR_TIMEOUT` (default `7s`). Port `8082` (internal only — route through the gateway on `8080`). |
 
 
 ## Getting Started
@@ -2080,6 +2088,20 @@ when it comes back. Every member keeps its data on its own volume (`<member>-dat
 volumes `player-postgres-data` / `session-postgres-data` are no longer used. Runbook, demo and
 measured results: [`docs/LAB_5_DATABASE_FAILOVER.md`](docs/LAB_5_DATABASE_FAILOVER.md); the check:
 `python3 scripts/check_postgres_failover.py`.
+
+**Two-phase commit for closing a shift (Lab 5, Grade 8).** `POST /sessions/{id}/close` changes both
+databases (the shift; `totalShifts` / `lastShiftAt` of every moderator) as one transaction: the
+`message-broker` coordinates it (`POST /two-phase/transactions` on its HTTP port 8091, decision log
+in its SQLite file), and both services take part with PostgreSQL's `PREPARE TRANSACTION` /
+`COMMIT PREPARED` behind `POST /internal/two-phase/{id}/prepare|commit|abort` (gRPC
+`ServiceEndpoint.Call`, never routed by the Gateway). Presumed abort, recovery after a broker or
+service restart and after a database failover. Compose: `SHIFT_CLOSE_MODE` (session, default
+`two-phase`; `SESSION_SHIFT_CLOSE_MODE=event` in `.env` for the Lab 4 way), `TWO_PHASE_PARTICIPANT_ENABLED`
+and `TWO_PHASE_COORDINATOR_URL` (both services); `max_prepared_transactions: 20` comes from
+`docker/postgres-ha/patroni.yml`, which every member mounts (clusters created before: one
+`patronictl edit-config` each). Contract: [`contracts/two-phase.md`](contracts/two-phase.md); runbook,
+demo and measured results: [`docs/LAB_5_TWO_PHASE_COMMIT.md`](docs/LAB_5_TWO_PHASE_COMMIT.md); the
+check: `python3 scripts/check_two_phase_commit.py`.
 
 **Several instances (Lab 3).** Each service runs `PLAYER_REPLICAS` / `SESSION_REPLICAS` replicas
 (`2` by default), with no fixed container name and no published port, all against the service's one

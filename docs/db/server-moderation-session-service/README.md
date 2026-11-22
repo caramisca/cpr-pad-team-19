@@ -14,6 +14,10 @@ this copy.
   `session_queue_entry` to `sessions`, renumbers duplicate queue positions, adds the unique
   constraint `uq_session_queue_entry_position (session_id, queue_position)` and drops the index it
   makes redundant.
+- `V3__session_close_transaction.sql` (Lab 5, Grade 8) — adds `sessions.close_transaction_id`
+  (nullable, unique): the two-phase commit transaction that closed the shift
+  ([`contracts/two-phase.md`](../../../contracts/two-phase.md)); null for a shift closed locally or
+  still open.
 
 There is no seed script: sessions are opened through `POST /sessions` and their queue/summary
 populate as the shift runs, not from static demo data.
