@@ -9,9 +9,13 @@
 # internal port 8090, which is not published to the host. Lab 4 adds message-broker: player-service
 # and server-moderation-session-service take their events from it and session publishes its own to
 # it, over gRPC on the private Compose network (CPR docs/MESSAGE_BROKER_CONTRACT.md). Lab 5 replicates
-# player-postgres and session-postgres: three Patroni members each (image drateeva/postgres-ha, built
-# from docker/postgres-ha/), an etcd cluster that elects the primary, and an HAProxy under the old
-# hostname that always leads to the primary (docs/LAB_5_DATABASE_FAILOVER.md).
+# player-postgres, session-postgres, record-postgres and moderation-postgres: three Patroni members
+# each (image drateeva/postgres-ha, built from docker/postgres-ha/), an etcd cluster that elects the
+# primary, and an HAProxy under the old hostname that always leads to the primary
+# (docs/LAB_5_DATABASE_FAILOVER.md). dms-redis becomes a primary, two replicas and three Sentinels
+# (docker/redis-ha/, docs/LAB_5_MODERATION_DMS_FAILOVER.md), rules-mongo a three-member replica
+# set. The gateway coordinates the decision-verdict saga across moderation-service and
+# discord-dms-service (docs/LAB_5_SAGA.md).
 #
 # Usage:
 #   cp .env.example .env   # fill in real values - .env is gitignored, never commit it
@@ -76,6 +80,15 @@ x-record-postgres-cluster: &record-postgres-cluster
   APP_DB_USER: ${RECORD_POSTGRES_USER}
   APP_DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
 
+x-moderation-postgres-cluster: &moderation-postgres-cluster
+  PATRONI_SCOPE: moderation-postgres
+  PATRONI_ETCD3_HOSTS: postgres-etcd-1:2379,postgres-etcd-2:2379,postgres-etcd-3:2379
+  PATRONI_SUPERUSER_PASSWORD: ${MODERATION_POSTGRES_SUPERUSER_PASSWORD}
+  PATRONI_REPLICATION_PASSWORD: ${MODERATION_POSTGRES_REPLICATION_PASSWORD}
+  APP_DB_NAME: moderation
+  APP_DB_USER: ${MODERATION_POSTGRES_USER}
+  APP_DB_PASSWORD: ${MODERATION_POSTGRES_PASSWORD}
+
 x-postgres-etcd: &postgres-etcd
   image: quay.io/coreos/etcd:v3.6.17
   healthcheck:
@@ -84,16 +97,59 @@ x-postgres-etcd: &postgres-etcd
     timeout: 3s
     retries: 12
 
+# The replicated Redis of discord-dms-service (Lab 5, Grade 5): dms-redis-1..3 (one primary, two
+# replicas), three Sentinels that promote a replica when the primary is lost, and an HAProxy under
+# the old hostname dms-redis (docker/redis-ha/, docs/LAB_5_MODERATION_DMS_FAILOVER.md).
+x-dms-redis-cluster: &dms-redis-cluster
+  REDISCLI_AUTH: ${DMS_REDIS_PASSWORD}
+  REDIS_MASTER_NAME: dms-redis
+  REDIS_INITIAL_PRIMARY: dms-redis-1
+  REDIS_SENTINELS: dms-redis-sentinel-1 dms-redis-sentinel-2 dms-redis-sentinel-3
+
+x-dms-redis-member: &dms-redis-member
+  image: redis:7.4-alpine
+  # The password and the member's role are set when the container starts (redis-node.sh), so neither
+  # is part of the container command. redis-cli reads REDISCLI_AUTH, which is how the healthcheck
+  # authenticates.
+  entrypoint: ["sh", "/redis-ha/redis-node.sh"]
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
+    start_period: 30s
+
+x-dms-redis-sentinel: &dms-redis-sentinel
+  image: redis:7.4-alpine
+  entrypoint: ["sh", "/redis-ha/sentinel.sh"]
+  healthcheck:
+    test: ["CMD-SHELL", "redis-cli -p 26379 ping | grep -q PONG"]
+    interval: 5s
+    timeout: 3s
+    retries: 12
+  # Started, not healthy: a member that restarts asks the Sentinels for the primary before it serves,
+  # so waiting for the members to be healthy first would only delay both.
+  depends_on:
+    dms-redis-1:
+      condition: service_started
+    dms-redis-2:
+      condition: service_started
+    dms-redis-3:
+      condition: service_started
+
 services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # credential-service, server-rules-service and university-record-service also go through the
   # gateway, on the internal port. No depends_on the gateway: the gateway depends on this service,
   # and the calls only happen once a request arrives. Every replica registers with
   # service-discovery under its container hostname, and the gateway finds the replicas there (Lab 3).
+  # Lab 5: all replicas share moderation-postgres, the current primary of a replicated cluster; while
+  # a failover runs they answer 503 DATABASE_UNAVAILABLE with Retry-After. Participant of the
+  # decision-verdict saga (Grade 9, contracts/saga.md) on /internal/sagas/..., called by the gateway.
   moderation-service:
     deploy:
       replicas: ${MODERATION_REPLICAS:-2}
-    image: andiblindu1/moderation-service:0.5.0
+    image: andiblindu1/moderation-service:0.6.0
     environment:
       ServiceDiscovery__Url: http://service-discovery:8089
       ConnectionStrings__Moderation: Host=moderation-postgres;Port=5432;Database=moderation;Username=${MODERATION_POSTGRES_USER};Password=${MODERATION_POSTGRES_PASSWORD}
@@ -124,31 +180,73 @@ services:
       moderation-postgres:
         condition: service_healthy
 
+  # moderation-service's database (Lab 5, Grade 5: replication + failover), replicated like
+  # player-postgres: three Patroni members (moderation-postgres-1..3: one primary, a synchronous and a
+  # streaming standby) in the same etcd cluster, and under the old hostname moderation-postgres an
+  # HAProxy that always forwards to the current primary. Lose the primary and a standby is promoted
+  # within ~15 s; moderation-service and the ETL job keep the same connection string.
   moderation-postgres:
-    image: postgres:16
+    <<: *postgres-ha-router
     environment:
-      POSTGRES_DB: moderation
-      POSTGRES_USER: ${MODERATION_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${MODERATION_POSTGRES_PASSWORD}
+      PG_MEMBER_1: moderation-postgres-1
+      PG_MEMBER_2: moderation-postgres-2
+      PG_MEMBER_3: moderation-postgres-3
+    depends_on:
+      moderation-postgres-1:
+        condition: service_started
+      moderation-postgres-2:
+        condition: service_started
+      moderation-postgres-3:
+        condition: service_started
+
+  moderation-postgres-1:
+    <<: *postgres-ha-member
+    environment:
+      <<: *moderation-postgres-cluster
+      PATRONI_NAME: moderation-postgres-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: moderation-postgres-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: moderation-postgres-1:5432
     volumes:
-      - moderation-postgres-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      - moderation-postgres-1-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
+
+  moderation-postgres-2:
+    <<: *postgres-ha-member
+    environment:
+      <<: *moderation-postgres-cluster
+      PATRONI_NAME: moderation-postgres-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: moderation-postgres-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: moderation-postgres-2:5432
+    volumes:
+      - moderation-postgres-2-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
+
+  moderation-postgres-3:
+    <<: *postgres-ha-member
+    environment:
+      <<: *moderation-postgres-cluster
+      PATRONI_NAME: moderation-postgres-3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: moderation-postgres-3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: moderation-postgres-3:5432
+    volumes:
+      - moderation-postgres-3-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   # Its REST endpoints are called through the gateway (Lab 2). Port 8088 stays published for the
   # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
   # gateway returns. Every instance registers with service-discovery under its container hostname,
-  # and the gateway finds the instances there (Lab 3).
+  # and the gateway finds the instances there (Lab 3). Lab 5: it asks the Sentinels which member of
+  # the replicated dms-redis is the primary and follows a failover on its own; while one runs it
+  # answers 503 STORE_UNAVAILABLE with Retry-After. Participant of the decision-verdict saga (Grade 9,
+  # contracts/saga.md) on /internal/sagas/..., called by the gateway.
   discord-dms-service:
-    image: andiblindu1/discord-dms-service:0.5.0
+    image: andiblindu1/discord-dms-service:0.6.0
     ports:
       - "8088:8088"
     environment: &dms-environment
       ServiceDiscovery__Url: http://service-discovery:8089
-      ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD}
+      # The Sentinels, not a member: serviceName is the name they monitor the primary under.
+      ConnectionStrings__Redis: dms-redis-sentinel-1:26379,dms-redis-sentinel-2:26379,dms-redis-sentinel-3:26379,serviceName=dms-redis,password=${DMS_REDIS_PASSWORD},abortConnect=false
       # The gateway's WS_TICKET_SECRET: the chat accepts only the tickets the gateway signs with it.
       Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
       Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
@@ -169,6 +267,13 @@ services:
     depends_on: &dms-depends-on
       service-discovery:
         condition: service_healthy
+      dms-redis-sentinel-1:
+        condition: service_healthy
+      dms-redis-sentinel-2:
+        condition: service_healthy
+      dms-redis-sentinel-3:
+        condition: service_healthy
+      # Healthy only while one member is the primary: the service starts once it can write.
       dms-redis:
         condition: service_healthy
 
@@ -179,25 +284,95 @@ services:
   discord-dms-service-replica:
     deploy:
       replicas: ${DMS_EXTRA_REPLICAS:-1}
-    image: andiblindu1/discord-dms-service:0.5.0
+    image: andiblindu1/discord-dms-service:0.6.0
     environment: *dms-environment
     healthcheck: *dms-healthcheck
     depends_on: *dms-depends-on
 
+  # discord-dms-service's Redis (Lab 5, Grade 5: replication + failover). dms-redis-1..3: one primary
+  # and two replicas that copy it asynchronously; dms-redis-sentinel-1..3 watch the primary and, when
+  # two of them lose it for 5 s, promote a replica (~10 s in all) and turn the old primary into a
+  # replica of the new one once it is back. Under the old hostname dms-redis, an HAProxy forwards to
+  # the current primary for clients that know one address only (the ETL job). Each member and each
+  # Sentinel keeps its configuration on its own volume, so a restart keeps the roles the last
+  # failover gave them.
   dms-redis:
-    image: redis:7.4-alpine
-    # The password is expanded when the container starts, so it is not part of the container
-    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
-    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    image: haproxy:3.0.31-alpine
     environment:
-      REDISCLI_AUTH: ${DMS_REDIS_PASSWORD}
+      REDIS_PASSWORD: ${DMS_REDIS_PASSWORD}
+      REDIS_MEMBER_1: dms-redis-1
+      REDIS_MEMBER_2: dms-redis-2
+      REDIS_MEMBER_3: dms-redis-3
     volumes:
-      - dms-redis-data:/data
+      - ./docker/redis-ha/haproxy-redis.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      # 200 only while one member is the primary.
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8404/healthz || exit 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 40
+      start_period: 10s
+    depends_on:
+      dms-redis-1:
+        condition: service_started
+      dms-redis-2:
+        condition: service_started
+      dms-redis-3:
+        condition: service_started
+
+  dms-redis-1:
+    <<: *dms-redis-member
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_NODE_NAME: dms-redis-1
+    volumes:
+      - dms-redis-1-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
+
+  dms-redis-2:
+    <<: *dms-redis-member
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_NODE_NAME: dms-redis-2
+    volumes:
+      - dms-redis-2-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
+
+  dms-redis-3:
+    <<: *dms-redis-member
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_NODE_NAME: dms-redis-3
+    volumes:
+      - dms-redis-3-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
+
+  dms-redis-sentinel-1:
+    <<: *dms-redis-sentinel
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_SENTINEL_NAME: dms-redis-sentinel-1
+    volumes:
+      - dms-redis-sentinel-1-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
+
+  dms-redis-sentinel-2:
+    <<: *dms-redis-sentinel
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_SENTINEL_NAME: dms-redis-sentinel-2
+    volumes:
+      - dms-redis-sentinel-2-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
+
+  dms-redis-sentinel-3:
+    <<: *dms-redis-sentinel
+    environment:
+      <<: *dms-redis-cluster
+      REDIS_SENTINEL_NAME: dms-redis-sentinel-3
+    volumes:
+      - dms-redis-sentinel-3-data:/data
+      - ./docker/redis-ha:/redis-ha:ro
 
   server-rules-service:
     deploy:
@@ -629,9 +804,10 @@ services:
       - session-postgres-3-data:/var/lib/postgresql/patroni
       - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
-  # The consensus store of the player and session PostgreSQL clusters (Lab 5, Grade 5): Patroni keeps
-  # each cluster's leader lock here, so exactly one member of each is the primary. Three members, so
-  # it keeps working when one is lost. Private to this Compose network.
+  # The consensus store of the replicated PostgreSQL clusters (player, session, record and
+  # moderation; Lab 5, Grade 5): Patroni keeps each cluster's leader lock here, so exactly one member
+  # of each is the primary. Three members, so it keeps working when one is lost. Private to this
+  # Compose network.
   postgres-etcd-1:
     <<: *postgres-etcd
     command:
@@ -684,8 +860,12 @@ services:
   # the communication contract and an API key, and the gateway forwards each request to the service
   # that owns it without the Authorization header. Port 8090 is the internal port for the services'
   # calls to each other (no key needed): it is deliberately not published to the host.
+  # Lab 5, Grade 9: also the coordinator of the decision-verdict saga (POST /sagas/decision-verdicts,
+  # contracts/saga.md). It records each step in its own log on the gateway-data volume, retries a
+  # step with backoff, compensates the completed steps when a later one fails, and after a restart
+  # resumes the sagas that were still running.
   gateway-service:
-    image: diana7376/gateway-service:0.5.0
+    image: diana7376/gateway-service:0.6.0
     ports:
       - "8080:8080"
     environment:
@@ -706,6 +886,19 @@ services:
       REQUEST_TIMEOUT_SECONDS: ${GATEWAY_REQUEST_TIMEOUT_SECONDS:-10}
       MAX_CONCURRENT_REQUESTS: ${GATEWAY_MAX_CONCURRENT_REQUESTS:-200}
       BROKER_GRPC_URL: ${BROKER_GRPC_URL:-}
+      # The saga coordinator (Lab 5, Grade 9). The step delay holds every step back, for
+      # demonstrations only (0 = off): it leaves time to stop a participant in the middle of a saga.
+      SAGA_ENABLED: "true"
+      SAGA_LOG_PATH: /data/gateway-sagas.sqlite3
+      SAGA_STEP_ATTEMPTS: ${GATEWAY_SAGA_STEP_ATTEMPTS:-3}
+      SAGA_STEP_TIMEOUT_SECONDS: ${GATEWAY_SAGA_STEP_TIMEOUT_SECONDS:-5}
+      SAGA_RETRY_BACKOFF_SECONDS: ${GATEWAY_SAGA_RETRY_BACKOFF_SECONDS:-1}
+      SAGA_MAX_BACKOFF_SECONDS: ${GATEWAY_SAGA_MAX_BACKOFF_SECONDS:-30}
+      SAGA_RECOVERY_INTERVAL_SECONDS: ${GATEWAY_SAGA_RECOVERY_INTERVAL_SECONDS:-5}
+      SAGA_RESPONSE_TIMEOUT_SECONDS: ${GATEWAY_SAGA_RESPONSE_TIMEOUT_SECONDS:-8}
+      SAGA_STEP_DELAY_SECONDS: ${GATEWAY_SAGA_STEP_DELAY_SECONDS:-0}
+    volumes:
+      - gateway-data:/data
     # The image has no curl, so the healthcheck uses Python, which it does have.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=3)"]
@@ -807,7 +1000,8 @@ services:
   # ETL job (Lab 5, Grade 4b): reads all 8 source databases on a schedule, transforms the data
   # into a star schema and loads it into warehouse-db idempotently (INSERT ... ON CONFLICT DO UPDATE).
   # Sources: player-postgres, session-postgres (Patroni HA), record-postgres (Patroni HA),
-  # moderation-postgres, rules-mongo (RS), applicant-redis, credential-redis, dms-redis.
+  # moderation-postgres (Patroni HA), rules-mongo (RS), applicant-redis, credential-redis, dms-redis
+  # (Sentinel; the HAProxy at dms-redis leads to the current primary).
   etl:
     image: diana7376/pad-etl:0.6.0
     environment:
@@ -827,8 +1021,16 @@ services:
 
 volumes:
   broker-data:
-  moderation-postgres-data:
-  dms-redis-data:
+  gateway-data:
+  moderation-postgres-1-data:
+  moderation-postgres-2-data:
+  moderation-postgres-3-data:
+  dms-redis-1-data:
+  dms-redis-2-data:
+  dms-redis-3-data:
+  dms-redis-sentinel-1-data:
+  dms-redis-sentinel-2-data:
+  dms-redis-sentinel-3-data:
   rules-mongo-1-data:
   rules-mongo-2-data:
   rules-mongo-3-data:
