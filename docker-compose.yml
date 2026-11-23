@@ -385,7 +385,7 @@ services:
   applicant-service:
     deploy:
       replicas: ${APPLICANT_REPLICAS:-2}
-    image: caramisca/applicant-service:0.5.0
+    image: caramisca/applicant-service:0.6.0
     environment:
       Storage__Provider: Redis
       ServiceDiscovery__Url: http://service-discovery:8089
@@ -483,7 +483,7 @@ services:
   credential-service:
     deploy:
       replicas: ${CREDENTIAL_REPLICAS:-2}
-    image: caramisca/credential-service:0.5.0
+    image: caramisca/credential-service:0.6.0
     environment:
       Storage__Provider: Redis
       ServiceDiscovery__Url: http://service-discovery:8089

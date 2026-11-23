@@ -6,9 +6,9 @@ A distributed system of eight domain services, Gateway, Service Discovery and Me
 
 ## Laboratory 4: Breaking and Brokering
 
-The common Compose configuration pins **all eleven application images to 0.5.0**. The
-published images have linux/amd64 and linux/arm64 manifests. Source gitlinks pin reviewed
-service main commits; private repository main tips still require confirmation by their owners.
+The common Compose configuration pins each application image to its verified release. The
+release checks verify linux/amd64 and linux/arm64 manifests and compare each pinned tag with
+`latest`. Source gitlinks pin individual service commits.
 The [current acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records exact commits,
 test results and the remaining release gates. These version pins alone do not certify Lab 4.
 
@@ -2095,7 +2095,8 @@ replication groups behind stable primary-only endpoints. The Gateway cache overl
 client-scoped GET caching and authentication caching on three Redis shards. Setup, cache headers,
 live ring changes and failover verification are in [Lab 5 · Mihai](docs/LAB_5_MIHAI.md).
 
-**Public image availability.** The default stack uses the published Rules and Record `0.5.0`
+**Public image availability.** The default stack uses the published Applicant and Credential `0.6.0`
+images, which include the gRPC error-parity fixes. It uses the published Rules and Record `0.5.0`
 images with the Lab 5 database topology. Their service-level `0.6.0` error contracts require
 the corresponding published images. The default Gateway `0.5.0` uses HTTP ingress routing for
 compatibility with legacy gRPC response metadata. The Lab 5 cache overlay enables Gateway-to-Broker
