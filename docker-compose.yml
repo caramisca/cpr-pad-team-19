@@ -396,24 +396,42 @@ services:
   # automatically via the RS-aware connection string — no HAProxy needed.
   rules-mongo-1:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    entrypoint:
+      - bash
+      - -c
+      - |
+        cp /tmp/mongo-keyfile /tmp/keyfile && chown 999:999 /tmp/keyfile && chmod 400 /tmp/keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --auth --keyFile /tmp/keyfile --bind_ip_all
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${RULES_MONGO_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${RULES_MONGO_PASSWORD}
     volumes:
       - rules-mongo-1-data:/data/db
+      - ./docker/mongo-rs/keyfile:/tmp/mongo-keyfile:ro
 
   rules-mongo-2:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    entrypoint:
+      - bash
+      - -c
+      - |
+        cp /tmp/mongo-keyfile /tmp/keyfile && chown 999:999 /tmp/keyfile && chmod 400 /tmp/keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --auth --keyFile /tmp/keyfile --bind_ip_all
     volumes:
       - rules-mongo-2-data:/data/db
+      - ./docker/mongo-rs/keyfile:/tmp/mongo-keyfile:ro
 
   rules-mongo-3:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    entrypoint:
+      - bash
+      - -c
+      - |
+        cp /tmp/mongo-keyfile /tmp/keyfile && chown 999:999 /tmp/keyfile && chmod 400 /tmp/keyfile
+        exec docker-entrypoint.sh mongod --replSet rs0 --auth --keyFile /tmp/keyfile --bind_ip_all
     volumes:
       - rules-mongo-3-data:/data/db
+      - ./docker/mongo-rs/keyfile:/tmp/mongo-keyfile:ro
 
   # One-shot init container: waits for rules-mongo-1 to accept connections, then calls
   # rs.initiate(). On subsequent restarts (RS already initiated) the call returns
@@ -428,29 +446,12 @@ services:
     environment:
       RULES_MONGO_USERNAME: ${RULES_MONGO_USERNAME}
       RULES_MONGO_PASSWORD: ${RULES_MONGO_PASSWORD}
-    command: >
-      bash -c "
-        until mongosh --host rules-mongo-1:27017
-          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
-          --authenticationDatabase admin
-          --eval 'db.adminCommand({ping:1})' --quiet 2>/dev/null; do
-          echo 'Waiting for rules-mongo-1...' && sleep 3;
-        done &&
-        mongosh --host rules-mongo-1:27017
-          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
-          --authenticationDatabase admin --eval '
-            try {
-              rs.initiate({_id:\"rs0\",members:[
-                {_id:0,host:\"rules-mongo-1:27017\",priority:2},
-                {_id:1,host:\"rules-mongo-2:27017\"},
-                {_id:2,host:\"rules-mongo-3:27017\"}
-              ]});
-            } catch(e) {
-              if(e.codeName===\"AlreadyInitialized\") print(\"RS already initialized\");
-              else throw e;
-            }
-          '
-      "
+    command:
+      - bash
+      - -c
+      - |
+        until mongosh --host rules-mongo-1:27017 -u "$$RULES_MONGO_USERNAME" -p "$$RULES_MONGO_PASSWORD" --authenticationDatabase admin --eval 'db.adminCommand({ping:1})' --quiet 2>/dev/null; do echo 'Waiting for rules-mongo-1...' && sleep 3; done
+        mongosh --host rules-mongo-1:27017 -u "$$RULES_MONGO_USERNAME" -p "$$RULES_MONGO_PASSWORD" --authenticationDatabase admin --eval 'try{rs.initiate({_id:"rs0",members:[{_id:0,host:"rules-mongo-1:27017",priority:2},{_id:1,host:"rules-mongo-2:27017"},{_id:2,host:"rules-mongo-3:27017"}]});}catch(e){if(e.codeName==="AlreadyInitialized")print("RS already initialized");else throw e;}'
 
   university-record-service:
     deploy:
