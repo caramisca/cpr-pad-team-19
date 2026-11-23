@@ -10,3 +10,24 @@ flowchart LR
   PROM[Prometheus] -->|metrics per replica| DOMAIN
   PROM -->|metrics| MB
   GRAF[Grafana] --> PROM
+
+  subgraph record-postgres HA
+    RP1[record-postgres-1\nprimary] -->|WAL sync| RP2[record-postgres-2\nsync standby]
+    RP1 -->|WAL| RP3[record-postgres-3\nstandby]
+    RPGW[HAProxy\nrecord-postgres] --> RP1
+  end
+  DOMAIN -->|JDBC: record-postgres:5432| RPGW
+
+  subgraph rules-mongo RS
+    RM1[rules-mongo-1\nprimary] -->|replication| RM2[rules-mongo-2\nsecondary]
+    RM1 -->|replication| RM3[rules-mongo-3\nsecondary]
+  end
+  DOMAIN -->|mongodb RS URI| RM1
+
+  subgraph etcd
+    E1[postgres-etcd-1] --- E2[postgres-etcd-2] --- E3[postgres-etcd-3]
+  end
+  RP1 & RP2 & RP3 <-->|leader lock| E1
+
+  ETL[ETL job\ndiana7376/pad-etl] -->|read-only SQL / Mongo / Redis| DOMAIN
+  ETL -->|INSERT ... ON CONFLICT| WH[(warehouse-db\nstar schema)]
