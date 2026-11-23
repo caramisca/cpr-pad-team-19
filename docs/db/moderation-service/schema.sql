@@ -1,6 +1,6 @@
--- moderation-service schema, generated from the EF Core migrations of moderation-service 0.2.0
--- with `dotnet ef migrations script --idempotent`. Safe to run more than once.
--- Do not edit this copy; see README.md.
+-- moderation-service schema, generated from the EF Core migrations of moderation-service up to
+-- 20261123171251_AddSagaParticipations with `dotnet ef migrations script --idempotent`.
+-- Safe to run more than once. Do not edit this copy; see README.md.
 
 CREATE TABLE IF NOT EXISTS "__EFMigrationsHistory" (
     migration_id character varying(150) NOT NULL,
@@ -117,6 +117,60 @@ BEGIN
     IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20260923141448_InitialCreate') THEN
     INSERT INTO "__EFMigrationsHistory" (migration_id, product_version)
     VALUES ('20260923141448_InitialCreate', '8.0.31');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20261111194344_AddOutboxRequestId') THEN
+    ALTER TABLE outbox_message ADD request_id character varying(64);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20261111194344_AddOutboxRequestId') THEN
+    INSERT INTO "__EFMigrationsHistory" (migration_id, product_version)
+    VALUES ('20261111194344_AddOutboxRequestId', '8.0.31');
+    END IF;
+END $EF$;
+COMMIT;
+
+START TRANSACTION;
+
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20261123171251_AddSagaParticipations') THEN
+    CREATE TABLE saga_participation (
+        saga_id uuid NOT NULL,
+        decision_id uuid,
+        state text NOT NULL,
+        created_at timestamp with time zone NOT NULL,
+        updated_at timestamp with time zone NOT NULL,
+        version integer NOT NULL,
+        CONSTRAINT pk_saga_participation PRIMARY KEY (saga_id),
+        CONSTRAINT fk_saga_participation_decision_decision_id FOREIGN KEY (decision_id) REFERENCES decision (id) ON DELETE RESTRICT
+    );
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20261123171251_AddSagaParticipations') THEN
+    CREATE UNIQUE INDEX ix_saga_participation_decision_id ON saga_participation (decision_id);
+    END IF;
+END $EF$;
+
+DO $EF$
+BEGIN
+    IF NOT EXISTS(SELECT 1 FROM "__EFMigrationsHistory" WHERE "migration_id" = '20261123171251_AddSagaParticipations') THEN
+    INSERT INTO "__EFMigrationsHistory" (migration_id, product_version)
+    VALUES ('20261123171251_AddSagaParticipations', '8.0.31');
     END IF;
 END $EF$;
 COMMIT;
