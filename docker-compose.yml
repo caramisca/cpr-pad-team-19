@@ -84,6 +84,42 @@ x-postgres-etcd: &postgres-etcd
     timeout: 3s
     retries: 12
 
+# Redis HA for Applicant and Credential. Each group has a primary and two replicas.
+x-redis-member: &redis-member
+  image: redis:7.4-alpine
+  command: ["sh", "/opt/redis-ha/redis.sh", "member"]
+  networks: [redis-ha]
+  healthcheck:
+    test: ["CMD", "redis-cli", "ping"]
+    interval: 2s
+    timeout: 2s
+    retries: 20
+  restart: unless-stopped
+
+x-redis-sentinel: &redis-sentinel
+  image: redis:7.4-alpine
+  command: ["sh", "/opt/redis-ha/redis.sh", "sentinel"]
+  networks: [redis-ha]
+  depends_on:
+    applicant-redis-1:
+      condition: service_healthy
+    credential-redis-1:
+      condition: service_healthy
+  restart: unless-stopped
+
+x-redis-proxy: &redis-proxy
+  image: haproxy:3.0.31-alpine
+  entrypoint: ["sh", "/opt/redis-ha/proxy.sh"]
+  networks: [default, redis-ha]
+  volumes:
+    - ./docker/redis-ha:/opt/redis-ha:ro
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/healthz"]
+    interval: 2s
+    timeout: 2s
+    retries: 30
+  restart: unless-stopped
+
 services:
   # Not published to the host: clients reach it only through the gateway (Lab 2). Its own calls to
   # credential-service, server-rules-service and university-record-service also go through the
@@ -202,7 +238,7 @@ services:
   server-rules-service:
     deploy:
       replicas: ${RULES_REPLICAS:-2}
-    image: diana7376/server-rules-service:0.6.0
+    image: diana7376/server-rules-service:0.5.0
     environment:
       MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo-1:27017,rules-mongo-2:27017,rules-mongo-3:27017/server_rules?authSource=admin&replicaSet=rs0
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
@@ -212,37 +248,58 @@ services:
     depends_on:
       service-discovery:
         condition: service_healthy
-      rules-mongo-1:
-        condition: service_started
+      rules-mongo-setup:
+        condition: service_completed_successfully
 
-  # rules-mongo-1..3: 3-member MongoDB replica set "rs0". rules-mongo-1 creates the admin user
-  # (MONGO_INITDB_ROOT_*) on first boot; rules-mongo-setup initiates the RS once the primary
-  # accepts connections. Spring Data MongoDB on server-rules-service discovers the primary
-  # automatically via the RS-aware connection string — no HAProxy needed.
+  # All members share an internal authentication key. Generate it once and keep it across restarts.
+  rules-mongo-key:
+    image: mongo:7
+    entrypoint: ["bash", "-ec"]
+    command:
+      - |
+        if [ ! -s /replica-key/key ]; then
+          umask 077
+          openssl rand -base64 48 > /replica-key/new-key
+          chown mongodb:mongodb /replica-key/new-key
+          mv /replica-key/new-key /replica-key/key
+        fi
+    volumes:
+      - rules-mongo-key-data:/replica-key
+    restart: "no"
+
   rules-mongo-1:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/replica-key/key"]
+    depends_on:
+      rules-mongo-key:
+        condition: service_completed_successfully
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${RULES_MONGO_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${RULES_MONGO_PASSWORD}
     volumes:
       - rules-mongo-1-data:/data/db
+      - rules-mongo-key-data:/replica-key:ro
 
   rules-mongo-2:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/replica-key/key"]
+    depends_on:
+      rules-mongo-key:
+        condition: service_completed_successfully
     volumes:
       - rules-mongo-2-data:/data/db
+      - rules-mongo-key-data:/replica-key:ro
 
   rules-mongo-3:
     image: mongo:7
-    command: mongod --replSet rs0 --bind_ip_all
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--keyFile", "/replica-key/key"]
+    depends_on:
+      rules-mongo-key:
+        condition: service_completed_successfully
     volumes:
       - rules-mongo-3-data:/data/db
+      - rules-mongo-key-data:/replica-key:ro
 
-  # One-shot init container: waits for rules-mongo-1 to accept connections, then calls
-  # rs.initiate(). On subsequent restarts (RS already initiated) the call returns
-  # AlreadyInitialized and the container exits 0.
   rules-mongo-setup:
     image: mongo:7
     restart: "no"
@@ -253,34 +310,14 @@ services:
     environment:
       RULES_MONGO_USERNAME: ${RULES_MONGO_USERNAME}
       RULES_MONGO_PASSWORD: ${RULES_MONGO_PASSWORD}
-    command: >
-      bash -c "
-        until mongosh --host rules-mongo-1:27017
-          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
-          --authenticationDatabase admin
-          --eval 'db.adminCommand({ping:1})' --quiet 2>/dev/null; do
-          echo 'Waiting for rules-mongo-1...' && sleep 3;
-        done &&
-        mongosh --host rules-mongo-1:27017
-          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
-          --authenticationDatabase admin --eval '
-            try {
-              rs.initiate({_id:\"rs0\",members:[
-                {_id:0,host:\"rules-mongo-1:27017\",priority:2},
-                {_id:1,host:\"rules-mongo-2:27017\"},
-                {_id:2,host:\"rules-mongo-3:27017\"}
-              ]});
-            } catch(e) {
-              if(e.codeName===\"AlreadyInitialized\") print(\"RS already initialized\");
-              else throw e;
-            }
-          '
-      "
+    entrypoint: ["bash", "/init-replica-set.sh"]
+    volumes:
+      - ./docker/rules-mongo/init-replica-set.sh:/init-replica-set.sh:ro
 
   university-record-service:
     deploy:
       replicas: ${RECORD_REPLICAS:-2}
-    image: diana7376/university-record-service:0.6.0
+    image: diana7376/university-record-service:0.5.0
     environment:
       DB_URL: jdbc:postgresql://record-postgres:5432/university_record
       DB_USERNAME: ${RECORD_POSTGRES_USER}
@@ -353,7 +390,11 @@ services:
       Storage__Provider: Redis
       ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: applicant-redis:6379,password=${APPLICANT_REDIS_PASSWORD},abortConnect=false
-      Services__CredentialServiceMode: Http
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8083"
+      Messaging__GrpcPort: "9083"
+      Messaging__BrokerUrl: http://message-broker:9091
+      Services__CredentialServiceMode: Grpc
       Services__CredentialServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${APPLICANT_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${APPLICANT_REQUEST_TIMEOUT_MS:-5000}
@@ -362,23 +403,68 @@ services:
         condition: service_healthy
       applicant-seed:
         condition: service_completed_successfully
+      message-broker:
+        condition: service_healthy
       credential-service:
         condition: service_started
 
   applicant-redis:
-    image: redis:7.4-alpine
-    # The password is expanded when the container starts, so it is not part of the container
-    # command. redis-cli reads REDISCLI_AUTH as well, which is how the healthcheck authenticates.
-    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    <<: *redis-proxy
     environment:
+      REDIS_GROUP: applicant
+      REDIS_PASSWORD: ${APPLICANT_REDIS_PASSWORD}
+    depends_on:
+      applicant-redis-1:
+        condition: service_healthy
+      applicant-redis-2:
+        condition: service_healthy
+      applicant-redis-3:
+        condition: service_healthy
+      redis-sentinel-1:
+        condition: service_started
+      redis-sentinel-2:
+        condition: service_started
+      redis-sentinel-3:
+        condition: service_started
+
+  applicant-redis-1:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.11
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.11
       REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.11
     volumes:
       - applicant-redis-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  applicant-redis-2:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.12
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.11
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.12
+    volumes:
+      - applicant-redis-2-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  applicant-redis-3:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.13
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.11
+      REDISCLI_AUTH: ${APPLICANT_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.13
+    volumes:
+      - applicant-redis-3-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
 
   # One-shot job: loads the demo applicants of docs/db/applicant-service when Redis holds none.
   applicant-seed:
@@ -402,7 +488,11 @@ services:
       Storage__Provider: Redis
       ServiceDiscovery__Url: http://service-discovery:8089
       Redis__ConnectionString: credential-redis:6379,password=${CREDENTIAL_REDIS_PASSWORD},abortConnect=false
-      Services__UniversityRecordMode: Http
+      Messaging__Enabled: "true"
+      Messaging__HttpPort: "8084"
+      Messaging__GrpcPort: "9084"
+      Messaging__BrokerUrl: http://message-broker:9091
+      Services__UniversityRecordMode: Grpc
       Services__UniversityRecordServiceUrl: http://gateway-service:8090
       MAX_THREADS: ${CREDENTIAL_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${CREDENTIAL_REQUEST_TIMEOUT_MS:-5000}
@@ -411,21 +501,68 @@ services:
         condition: service_healthy
       credential-seed:
         condition: service_completed_successfully
+      message-broker:
+        condition: service_healthy
       university-record-service:
         condition: service_started
 
   credential-redis:
-    image: redis:7.4-alpine
-    command: ["sh", "-c", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --appendonly yes"]
+    <<: *redis-proxy
     environment:
+      REDIS_GROUP: credential
+      REDIS_PASSWORD: ${CREDENTIAL_REDIS_PASSWORD}
+    depends_on:
+      credential-redis-1:
+        condition: service_healthy
+      credential-redis-2:
+        condition: service_healthy
+      credential-redis-3:
+        condition: service_healthy
+      redis-sentinel-1:
+        condition: service_started
+      redis-sentinel-2:
+        condition: service_started
+      redis-sentinel-3:
+        condition: service_started
+
+  credential-redis-1:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.21
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.21
       REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.21
     volumes:
       - credential-redis-data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  credential-redis-2:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.22
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.21
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.22
+    volumes:
+      - credential-redis-2-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  credential-redis-3:
+    <<: *redis-member
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.23
+      REDIS_INITIAL_PRIMARY: ${REDIS_HA_IP_PREFIX:-172.30.57}.21
+      REDISCLI_AUTH: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.23
+    volumes:
+      - credential-redis-3-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
 
   # One-shot job: loads the demo credential bundles of docs/db/credential-service when Redis holds none.
   credential-seed:
@@ -450,7 +587,7 @@ services:
   player-service:
     deploy:
       replicas: ${PLAYER_REPLICAS:-2}
-    image: drateeva/player-service:0.5.0
+    image: drateeva/player-service:0.6.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
@@ -540,7 +677,7 @@ services:
   server-moderation-session-service:
     deploy:
       replicas: ${SESSION_REPLICAS:-2}
-    image: drateeva/server-moderation-session-service:0.5.0
+    image: drateeva/server-moderation-session-service:0.6.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
@@ -741,7 +878,7 @@ services:
   # It registers with service-discovery and finds each subscriber's instances (and their topics)
   # there, reaching an instance on its registered port + 1000.
   message-broker:
-    image: drateeva/message-broker:0.5.0
+    image: drateeva/message-broker:0.6.0
     environment:
       BROKER_PORT: 8091
       BROKER_GRPC_PORT: 9091
@@ -768,7 +905,7 @@ services:
 
   # Control plane, private to this Compose network. One process: the registry is in memory.
   service-discovery:
-    image: drateeva/service-discovery:0.5.0
+    image: drateeva/service-discovery:0.6.0
     environment:
       DISCOVERY_PORT: 8089
       INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}
@@ -787,6 +924,48 @@ services:
       timeout: 3s
       retries: 5
       start_period: 10s
+
+  redis-sentinel-1:
+    <<: *redis-sentinel
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.31
+      REDIS_HA_IP_PREFIX: ${REDIS_HA_IP_PREFIX:-172.30.57}
+      APPLICANT_REDIS_PASSWORD: ${APPLICANT_REDIS_PASSWORD}
+      CREDENTIAL_REDIS_PASSWORD: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.31
+    volumes:
+      - redis-sentinel-1-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  redis-sentinel-2:
+    <<: *redis-sentinel
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.32
+      REDIS_HA_IP_PREFIX: ${REDIS_HA_IP_PREFIX:-172.30.57}
+      APPLICANT_REDIS_PASSWORD: ${APPLICANT_REDIS_PASSWORD}
+      CREDENTIAL_REDIS_PASSWORD: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.32
+    volumes:
+      - redis-sentinel-2-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
+
+  redis-sentinel-3:
+    <<: *redis-sentinel
+    environment:
+      REDIS_NODE_ADDRESS: ${REDIS_HA_IP_PREFIX:-172.30.57}.33
+      REDIS_HA_IP_PREFIX: ${REDIS_HA_IP_PREFIX:-172.30.57}
+      APPLICANT_REDIS_PASSWORD: ${APPLICANT_REDIS_PASSWORD}
+      CREDENTIAL_REDIS_PASSWORD: ${CREDENTIAL_REDIS_PASSWORD}
+    networks:
+      redis-ha:
+        ipv4_address: ${REDIS_HA_IP_PREFIX:-172.30.57}.33
+    volumes:
+      - redis-sentinel-3-data:/data
+      - ./docker/redis-ha:/opt/redis-ha:ro
 
   # Data Warehouse (Lab 5, Grade 4a): read-only target for the ETL job. Private to the Compose
   # network — no published port. The ETL container creates the star schema on first boot.
@@ -825,10 +1004,18 @@ services:
       warehouse-db:
         condition: service_healthy
 
+networks:
+  redis-ha:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${REDIS_HA_IP_PREFIX:-172.30.57}.0/24
+
 volumes:
   broker-data:
   moderation-postgres-data:
   dms-redis-data:
+  rules-mongo-key-data:
   rules-mongo-1-data:
   rules-mongo-2-data:
   rules-mongo-3-data:
@@ -847,3 +1034,10 @@ volumes:
   postgres-etcd-2-data:
   postgres-etcd-3-data:
   warehouse-db-data:
+  applicant-redis-2-data:
+  applicant-redis-3-data:
+  credential-redis-2-data:
+  credential-redis-3-data:
+  redis-sentinel-1-data:
+  redis-sentinel-2-data:
+  redis-sentinel-3-data:
