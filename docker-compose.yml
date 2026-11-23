@@ -67,6 +67,15 @@ x-session-postgres-cluster: &session-postgres-cluster
   APP_DB_USER: ${SESSION_POSTGRES_USER}
   APP_DB_PASSWORD: ${SESSION_POSTGRES_PASSWORD}
 
+x-record-postgres-cluster: &record-postgres-cluster
+  PATRONI_SCOPE: record-postgres
+  PATRONI_ETCD3_HOSTS: postgres-etcd-1:2379,postgres-etcd-2:2379,postgres-etcd-3:2379
+  PATRONI_SUPERUSER_PASSWORD: ${RECORD_POSTGRES_SUPERUSER_PASSWORD}
+  PATRONI_REPLICATION_PASSWORD: ${RECORD_POSTGRES_REPLICATION_PASSWORD}
+  APP_DB_NAME: university_record
+  APP_DB_USER: ${RECORD_POSTGRES_USER}
+  APP_DB_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
+
 x-postgres-etcd: &postgres-etcd
   image: quay.io/coreos/etcd:v3.6.17
   healthcheck:
@@ -195,7 +204,7 @@ services:
       replicas: ${RULES_REPLICAS:-2}
     image: diana7376/server-rules-service:0.5.0
     environment:
-      MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo:27017/server_rules?authSource=admin
+      MONGODB_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo-1:27017,rules-mongo-2:27017,rules-mongo-3:27017/server_rules?authSource=admin&replicaSet=rs0
       MAX_THREADS: ${RULES_MAX_THREADS:-200}
       REQUEST_TIMEOUT_MS: ${RULES_REQUEST_TIMEOUT_MS:-5000}
       SD_URL: http://service-discovery:8089
@@ -203,16 +212,70 @@ services:
     depends_on:
       service-discovery:
         condition: service_healthy
-      rules-mongo:
+      rules-mongo-1:
         condition: service_started
 
-  rules-mongo:
+  # rules-mongo-1..3: 3-member MongoDB replica set "rs0". rules-mongo-1 creates the admin user
+  # (MONGO_INITDB_ROOT_*) on first boot; rules-mongo-setup initiates the RS once the primary
+  # accepts connections. Spring Data MongoDB on server-rules-service discovers the primary
+  # automatically via the RS-aware connection string — no HAProxy needed.
+  rules-mongo-1:
     image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${RULES_MONGO_USERNAME}
       MONGO_INITDB_ROOT_PASSWORD: ${RULES_MONGO_PASSWORD}
     volumes:
-      - rules-mongo-data:/data/db
+      - rules-mongo-1-data:/data/db
+
+  rules-mongo-2:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    volumes:
+      - rules-mongo-2-data:/data/db
+
+  rules-mongo-3:
+    image: mongo:7
+    command: mongod --replSet rs0 --bind_ip_all
+    volumes:
+      - rules-mongo-3-data:/data/db
+
+  # One-shot init container: waits for rules-mongo-1 to accept connections, then calls
+  # rs.initiate(). On subsequent restarts (RS already initiated) the call returns
+  # AlreadyInitialized and the container exits 0.
+  rules-mongo-setup:
+    image: mongo:7
+    restart: "no"
+    depends_on:
+      - rules-mongo-1
+      - rules-mongo-2
+      - rules-mongo-3
+    environment:
+      RULES_MONGO_USERNAME: ${RULES_MONGO_USERNAME}
+      RULES_MONGO_PASSWORD: ${RULES_MONGO_PASSWORD}
+    command: >
+      bash -c "
+        until mongosh --host rules-mongo-1:27017
+          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
+          --authenticationDatabase admin
+          --eval 'db.adminCommand({ping:1})' --quiet 2>/dev/null; do
+          echo 'Waiting for rules-mongo-1...' && sleep 3;
+        done &&
+        mongosh --host rules-mongo-1:27017
+          -u $$RULES_MONGO_USERNAME -p $$RULES_MONGO_PASSWORD
+          --authenticationDatabase admin --eval '
+            try {
+              rs.initiate({_id:\"rs0\",members:[
+                {_id:0,host:\"rules-mongo-1:27017\",priority:2},
+                {_id:1,host:\"rules-mongo-2:27017\"},
+                {_id:2,host:\"rules-mongo-3:27017\"}
+              ]});
+            } catch(e) {
+              if(e.codeName===\"AlreadyInitialized\") print(\"RS already initialized\");
+              else throw e;
+            }
+          '
+      "
 
   university-record-service:
     deploy:
@@ -230,16 +293,57 @@ services:
       service-discovery:
         condition: service_healthy
       record-postgres:
+        condition: service_healthy
+
+  # record-postgres-1..3: Patroni cluster, one primary + two standbys (synchronous + streaming).
+  # HAProxy at the old hostname record-postgres always forwards to the current primary. Lose the
+  # primary and a standby is promoted within ~15 s; university-record-service keeps the same URL.
+  record-postgres:
+    <<: *postgres-ha-router
+    environment:
+      PG_MEMBER_1: record-postgres-1
+      PG_MEMBER_2: record-postgres-2
+      PG_MEMBER_3: record-postgres-3
+    depends_on:
+      record-postgres-1:
+        condition: service_started
+      record-postgres-2:
+        condition: service_started
+      record-postgres-3:
         condition: service_started
 
-  record-postgres:
-    image: postgres:16
+  record-postgres-1:
+    <<: *postgres-ha-member
     environment:
-      POSTGRES_DB: university_record
-      POSTGRES_USER: ${RECORD_POSTGRES_USER}
-      POSTGRES_PASSWORD: ${RECORD_POSTGRES_PASSWORD}
+      <<: *record-postgres-cluster
+      PATRONI_NAME: record-postgres-1
+      PATRONI_RESTAPI_CONNECT_ADDRESS: record-postgres-1:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: record-postgres-1:5432
     volumes:
-      - record-postgres-data:/var/lib/postgresql/data
+      - record-postgres-1-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
+
+  record-postgres-2:
+    <<: *postgres-ha-member
+    environment:
+      <<: *record-postgres-cluster
+      PATRONI_NAME: record-postgres-2
+      PATRONI_RESTAPI_CONNECT_ADDRESS: record-postgres-2:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: record-postgres-2:5432
+    volumes:
+      - record-postgres-2-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
+
+  record-postgres-3:
+    <<: *postgres-ha-member
+    environment:
+      <<: *record-postgres-cluster
+      PATRONI_NAME: record-postgres-3
+      PATRONI_RESTAPI_CONNECT_ADDRESS: record-postgres-3:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: record-postgres-3:5432
+    volumes:
+      - record-postgres-3-data:/var/lib/postgresql/patroni
+      - ./docker/postgres-ha/patroni.yml:/etc/patroni/patroni.yml:ro
 
   applicant-service:
     deploy:
@@ -684,12 +788,53 @@ services:
       retries: 5
       start_period: 10s
 
+  # Data Warehouse (Lab 5, Grade 4a): read-only target for the ETL job. Private to the Compose
+  # network — no published port. The ETL container creates the star schema on first boot.
+  warehouse-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: warehouse
+      POSTGRES_USER: warehouse
+      POSTGRES_PASSWORD: ${WAREHOUSE_DB_PASSWORD}
+    volumes:
+      - warehouse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U warehouse"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ETL job (Lab 5, Grade 4b): reads all 8 source databases on a schedule, transforms the data
+  # into a star schema and loads it into warehouse-db idempotently (INSERT ... ON CONFLICT DO UPDATE).
+  # Sources: player-postgres, session-postgres (Patroni HA), record-postgres (Patroni HA),
+  # moderation-postgres, rules-mongo (RS), applicant-redis, credential-redis, dms-redis.
+  etl:
+    image: diana7376/pad-etl:0.6.0
+    environment:
+      WAREHOUSE_DB_URL: postgresql://warehouse:${WAREHOUSE_DB_PASSWORD}@warehouse-db:5432/warehouse
+      PLAYER_POSTGRES_URL: postgresql://${PLAYER_POSTGRES_USER}:${PLAYER_POSTGRES_PASSWORD}@player-postgres:5432/playerdb
+      SESSION_POSTGRES_URL: postgresql://${SESSION_POSTGRES_USER}:${SESSION_POSTGRES_PASSWORD}@session-postgres:5432/sessiondb
+      MODERATION_POSTGRES_URL: postgresql://${MODERATION_POSTGRES_USER}:${MODERATION_POSTGRES_PASSWORD}@moderation-postgres:5432/moderation
+      RECORD_POSTGRES_URL: postgresql://${RECORD_POSTGRES_USER}:${RECORD_POSTGRES_PASSWORD}@record-postgres:5432/university_record
+      RULES_MONGO_URI: mongodb://${RULES_MONGO_USERNAME}:${RULES_MONGO_PASSWORD}@rules-mongo-1:27017,rules-mongo-2:27017,rules-mongo-3:27017/server_rules?authSource=admin&replicaSet=rs0
+      APPLICANT_REDIS_URL: redis://:${APPLICANT_REDIS_PASSWORD}@applicant-redis:6379
+      CREDENTIAL_REDIS_URL: redis://:${CREDENTIAL_REDIS_PASSWORD}@credential-redis:6379
+      DMS_REDIS_URL: redis://:${DMS_REDIS_PASSWORD}@dms-redis:6379
+      ETL_INTERVAL_SECONDS: ${ETL_INTERVAL_SECONDS:-300}
+    depends_on:
+      warehouse-db:
+        condition: service_healthy
+
 volumes:
   broker-data:
   moderation-postgres-data:
   dms-redis-data:
-  rules-mongo-data:
-  record-postgres-data:
+  rules-mongo-1-data:
+  rules-mongo-2-data:
+  rules-mongo-3-data:
+  record-postgres-1-data:
+  record-postgres-2-data:
+  record-postgres-3-data:
   applicant-redis-data:
   credential-redis-data:
   player-postgres-1-data:
@@ -701,3 +846,4 @@ volumes:
   postgres-etcd-1-data:
   postgres-etcd-2-data:
   postgres-etcd-3-data:
+  warehouse-db-data:
