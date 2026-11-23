@@ -85,7 +85,12 @@
             ]
           }
         }
-      ]
+      ],
+      "protocolProfileBehavior": {
+        "disabledSystemHeaders": {
+          "cache-control": true
+        }
+      }
     },
     {
       "name": "First client reads from cache",
@@ -110,7 +115,12 @@
             ]
           }
         }
-      ]
+      ],
+      "protocolProfileBehavior": {
+        "disabledSystemHeaders": {
+          "cache-control": true
+        }
+      }
     },
     {
       "name": "Second client has a separate entry",
@@ -135,7 +145,12 @@
             ]
           }
         }
-      ]
+      ],
+      "protocolProfileBehavior": {
+        "disabledSystemHeaders": {
+          "cache-control": true
+        }
+      }
     },
     {
       "name": "Second client updates the player",
@@ -198,7 +213,12 @@
             ]
           }
         }
-      ]
+      ],
+      "protocolProfileBehavior": {
+        "disabledSystemHeaders": {
+          "cache-control": true
+        }
+      }
     },
     {
       "name": "Remove the test player",

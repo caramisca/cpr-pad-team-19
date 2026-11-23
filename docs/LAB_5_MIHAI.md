@@ -24,6 +24,8 @@ The Gateway assumes one process for write invalidation. The TTL bounds staleness
 
 Run [the Gateway cache Postman collection](postman/gateway-cache.postman_collection.json) with `baseUrl`, `apiKey` and `secondApiKey`. Configure the two keys as separate named clients in `GATEWAY_API_KEYS`. The collection registers a temporary player, checks cache isolation and invalidation, then removes the player.
 
+With the Lab 5 Gateway image, set `expectedGatewayVersion=0.6.0` when running the Applicant and Credential collections. For a custom Gateway port, set both `baseUrl` and `credentialBaseUrl` to that Gateway URL for the Applicant integration checks.
+
 ## Redis failover · G5
 
 `applicant-redis` and `credential-redis` are stable internal HAProxy addresses. Each points to its current Redis primary. Each group has a primary and two replicas, with separate AOF volumes. The three Sentinel instances monitor both groups and require two votes for failover. HAProxy closes old connections when a primary is removed from service. Applicant, Credential, the seed jobs and ETL keep their original hostnames and passwords.
@@ -37,3 +39,9 @@ python scripts/check_redis_failover.py --project pad-lab5-redis-demo
 ```
 
 The check writes a short-lived value, waits for both replicas, stops each primary in the demo project, checks reads and writes over the original hostnames, then starts the old primaries and verifies they rejoined as replicas.
+
+## Verified locally on 2026-11-23
+
+- The Gateway accepted a change from three to four shards, wrote eight GET entries to the new shard and returned to three shards with the same Gateway container and start time.
+- The Redis failover check took 8.7 seconds for Applicant and 9.7 seconds for Credential. Both retained the replicated value, accepted a new write and restored the old primary as a replica.
+- Newman passed 12 Gateway cache, 62 Applicant and 79 Credential assertions against the local Lab 5 candidates. The Gateway, Applicant and Credential unit suites passed 300, 116 and 139 tests respectively.
