@@ -451,7 +451,7 @@ services:
   player-service:
     deploy:
       replicas: ${PLAYER_REPLICAS:-2}
-    image: drateeva/player-service:0.5.0
+    image: drateeva/player-service:0.6.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://player-postgres:5432/playerdb
       SPRING_DATASOURCE_USERNAME: ${PLAYER_POSTGRES_USER}
@@ -541,7 +541,7 @@ services:
   server-moderation-session-service:
     deploy:
       replicas: ${SESSION_REPLICAS:-2}
-    image: drateeva/server-moderation-session-service:0.5.0
+    image: drateeva/server-moderation-session-service:0.6.0
     environment:
       SPRING_DATASOURCE_URL: jdbc:postgresql://session-postgres:5432/sessiondb
       SPRING_DATASOURCE_USERNAME: ${SESSION_POSTGRES_USER}
@@ -742,7 +742,7 @@ services:
   # It registers with service-discovery and finds each subscriber's instances (and their topics)
   # there, reaching an instance on its registered port + 1000.
   message-broker:
-    image: drateeva/message-broker:0.5.0
+    image: drateeva/message-broker:0.6.0
     environment:
       BROKER_PORT: 8091
       BROKER_GRPC_PORT: 9091
@@ -769,7 +769,7 @@ services:
 
   # Control plane, private to this Compose network. One process: the registry is in memory.
   service-discovery:
-    image: drateeva/service-discovery:0.5.0
+    image: drateeva/service-discovery:0.6.0
     environment:
       DISCOVERY_PORT: 8089
       INSTANCE_TTL_SECONDS: ${DISCOVERY_INSTANCE_TTL_SECONDS:-30}

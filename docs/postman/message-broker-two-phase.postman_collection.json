@@ -1,0 +1,706 @@
+{
+  "info": {
+    "name": "message-broker-two-phase",
+    "description": "The two-phase commit coordinator of message-broker 0.6.0 (Team 19, Topic 3: Student ID, Please; Lab 5, Grade 8; owner Daria). Closing a shift is one transaction across `server-moderation-session-service`'s and `player-service`'s databases; the broker runs it: `POST /two-phase/transactions` (both phases, answers the decision), `GET /two-phase/transactions/{transactionId}`, `GET /two-phase/transactions?state=&limit=`. Contract: the CPR's `contracts/two-phase.md`; runbook: `docs/LAB_5_TWO_PHASE_COMMIT.md`. The broker is at `brokerUrl` (its HTTP port 8091, on the Compose network only: run newman there, e.g. `http://message-broker:8091`) and needs no API key: it is not a Gateway route. The requests here run real transactions with `player-service` as the only participant, over gRPC `ServiceEndpoint.Call`: a NO vote (an unregistered moderator) and, with `playerInstanceUrl` set (e.g. `http://player-service:8081`; empty, those requests are skipped), a commit whose credited shift is then read back. The whole shift close, through the Gateway, is in the `server-moderation-session-service` collection. Every request sends its own `X-Request-Id` and checks that it comes back, and every error is checked for the `{error, message}` shape. Run the folders top to bottom. The status, topics and dead letter channel are in the `message-broker` collection.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Every request sends its own request ID; the broker logs it and sends it back.",
+          "pm.variables.set(\"requestId\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));",
+          "pm.request.headers.upsert({ key: \"X-Request-Id\", value: pm.variables.get(\"requestId\") });"
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "pm.test(\"echoes the request ID\", () => pm.expect(pm.response.headers.get(\"X-Request-Id\")).to.eql(pm.variables.get(\"requestId\")));",
+          "if (pm.response.code >= 400) {",
+          "  pm.test(\"error body is {error, message}\", () => {",
+          "    const error = pm.response.json();",
+          "    pm.expect(error.error).to.be.a(\"string\").and.match(/^[A-Z_]+$/);",
+          "    pm.expect(error.message).to.be.a(\"string\").and.not.empty;",
+          "  });",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    { "key": "brokerUrl", "value": "http://localhost:8091", "type": "string" },
+    { "key": "playerInstanceUrl", "value": "", "type": "string" },
+    { "key": "abortedTransactionId", "value": "", "type": "string" },
+    { "key": "abortedCreatedAt", "value": "", "type": "string" },
+    { "key": "committedTransactionId", "value": "", "type": "string" },
+    { "key": "closedAt", "value": "", "type": "string" },
+    { "key": "playerId", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "A Participant Votes NO",
+      "description": "`player-service` refuses a moderator who isn't a registered player, so the coordinator aborts. Asking again with the same `transactionId` answers the logged decision without preparing again.",
+      "item": [
+        {
+          "name": "Run A Transaction A Participant Refuses",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"abortedTransactionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"closedAt\", new Date().toISOString());",
+                  "pm.variables.set(\"unregisteredModeratorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the transaction shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"transactionId\", \"source\", \"state\", \"completed\", \"reason\", \"createdAt\", \"decidedAt\", \"completedAt\", \"participants\");",
+                  "  pm.expect(body.source).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.participants).to.be.an(\"array\").with.lengthOf(1);",
+                  "  pm.expect(body.participants[0]).to.have.all.keys(\"service\", \"vote\", \"reason\", \"outcome\");",
+                  "  pm.expect(body.participants[0]).to.not.have.property(\"payload\");",
+                  "});",
+                  "pm.test(\"decided ABORTED and finished\", () => {",
+                  "  pm.expect(body.transactionId).to.eql(pm.collectionVariables.get(\"abortedTransactionId\"));",
+                  "  pm.expect(body.state).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.completed).to.eql(true);",
+                  "  pm.expect(Date.parse(body.decidedAt)).to.not.be.NaN;",
+                  "  pm.expect(Date.parse(body.completedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"player-service voted NO with its refusal\", () => {",
+                  "  pm.expect(body.participants[0].vote).to.eql(\"NO\");",
+                  "  pm.expect(body.participants[0].reason).to.include(\"TRANSACTION_REFUSED\");",
+                  "  pm.expect(body.participants[0].outcome).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.reason).to.include(\"player-service voted NO\");",
+                  "});",
+                  "pm.collectionVariables.set(\"abortedCreatedAt\", body.createdAt);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"{{abortedTransactionId}}\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    {\n      \"service\": \"player-service\",\n      \"payload\": { \"moderatorId\": \"{{unregisteredModeratorId}}\", \"juniorModeratorIds\": [], \"closedAt\": \"{{closedAt}}\" }\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] },
+            "description": "The participant that voted NO already rolled back, so no abort is sent to it: the transaction is finished (`completed`) at once."
+          }
+        },
+        {
+          "name": "Get The Aborted Transaction",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the transaction shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"transactionId\", \"source\", \"state\", \"completed\", \"reason\", \"createdAt\", \"decidedAt\", \"completedAt\", \"participants\");",
+                  "  pm.expect(body.source).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.participants).to.be.an(\"array\").with.lengthOf(1);",
+                  "  pm.expect(body.participants[0]).to.have.all.keys(\"service\", \"vote\", \"reason\", \"outcome\");",
+                  "  pm.expect(body.participants[0]).to.not.have.property(\"payload\");",
+                  "});",
+                  "pm.test(\"decided ABORTED and finished\", () => {",
+                  "  pm.expect(body.transactionId).to.eql(pm.collectionVariables.get(\"abortedTransactionId\"));",
+                  "  pm.expect(body.state).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.completed).to.eql(true);",
+                  "  pm.expect(Date.parse(body.decidedAt)).to.not.be.NaN;",
+                  "  pm.expect(Date.parse(body.completedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"player-service voted NO with its refusal\", () => {",
+                  "  pm.expect(body.participants[0].vote).to.eql(\"NO\");",
+                  "  pm.expect(body.participants[0].reason).to.include(\"TRANSACTION_REFUSED\");",
+                  "  pm.expect(body.participants[0].outcome).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.reason).to.include(\"player-service voted NO\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions/{{abortedTransactionId}}", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions", "{{abortedTransactionId}}"] }
+          }
+        },
+        {
+          "name": "Run The Same Transaction Again Answers The Logged Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the transaction shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"transactionId\", \"source\", \"state\", \"completed\", \"reason\", \"createdAt\", \"decidedAt\", \"completedAt\", \"participants\");",
+                  "  pm.expect(body.source).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.participants).to.be.an(\"array\").with.lengthOf(1);",
+                  "  pm.expect(body.participants[0]).to.have.all.keys(\"service\", \"vote\", \"reason\", \"outcome\");",
+                  "  pm.expect(body.participants[0]).to.not.have.property(\"payload\");",
+                  "});",
+                  "pm.test(\"decided ABORTED and finished\", () => {",
+                  "  pm.expect(body.transactionId).to.eql(pm.collectionVariables.get(\"abortedTransactionId\"));",
+                  "  pm.expect(body.state).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.completed).to.eql(true);",
+                  "  pm.expect(Date.parse(body.decidedAt)).to.not.be.NaN;",
+                  "  pm.expect(Date.parse(body.completedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"player-service voted NO with its refusal\", () => {",
+                  "  pm.expect(body.participants[0].vote).to.eql(\"NO\");",
+                  "  pm.expect(body.participants[0].reason).to.include(\"TRANSACTION_REFUSED\");",
+                  "  pm.expect(body.participants[0].outcome).to.eql(\"ABORTED\");",
+                  "  pm.expect(body.reason).to.include(\"player-service voted NO\");",
+                  "});",
+                  "pm.test(\"the same transaction, not a new one\", () => pm.expect(body.createdAt).to.eql(pm.collectionVariables.get(\"abortedCreatedAt\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"{{abortedTransactionId}}\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    {\n      \"service\": \"player-service\",\n      \"payload\": { \"moderatorId\": \"00000000-0000-0000-0000-000000000000\", \"juniorModeratorIds\": [], \"closedAt\": \"{{closedAt}}\" }\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Every Participant Votes YES (needs playerInstanceUrl)",
+      "description": "A registered player as the moderator: `player-service` votes YES, the coordinator logs `COMMITTED` and sends the commit, and the shift is counted in the player's stats. Registering and reading the player go to the instance directly (`playerInstanceUrl`); empty, the folder is skipped.",
+      "item": [
+        {
+          "name": "Register A Player At Its Instance",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"playerInstanceUrl\")) { pm.execution.skipRequest(); }",
+                  "pm.variables.set(\"discordId\", \"discord-postman-broker-\" + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"returns the new player's id\", () => pm.expect(body.id).to.match(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i));",
+                  "pm.collectionVariables.set(\"playerId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"discordId\": \"{{discordId}}\",\n  \"displayName\": \"Postman Broker Moderator\"\n}"
+            },
+            "url": { "raw": "{{playerInstanceUrl}}/players", "host": ["{{playerInstanceUrl}}"], "path": ["players"] }
+          }
+        },
+        {
+          "name": "Run A Transaction Everyone Votes YES",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"playerInstanceUrl\")) { pm.execution.skipRequest(); }",
+                  "pm.collectionVariables.set(\"committedTransactionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"closedAt\", new Date().toISOString());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the transaction shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"transactionId\", \"source\", \"state\", \"completed\", \"reason\", \"createdAt\", \"decidedAt\", \"completedAt\", \"participants\");",
+                  "  pm.expect(body.source).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.participants).to.be.an(\"array\").with.lengthOf(1);",
+                  "  pm.expect(body.participants[0]).to.have.all.keys(\"service\", \"vote\", \"reason\", \"outcome\");",
+                  "  pm.expect(body.participants[0]).to.not.have.property(\"payload\");",
+                  "});",
+                  "pm.test(\"decided COMMITTED and finished\", () => {",
+                  "  pm.expect(body.transactionId).to.eql(pm.collectionVariables.get(\"committedTransactionId\"));",
+                  "  pm.expect(body.state).to.eql(\"COMMITTED\");",
+                  "  pm.expect(body.completed).to.eql(true);",
+                  "  pm.expect(Date.parse(body.decidedAt)).to.not.be.NaN;",
+                  "  pm.expect(Date.parse(body.completedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"player-service voted YES and committed\", () => {",
+                  "  pm.expect(body.participants[0].vote).to.eql(\"YES\");",
+                  "  pm.expect(body.participants[0].outcome).to.eql(\"COMMITTED\");",
+                  "  pm.expect(body.reason).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"{{committedTransactionId}}\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    {\n      \"service\": \"player-service\",\n      \"payload\": { \"moderatorId\": \"{{playerId}}\", \"juniorModeratorIds\": [], \"closedAt\": \"{{closedAt}}\" }\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "Get The Committed Transaction",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"playerInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body has the transaction shape\", () => {",
+                  "  pm.expect(body).to.include.all.keys(\"transactionId\", \"source\", \"state\", \"completed\", \"reason\", \"createdAt\", \"decidedAt\", \"completedAt\", \"participants\");",
+                  "  pm.expect(body.source).to.eql(\"server-moderation-session-service\");",
+                  "  pm.expect(body.participants).to.be.an(\"array\").with.lengthOf(1);",
+                  "  pm.expect(body.participants[0]).to.have.all.keys(\"service\", \"vote\", \"reason\", \"outcome\");",
+                  "  pm.expect(body.participants[0]).to.not.have.property(\"payload\");",
+                  "});",
+                  "pm.test(\"decided COMMITTED and finished\", () => {",
+                  "  pm.expect(body.transactionId).to.eql(pm.collectionVariables.get(\"committedTransactionId\"));",
+                  "  pm.expect(body.state).to.eql(\"COMMITTED\");",
+                  "  pm.expect(body.completed).to.eql(true);",
+                  "  pm.expect(Date.parse(body.decidedAt)).to.not.be.NaN;",
+                  "  pm.expect(Date.parse(body.completedAt)).to.not.be.NaN;",
+                  "});",
+                  "pm.test(\"player-service voted YES and committed\", () => {",
+                  "  pm.expect(body.participants[0].vote).to.eql(\"YES\");",
+                  "  pm.expect(body.participants[0].outcome).to.eql(\"COMMITTED\");",
+                  "  pm.expect(body.reason).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions/{{committedTransactionId}}", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions", "{{committedTransactionId}}"] }
+          }
+        },
+        {
+          "name": "The Player's Stats Count The Committed Shift",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"playerInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"the shift is counted\", () => pm.expect(body.totalShifts).to.eql(1));",
+                  "pm.test(\"lastShiftAt is the transaction's closedAt\", () => pm.expect(Date.parse(body.lastShiftAt)).to.eql(Date.parse(pm.collectionVariables.get(\"closedAt\"))));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{playerInstanceUrl}}/players/{{playerId}}/stats", "host": ["{{playerInstanceUrl}}"], "path": ["players", "{{playerId}}", "stats"] }
+          }
+        },
+        {
+          "name": "Delete The Player",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Compose doesn't publish the instances: these requests need an instance URL (a jar run",
+                  "// locally, or newman on the Compose network). Without one they're skipped.",
+                  "if (!pm.variables.get(\"playerInstanceUrl\")) { pm.execution.skipRequest(); }"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 204\", () => pm.response.to.have.status(204));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{playerInstanceUrl}}/players/{{playerId}}", "host": ["{{playerInstanceUrl}}"], "path": ["players", "{{playerId}}"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "List Transactions",
+      "description": "Newest first; `state` filters (`PREPARING`, `COMMITTED`, `ABORTED`), `limit` 1–1000 (default 100). Payloads are never shown.",
+      "item": [
+        {
+          "name": "List Transactions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"body is {total, transactions}\", () => {",
+                  "  pm.expect(body.total).to.be.a(\"number\").and.at.least(1);",
+                  "  pm.expect(body.transactions).to.be.an(\"array\").and.not.empty;",
+                  "  pm.expect(body.transactions.length).to.be.at.most(body.total);",
+                  "});",
+                  "pm.test(\"newest first\", () => {",
+                  "  const times = body.transactions.map((t) => Date.parse(t.createdAt));",
+                  "  pm.expect(times).to.eql([...times].sort((a, b) => b - a));",
+                  "});",
+                  "pm.test(\"includes the aborted transaction\", () => pm.expect(body.transactions.map((t) => t.transactionId)).to.include(pm.collectionVariables.get(\"abortedTransactionId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "List Aborted Transactions With A Limit",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"at most 2, all ABORTED\", () => {",
+                  "  pm.expect(body.transactions.length).to.be.within(1, 2);",
+                  "  body.transactions.forEach((t) => pm.expect(t.state).to.eql(\"ABORTED\"));",
+                  "  pm.expect(body.total).to.be.at.least(body.transactions.length);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions?state=ABORTED&limit=2", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"], "query": [{ "key": "state", "value": "ABORTED" }, { "key": "limit", "value": "2" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "description": "`404 TRANSACTION_NOT_FOUND` (a participant treats it as aborted: presumed abort) and `400 VALIDATION_ERROR` for a start or a listing the coordinator can't accept. `409 TRANSACTION_IN_PROGRESS` (+ `Retry-After: 1`) only happens while a transaction with the same ID is still being prepared, so it isn't requested here.",
+      "item": [
+        {
+          "name": "Get An Unknown Transaction Returns 404",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set(\"unknownTransactionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error code is TRANSACTION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"TRANSACTION_NOT_FOUND\"));",
+                  "pm.test(\"says presumed aborted\", () => pm.expect(pm.response.json().message).to.include(\"presumed aborted\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions/{{unknownTransactionId}}", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions", "{{unknownTransactionId}}"] }
+          }
+        },
+        {
+          "name": "Start With A transactionId That Is Not A UUID Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"says what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"transactionId\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"not-a-uuid\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    {\n      \"service\": \"player-service\",\n      \"payload\": { \"moderatorId\": \"00000000-0000-0000-0000-000000000000\", \"juniorModeratorIds\": [], \"closedAt\": \"{{closedAt}}\" }\n    }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "Start Without Participants Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"says what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"participants\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": []\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "Start With A Participant Listed Twice Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"says what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"listed once\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    { \"service\": \"player-service\", \"payload\": {} },\n    { \"service\": \"player-service\", \"payload\": {} }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "Start With A Payload That Is Not An Object Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"says what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"JSON object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"transactionId\": \"00000000-0000-0000-0000-000000000000\",\n  \"source\": \"server-moderation-session-service\",\n  \"participants\": [\n    { \"service\": \"player-service\", \"payload\": \"credit the shift\" }\n  ]\n}"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "Start With A Body That Is Not An Object Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));",
+                  "pm.test(\"says what is wrong\", () => pm.expect(pm.response.json().message).to.include(\"JSON object\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[]"
+            },
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"] }
+          }
+        },
+        {
+          "name": "List With An Unknown State Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions?state=DONE", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"], "query": [{ "key": "state", "value": "DONE" }] }
+          }
+        },
+        {
+          "name": "List With A limit Of 0 Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error code is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/two-phase/transactions?limit=0", "host": ["{{brokerUrl}}"], "path": ["two-phase", "transactions"], "query": [{ "key": "limit", "value": "0" }] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Metrics",
+      "description": "The coordinator's Prometheus metrics (scraped as `message-broker:8091`).",
+      "item": [
+        {
+          "name": "Metrics Count The Decisions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const text = pm.response.text();",
+                  "pm.test(\"counts the aborted decisions\", () => pm.expect(text).to.match(/broker_two_phase_transactions_total\\{decision=\"aborted\"\\} [1-9]/));",
+                  "pm.test(\"reports the unfinished transactions\", () => pm.expect(text).to.match(/^broker_two_phase_unfinished \\d/m));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{brokerUrl}}/metrics", "host": ["{{brokerUrl}}"], "path": ["metrics"] }
+          }
+        }
+      ]
+    }
+  ]
+}
