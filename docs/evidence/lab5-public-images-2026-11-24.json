@@ -1,0 +1,319 @@
+{
+  "timestamp": 1795530003639,
+  "what": "Lab 5, Grade 10 (L5-G10a): Daria's three Postman collections and the two-phase commit check run green against the CPR compose with every image pulled from DockerHub as published (player-service, server-moderation-session-service, message-broker and service-discovery at 0.6.0), newman on the Compose network.",
+  "stack": {
+    "compose": [
+      "docker-compose.yml",
+      "docker-compose.lab4-mihai.yml",
+      "docker-compose.lab4-andi.yml"
+    ],
+    "overrides": "none: no local builds, no image overrides",
+    "env": ".env.example with random secrets and a new API key; BROKER_GRPC_URL empty (the compose default); PLAYER_REPLICAS=2, SESSION_REPLICAS=2, the teammates' services 1 replica each; SESSION_SHIFT_CLOSE_MODE=two-phase",
+    "images": [
+      "andiblindu1/discord-dms-service:0.5.0",
+      "andiblindu1/moderation-service:0.5.0",
+      "caramisca/applicant-service:0.5.0",
+      "caramisca/credential-service:0.5.0",
+      "diana7376/gateway-service:0.5.0",
+      "diana7376/pad-etl:0.6.0",
+      "diana7376/server-rules-service:0.6.0",
+      "diana7376/university-record-service:0.6.0",
+      "drateeva/message-broker:0.6.0",
+      "drateeva/player-service:0.6.0",
+      "drateeva/postgres-ha:16.16-patroni4.1.5",
+      "drateeva/server-moderation-session-service:0.6.0",
+      "drateeva/service-discovery:0.6.0",
+      "haproxy:3.0.31-alpine",
+      "mongo:7",
+      "postgres:16",
+      "quay.io/coreos/etcd:v3.6.17",
+      "redis:7.4-alpine"
+    ],
+    "newman": "postman/newman:6-alpine, --network <project>_default"
+  },
+  "observed": {
+    "player-service": "0.6.0",
+    "server-moderation-session-service": "0.6.0",
+    "broker metrics": [
+      "broker_two_phase_transactions_total{decision=\"committed\"} 6.0",
+      "broker_two_phase_transactions_total{decision=\"aborted\"} 2.0",
+      "broker_two_phase_unfinished 0.0"
+    ]
+  },
+  "collections": [
+    {
+      "collection": "docs/postman/player-service.postman_collection.json",
+      "requests": {
+        "inCollection": 59,
+        "distinctRun": 45,
+        "executions": 45,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 177,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "Health Check",
+          "requests": 1,
+          "run": 1
+        },
+        {
+          "folder": "Happy Path",
+          "requests": 7,
+          "run": 7
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 14,
+          "run": 14
+        },
+        {
+          "folder": "Event Stand-In (decision.evaluated, local only)",
+          "requests": 14,
+          "run": 0
+        },
+        {
+          "folder": "Two-Phase Commit Participant (direct, local only)",
+          "requests": 18,
+          "run": 18
+        },
+        {
+          "folder": "Instance Status And Metrics (direct, local only)",
+          "requests": 5,
+          "run": 5
+        }
+      ],
+      "skipped": [
+        "Event Stand-In (decision.evaluated, local only) / Register Player For Events",
+        "Event Stand-In (decision.evaluated, local only) / Send Decision Evaluated (correct, xp=250)",
+        "Event Stand-In (decision.evaluated, local only) / Get Player After Event Reflects Xp And Rank",
+        "Event Stand-In (decision.evaluated, local only) / Get Player Stats After Event Reflects Decision",
+        "Event Stand-In (decision.evaluated, local only) / Replay Same Event Id Is Deduped",
+        "Event Stand-In (decision.evaluated, local only) / Get Player After Replay Is Unchanged",
+        "Event Stand-In (decision.evaluated, local only) / Send Second Distinct Event (incorrect, xp=10)",
+        "Event Stand-In (decision.evaluated, local only) / Get Player Stats After Second Event",
+        "Event Stand-In (decision.evaluated, local only) / Event Missing Correct Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Event With Negative Xp Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Event With A Non-Boolean Correct Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Get Stats After Refused Events Are Unchanged",
+        "Event Stand-In (decision.evaluated, local only) / Event For Nonexistent Player Returns 404",
+        "Event Stand-In (decision.evaluated, local only) / Delete Event Test Player"
+      ],
+      "averageResponseMs": 59.8
+    },
+    {
+      "collection": "docs/postman/server-moderation-session-service.postman_collection.json",
+      "requests": {
+        "inCollection": 78,
+        "distinctRun": 68,
+        "executions": 75,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 266,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "Health Check",
+          "requests": 1,
+          "run": 1
+        },
+        {
+          "folder": "Happy Path",
+          "requests": 8,
+          "run": 8
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 19,
+          "run": 19
+        },
+        {
+          "folder": "Queue And Event Stand-In (decision.recorded, stand-in local only)",
+          "requests": 15,
+          "run": 6
+        },
+        {
+          "folder": "Live Updates (SSE)",
+          "requests": 6,
+          "run": 5
+        },
+        {
+          "folder": "Two-Phase Commit Close (Lab 5)",
+          "requests": 11,
+          "run": 11
+        },
+        {
+          "folder": "Two-Phase Commit Participant (direct, local only)",
+          "requests": 13,
+          "run": 13
+        },
+        {
+          "folder": "Instance Status And Metrics (direct, local only)",
+          "requests": 5,
+          "run": 5
+        }
+      ],
+      "skipped": [
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Applicant 1",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session Reflects Processed Applicant",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Replay Same Decision Event Is No-Op",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session After Replay Still Shows One Processed",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision With An Unknown Action Returns 400",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision Missing RecordedAt Returns 400",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Nonexistent Session Returns 404",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Unmatched Applicant Returns 404",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session After Refused Events Still Shows One Processed",
+        "Live Updates (SSE) / Watch Session Live (send by hand)"
+      ],
+      "averageResponseMs": 177.9
+    },
+    {
+      "collection": "docs/postman/message-broker-two-phase.postman_collection.json",
+      "requests": {
+        "inCollection": 19,
+        "distinctRun": 19,
+        "executions": 19,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 85,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "A Participant Votes NO",
+          "requests": 3,
+          "run": 3
+        },
+        {
+          "folder": "Every Participant Votes YES (needs playerInstanceUrl)",
+          "requests": 5,
+          "run": 5
+        },
+        {
+          "folder": "List Transactions",
+          "requests": 2,
+          "run": 2
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 8,
+          "run": 8
+        },
+        {
+          "folder": "Metrics",
+          "requests": 1,
+          "run": 1
+        }
+      ],
+      "skipped": [],
+      "averageResponseMs": 24.1
+    }
+  ],
+  "twoPhaseCommit": {
+    "check": "scripts/check_two_phase_commit.py --scenario commit, then --scenario no-vote, on the same stack",
+    "scenarios": [
+      {
+        "scenario": "commit",
+        "errors": [],
+        "closeStatus": 200,
+        "checks": {
+          "close answered 200 CLOSED": true,
+          "session closed by the transaction": true,
+          "coordinator COMMITTED and completed": true,
+          "shift credited once to both players": true,
+          "player recorded the transaction as session.closed": true,
+          "no prepared transaction left": true
+        },
+        "transactionId": "979516a7-248a-40cb-8e05-91ec4b3e7bee",
+        "coordinator": {
+          "transactionId": "979516a7-248a-40cb-8e05-91ec4b3e7bee",
+          "source": "server-moderation-session-service",
+          "state": "COMMITTED",
+          "completed": true,
+          "reason": null,
+          "createdAt": "2026-11-24T14:20:49.802Z",
+          "decidedAt": "2026-11-24T14:20:49.970Z",
+          "completedAt": "2026-11-24T14:20:50.054Z",
+          "participants": [
+            {
+              "service": "server-moderation-session-service",
+              "vote": "YES",
+              "reason": null,
+              "outcome": "COMMITTED"
+            },
+            {
+              "service": "player-service",
+              "vote": "YES",
+              "reason": null,
+              "outcome": "COMMITTED"
+            }
+          ]
+        },
+        "shifts": {
+          "moderator": 1,
+          "junior": 1
+        },
+        "preparedLeft": {
+          "player": [],
+          "session": []
+        }
+      },
+      {
+        "scenario": "no-vote",
+        "errors": [],
+        "closeStatus": 409,
+        "closeBody": {
+          "error": "SHIFT_CLOSE_ABORTED",
+          "message": "Session 455f212c-a209-486c-acbc-67e82b124b41 was not closed, nothing changed: player-service voted NO: 409 TRANSACTION_REFUSED: Transaction 362dc1d9-0a0a-44e1-a809-627f252b28ea refused: not registered players: [b40d2e45-f669-4435-809e-5a1966c13d43]"
+        },
+        "checks": {
+          "close answered 409 SHIFT_CLOSE_ABORTED": true,
+          "session still open": true,
+          "moderator not credited": true,
+          "coordinator ABORTED on player-service's NO": true,
+          "no prepared transaction left": true
+        },
+        "coordinator": {
+          "transactionId": "362dc1d9-0a0a-44e1-a809-627f252b28ea",
+          "source": "server-moderation-session-service",
+          "state": "ABORTED",
+          "completed": true,
+          "reason": "player-service voted NO: 409 TRANSACTION_REFUSED: Transaction 362dc1d9-0a0a-44e1-a809-627f252b28ea refused: not registered players: [b40d2e45-f669-4435-809e-5a1966c13d43]",
+          "createdAt": "2026-11-24T14:21:00.800Z",
+          "decidedAt": "2026-11-24T14:21:00.845Z",
+          "completedAt": "2026-11-24T14:21:00.859Z",
+          "participants": [
+            {
+              "service": "server-moderation-session-service",
+              "vote": "YES",
+              "reason": null,
+              "outcome": "ABORTED"
+            },
+            {
+              "service": "player-service",
+              "vote": "NO",
+              "reason": "409 TRANSACTION_REFUSED: Transaction 362dc1d9-0a0a-44e1-a809-627f252b28ea refused: not registered players: [b40d2e45-f669-4435-809e-5a1966c13d43]",
+              "outcome": "ABORTED"
+            }
+          ]
+        },
+        "preparedLeft": {
+          "player": [],
+          "session": []
+        }
+      }
+    ]
+  },
+  "notes": [
+    "executions counts repeats (Pull Applicants Until The Shift Limit runs until the shift limit). Skipped requests are skipped by the collections' own logic: the REST event stand-ins need standInUrl (off in the compose: events come from the Message Broker), and the live SSE stream is sent by hand (watchLive).",
+    "The images list is every image the running Compose project used, as pinned in docker-compose.yml of this branch."
+  ]
+}

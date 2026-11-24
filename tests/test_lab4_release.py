@@ -33,7 +33,7 @@ class Lab4ReleaseGateTests(unittest.TestCase):
     def test_the_broker_must_be_there_pinned_private_single_and_registered(self):
         for mutate, expected in [
             (lambda c: c["services"].pop("message-broker"), "message-broker: missing from Compose"),
-            (lambda c: c["services"]["message-broker"].update(image="drateeva/message-broker:0.4.0"), "message-broker: expected drateeva/message-broker:0.5.0"),
+            (lambda c: c["services"]["message-broker"].update(image="drateeva/message-broker:0.4.0"), f"message-broker: expected {release.BROKER_IMAGE}"),
             (lambda c: c["services"]["message-broker"].update(build="."), "message-broker: root Compose must use the published image, not a build context"),
             (lambda c: c["services"]["message-broker"].update(ports=[{"target": 9091}]), "message-broker: HTTP 8091 and gRPC 9091 must stay private to the Compose network"),
             (lambda c: c["services"]["message-broker"].update(deploy={"replicas": 2}), "message-broker: one instance only (its topic queues are one SQLite file)"),

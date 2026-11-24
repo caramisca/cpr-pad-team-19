@@ -1,0 +1,210 @@
+{
+  "timestamp": 1795353312016,
+  "what": "Lab 5, Grade 10 (L5-G10a): Daria's three Postman collections run green against the CPR compose with the 0.6.0 code, newman on the Compose network.",
+  "stack": {
+    "compose": [
+      "docker-compose.yml",
+      "docker-compose.lab4-mihai.yml",
+      "docker-compose.lab4-andi.yml",
+      "a scratch override mapping player-service, server-moderation-session-service and message-broker to local 0.6.0 builds"
+    ],
+    "env": ".env.example with random secrets and a new API key; BROKER_GRPC_URL empty (the compose default); PLAYER_REPLICAS=2, SESSION_REPLICAS=2, the teammates' services 1 replica each; SESSION_SHIFT_CLOSE_MODE=two-phase",
+    "localImages": {
+      "player-service": "player-service dev 2ac370c (0.6.0)",
+      "server-moderation-session-service": "server-moderation-session-service dev add84f3 (0.6.0)",
+      "message-broker": "message-broker chore/broker/release-0.6.0 (dev 0ff74cd + version 0.6.0)"
+    },
+    "publishedImages": "every other service from DockerHub as pinned in docker-compose.yml (0.5.0); drateeva/postgres-ha:16.16-patroni4.1.5",
+    "newman": "postman/newman:6-alpine, --network <project>_default"
+  },
+  "observed": {
+    "player-service": "0.6.0",
+    "server-moderation-session-service": "0.6.0",
+    "broker metrics": [
+      "broker_two_phase_transactions_total{decision=\"committed\"} 6.0",
+      "broker_two_phase_transactions_total{decision=\"aborted\"} 2.0",
+      "broker_two_phase_unfinished 0.0"
+    ]
+  },
+  "collections": [
+    {
+      "collection": "docs/postman/player-service.postman_collection.json",
+      "requests": {
+        "inCollection": 59,
+        "distinctRun": 45,
+        "executions": 45,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 178,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "Health Check",
+          "requests": 1,
+          "run": 1
+        },
+        {
+          "folder": "Happy Path",
+          "requests": 7,
+          "run": 7
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 14,
+          "run": 14
+        },
+        {
+          "folder": "Event Stand-In (decision.evaluated, local only)",
+          "requests": 14,
+          "run": 0
+        },
+        {
+          "folder": "Two-Phase Commit Participant (direct, local only)",
+          "requests": 18,
+          "run": 18
+        },
+        {
+          "folder": "Instance Status And Metrics (direct, local only)",
+          "requests": 5,
+          "run": 5
+        }
+      ],
+      "skipped": [
+        "Event Stand-In (decision.evaluated, local only) / Register Player For Events",
+        "Event Stand-In (decision.evaluated, local only) / Send Decision Evaluated (correct, xp=250)",
+        "Event Stand-In (decision.evaluated, local only) / Get Player After Event Reflects Xp And Rank",
+        "Event Stand-In (decision.evaluated, local only) / Get Player Stats After Event Reflects Decision",
+        "Event Stand-In (decision.evaluated, local only) / Replay Same Event Id Is Deduped",
+        "Event Stand-In (decision.evaluated, local only) / Get Player After Replay Is Unchanged",
+        "Event Stand-In (decision.evaluated, local only) / Send Second Distinct Event (incorrect, xp=10)",
+        "Event Stand-In (decision.evaluated, local only) / Get Player Stats After Second Event",
+        "Event Stand-In (decision.evaluated, local only) / Event Missing Correct Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Event With Negative Xp Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Event With A Non-Boolean Correct Returns 400",
+        "Event Stand-In (decision.evaluated, local only) / Get Stats After Refused Events Are Unchanged",
+        "Event Stand-In (decision.evaluated, local only) / Event For Nonexistent Player Returns 404",
+        "Event Stand-In (decision.evaluated, local only) / Delete Event Test Player"
+      ],
+      "averageResponseMs": 20.0
+    },
+    {
+      "collection": "docs/postman/server-moderation-session-service.postman_collection.json",
+      "requests": {
+        "inCollection": 78,
+        "distinctRun": 68,
+        "executions": 75,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 266,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "Health Check",
+          "requests": 1,
+          "run": 1
+        },
+        {
+          "folder": "Happy Path",
+          "requests": 8,
+          "run": 8
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 19,
+          "run": 19
+        },
+        {
+          "folder": "Queue And Event Stand-In (decision.recorded, stand-in local only)",
+          "requests": 15,
+          "run": 6
+        },
+        {
+          "folder": "Live Updates (SSE)",
+          "requests": 6,
+          "run": 5
+        },
+        {
+          "folder": "Two-Phase Commit Close (Lab 5)",
+          "requests": 11,
+          "run": 11
+        },
+        {
+          "folder": "Two-Phase Commit Participant (direct, local only)",
+          "requests": 13,
+          "run": 13
+        },
+        {
+          "folder": "Instance Status And Metrics (direct, local only)",
+          "requests": 5,
+          "run": 5
+        }
+      ],
+      "skipped": [
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Applicant 1",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session Reflects Processed Applicant",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Replay Same Decision Event Is No-Op",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session After Replay Still Shows One Processed",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision With An Unknown Action Returns 400",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision Missing RecordedAt Returns 400",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Nonexistent Session Returns 404",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Record Decision For Unmatched Applicant Returns 404",
+        "Queue And Event Stand-In (decision.recorded, stand-in local only) / Get Session After Refused Events Still Shows One Processed",
+        "Live Updates (SSE) / Watch Session Live (send by hand)"
+      ],
+      "averageResponseMs": 56.7
+    },
+    {
+      "collection": "docs/postman/message-broker-two-phase.postman_collection.json",
+      "requests": {
+        "inCollection": 19,
+        "distinctRun": 19,
+        "executions": 19,
+        "failed": 0
+      },
+      "assertions": {
+        "total": 85,
+        "failed": 0
+      },
+      "failures": [],
+      "folders": [
+        {
+          "folder": "A Participant Votes NO",
+          "requests": 3,
+          "run": 3
+        },
+        {
+          "folder": "Every Participant Votes YES (needs playerInstanceUrl)",
+          "requests": 5,
+          "run": 5
+        },
+        {
+          "folder": "List Transactions",
+          "requests": 2,
+          "run": 2
+        },
+        {
+          "folder": "Error Cases",
+          "requests": 8,
+          "run": 8
+        },
+        {
+          "folder": "Metrics",
+          "requests": 1,
+          "run": 1
+        }
+      ],
+      "skipped": [],
+      "averageResponseMs": 18.4
+    }
+  ],
+  "notes": [
+    "executions counts repeats (Pull Applicants Until The Shift Limit runs until the shift limit). Skipped requests are skipped by the collections' own logic: the REST event stand-ins need standInUrl (off in the compose: events come from the Message Broker), and the live SSE stream is sent by hand (watchLive).",
+    "With BROKER_GRPC_URL=message-broker:9091 (the value in .env.example), the Gateway routes session's GET /rulesets/active (http mode, Gateway 8090) through MessageBroker.Call; server-rules-service's gRPC reply carries no Content-Type, the Gateway forwards none, and session answers next-applicant 503 DEPENDENCY_UNAVAILABLE (11 assertions in the queue folder). Not part of Lab 5 or of the 0.6.0 changes (the broker passes ServiceReply headers through unchanged since 0.5.0); to be reported to the owners of the rules gRPC adapter and the Gateway's broker route (Diana)."
+  ]
+}
