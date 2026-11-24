@@ -22,7 +22,7 @@ lab3 = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(lab3)
 
 # Keep in sync with Compose when the broker publishes a release.
-BROKER_IMAGE = "drateeva/message-broker:0.5.0"
+BROKER_IMAGE = "drateeva/message-broker:0.6.0"
 BROKER_ADDRESS = "message-broker:9091"
 SD_URL = "http://service-discovery:8089"
 
