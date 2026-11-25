@@ -41,7 +41,9 @@ flowchart LR
 - **All or nothing, by compensation.**
   - A step that is refused, or still has no answer after `SAGA_STEP_ATTEMPTS` (3), is undone in
     reverse order: the notification is cancelled, then the decision voided.
-  - The client gets `409 SAGA_COMPENSATED`.
+  - The client gets `409 SAGA_COMPENSATED` once the saga is `COMPENSATED`. If undoing takes
+    longer than the 8 s the Gateway waits (for example while discord-dms-service is down), it
+    answers `202` with the saga still `COMPENSATING`; `GET /sagas/{id}` shows the outcome.
   - A refusal of step 1 (for example `422 CREDENTIAL_NOT_FOUND`) changed nothing. The saga is
     `FAILED`, and the client gets moderation-service's own status.
 - **The pivot comes last among the undoable steps.**
@@ -109,7 +111,7 @@ recovery scenario is reported as skipped, not failed.
 | `replay` | The same request with the same `Idempotency-Key` | `200`, `Idempotent-Replay: true`, the same saga ID; still one decision in the session |
 | `refused` | An unknown credential; then a body that is not a JSON object | `422` with the saga `FAILED`, step 1 `FAILED`, the others `SKIPPED`, no decision; then `400 VALIDATION_ERROR` and no saga |
 | `compensation` | Every `discord-dms-service` replica stopped, the saga started, the DMS started again after 10 s | `202`. While the DMS is down: `COMPENSATING`, the decision `PENDING`, `PATCH` → `409 DECISION_PENDING`. After the restart: `COMPENSATED`, notification cancelled before the decision was voided, the decision `404`, and a late forward call to either participant → `409 SAGA_COMPENSATED` |
-| `recovery` | `gateway-service` killed after step 1, then started | The saga is resumed from the log (`RESUMED`) and `COMPLETED`, with one decision and one notification |
+| `recovery` | `gateway-service` killed between two steps (after step 1, before step 3), then started | The saga is resumed from the log (`RESUMED`) and `COMPLETED`, with one decision and one notification |
 | `api` | Unknown saga, a non-UUID, the filtered listing, `/internal/sagas/...` through the Gateway | `404 SAGA_NOT_FOUND`, `400 VALIDATION_ERROR`, only `COMPLETED` sagas, `404 ROUTE_NOT_FOUND` |
 
 **Manual demo** through the Gateway, with the API key (`docs/postman/`, collection

@@ -2881,6 +2881,17 @@ npx newman run docs/postman/discord-dms-service.postman_collection.json --env-va
 npx newman run docs/postman/gateway-saga.postman_collection.json --env-var apiKey=<key>
 ```
 
+`<key>` is the part after `postman:` in `GATEWAY_API_KEYS` of `.env`. To run the internal folders
+of the `moderation-service` collection as well, run Newman inside the Compose network, where the
+instances are reachable by name (the two replicas share one Postgres, so it does not matter which
+one answers):
+
+```bash
+docker run --rm --network cpr-pad-team-19_default -v "$PWD/docs/postman:/etc/newman:ro" postman/newman:6-alpine \
+  run /etc/newman/moderation-service.postman_collection.json --env-var baseUrl=http://gateway-service:8080 \
+  --env-var apiKey=<key> --env-var runInternalDiagnostics=true --env-var internalBaseUrl=http://moderation-service:8087
+```
+
 Both services enforce a request timeout (`504 REQUEST_TIMEOUT`) and a concurrency limit
 (`503 TOO_MANY_REQUESTS` with `Retry-After: 1`), set in `.env` with `MODERATION_REQUEST_TIMEOUT_MS`,
 `MODERATION_MAX_CONCURRENT_REQUESTS`, `DMS_REQUEST_TIMEOUT_MS`, and `DMS_MAX_CONCURRENT_REQUESTS`
