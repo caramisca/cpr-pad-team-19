@@ -315,8 +315,9 @@ most.
 ### Laboratory 5: the complete deployment
 
 The diagram below shows every container of the common Compose configuration (`docker-compose.yml`,
-plus `docker-compose.monitoring.yml` for the monitoring profile) and every port inside the Compose
-network. Only the Gateway's `8080` and the DMS WebSocket port `8088` are published to the host;
+plus `docker-compose.monitoring.yml` for the monitoring profile and `docker-compose.lab5-cache.yml`
+for the Gateway cache) and every port inside the Compose network. Only the Gateway's `8080` and the
+DMS WebSocket port `8088` are published to the host;
 Prometheus (`9090`) and Grafana (`3000`) are published on `127.0.0.1` only. The source is kept in
 [`docs/architecture-diagram-lab5.mmd`](docs/architecture-diagram-lab5.mmd).
 
@@ -344,7 +345,8 @@ flowchart TB
     GW["gateway-service<br/>public :8080 (API key), internal :8090 (Compose network only)<br/>routing, load balancing, circuit breakers, discovery snapshot cache<br/>saga coordinator: decision-verdict"]
     GWDATA[("gateway-data<br/>SQLite saga log")]
     subgraph CACHE["Gateway cache overlay (Grades 6 and 7)"]
-      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards; optional fourth shard")]
+      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards")]
+      SHARD4[("cache-redis-4 :6379<br/>profile cache-extra, joins the ring<br/>once listed in nodes.txt")]
     end
   end
 
@@ -355,8 +357,9 @@ flowchart TB
   end
 
   subgraph MON["Monitoring (profile monitoring)"]
-    PROM["Prometheus :9090"]
-    GRAF["Grafana :3000"]
+    PROM["prometheus :9090<br/>published on 127.0.0.1"]
+    GRAF["grafana :3000<br/>published on 127.0.0.1"]
+    BBX["blackbox-exporter :9115<br/>HTTP probes of /health"]
   end
 
   subgraph SERVICES["Domain services: every instance registers with service-discovery"]
@@ -367,7 +370,7 @@ flowchart TB
     RS["server-rules-service x2<br/>HTTP :8085, gRPC :9085"]
     US["university-record-service x2<br/>HTTP :8086, gRPC :9086"]
     MS["moderation-service x2<br/>HTTP :8087, gRPC :9087"]
-    DS["discord-dms-service x2<br/>HTTP + WebSocket :8088 (published), gRPC :9088"]
+    DS["discord-dms-service and discord-dms-service-replica<br/>HTTP + WebSocket :8088 (published by discord-dms-service), gRPC :9088"]
   end
 
   subgraph DATA["Data stores: Database-per-Service, private to the Compose network"]
@@ -429,6 +432,11 @@ flowchart TB
     WH[("warehouse-db :5432<br/>PostgreSQL star schema")]
   end
 
+  subgraph SETUP["One-shot setup jobs: run once at start, exit 0"]
+    SEED["applicant-seed, credential-seed<br/>load the demo data of docs/db/ into an empty Redis"]
+    RMSET["rules-mongo-setup<br/>rs.initiate of rs0"]
+  end
+
   CLIENT -->|"HTTP + API key"| GW
   CLIENT -.->|"WebSocket chat, ticket from POST /ws/negotiate"| DS
 
@@ -443,6 +451,7 @@ flowchart TB
   MB ==>|"2PC prepare / commit / abort"| SS
   GW --- GWDATA
   GW -->|"consistent hash: GET responses and auth metadata"| SHARDS
+  GW -->|"once listed in nodes.txt"| SHARD4
   MB --- MBDATA
 
   SERVICES -->|"register, heartbeat, subscriptions"| SD
@@ -451,6 +460,9 @@ flowchart TB
   PROM -->|"scrape /metrics per replica"| SERVICES
   PROM -->|"scrape /metrics"| MB
   GRAF --> PROM
+  PROM -->|"probe"| BBX
+  BBX -->|"GET /health"| GW
+  BBX -->|"GET /health"| SD
 
   PS --> PPGH
   SS --> SPGH
@@ -463,8 +475,11 @@ flowchart TB
   DS -->|"commands"| DR1
   PPG & SPG & RPG & MPG <-.->|"leader lock"| ETCD
 
-  ETL -->|"read-only: 4 HAProxys, rs0 URI, 3 Redis"| DATA
+  ETL -->|"read-only: 4 Postgres and 3 Redis HAProxys, rs0 URI"| DATA
   ETL -->|"INSERT ... ON CONFLICT"| WH
+  SEED --> AR
+  SEED --> CR
+  RMSET -->|"mongosh"| RM1
 ```
 
 | Component | Ports (Compose network) | Replicas / members | Coordinator or failover mechanism |
