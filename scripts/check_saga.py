@@ -123,13 +123,22 @@ class Check:
                                lambda: (lambda s: s if s and s["state"] in FINAL_STATES else None)(self.saga(saga_id)),
                                timeout=timeout)
 
-    def newest_saga(self, since: str) -> dict | None:
-        """The saga started after ``since`` (the check runs one saga at a time), with its log."""
+    def saga_ids(self) -> set[str]:
+        """The IDs of the newest sagas, read before the check starts one of its own."""
+        answer = self.http("GET", f"{GATEWAY_URL}/sagas?limit=20", timeout=5)
+        if answer.status != 200:
+            raise RuntimeError(f"GET /sagas answered {answer}")
+        return {s["sagaId"] for s in answer.body["sagas"]}
+
+    def newest_saga(self, known: set[str]) -> dict | None:
+        """The newest saga not in ``known`` (the check runs one saga at a time), with its steps.
+
+        One call, without the log, so that a poll stays short. Matched by ID, not by ``createdAt``:
+        the clock of the Docker VM may differ from this host's."""
         answer = self.http("GET", f"{GATEWAY_URL}/sagas?limit=5", timeout=5)
         if answer.status != 200:
             return None
-        newest = next((s for s in answer.body["sagas"] if s["createdAt"] >= since), None)
-        return self.saga(newest["sagaId"]) if newest else None
+        return next((s for s in answer.body["sagas"] if s["sagaId"] not in known), None)
 
     # -- the participants' own state --------------------------------------------------------------
 
@@ -325,7 +334,7 @@ def recovery(check: Check, state: dict) -> dict:
         result["skipped"] = "needs GATEWAY_SAGA_STEP_DELAY_SECONDS >= 3 on the Gateway"
         return result
     request, key = new_request(), f"saga-check-{uuid.uuid4()}"
-    since = now_iso()
+    known = check.saga_ids()
 
     def post() -> None:
         # The POST is cut off when the Gateway is killed; its answer does not matter.
@@ -335,12 +344,22 @@ def recovery(check: Check, state: dict) -> dict:
             pass
 
     threading.Thread(target=post, daemon=True).start()
-    document = check.wait_until(
-        "step 1 done, step 2 not yet",
-        lambda: (lambda s: s if s and step_states(s).get("record-decision") == "SUCCEEDED"
-                 and step_states(s).get("queue-verdict-notification") in ("PENDING", "RUNNING") else None)(
-            check.newest_saga(since)),
-        timeout=30, interval=0.3)
+
+    def between_steps(saga: dict | None) -> dict | None:
+        # The step delay holds the saga before step 2 and again before step 3. The first wait is
+        # the target: a kill that lands late still falls into the second. The second is the
+        # fallback for a poll too slow to see the first.
+        states = step_states(saga) if saga else {}
+        if states.get("record-decision") != "SUCCEEDED":
+            return None
+        if states.get("queue-verdict-notification") in ("PENDING", "RUNNING"):
+            return saga
+        if states.get("queue-verdict-notification") == "SUCCEEDED" and states.get("confirm-decision") == "PENDING":
+            return saga
+        return None
+
+    document = check.wait_until("step 1 done, step 3 not started",
+                                lambda: between_steps(check.newest_saga(known)), timeout=30, interval=0.3)
     saga_id = document["sagaId"]
     result["sagaId"] = saga_id
     result["killedWith"] = step_states(document)

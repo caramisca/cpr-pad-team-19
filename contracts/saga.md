@@ -54,14 +54,14 @@ sequenceDiagram
     participant M as moderation-service
     participant D as discord-dms-service
     C->>G: POST /sagas/decision-verdicts (Idempotency-Key)
-    G->>L: saga RUNNING; step 1 RUNNING, attempt 1
+    G->>L: saga RUNNING, then step 1 RUNNING, attempt 1
     G->>M: POST /internal/sagas/{id}/decision
     M-->>G: 201 decision PENDING (no events yet)
-    G->>L: step 1 SUCCEEDED; step 2 RUNNING, attempt 1
+    G->>L: step 1 SUCCEEDED, then step 2 RUNNING, attempt 1
     G->>D: POST /internal/sagas/{id}/notification
     alt queued
         D-->>G: 202 notification QUEUED
-        G->>L: step 2 SUCCEEDED; step 3 RUNNING, attempt 1
+        G->>L: step 2 SUCCEEDED, then step 3 RUNNING, attempt 1
         G->>M: POST /internal/sagas/{id}/decision/confirm
         M-->>G: 200 CONFIRMED (events written to the outbox)
         G->>L: saga COMPLETED
@@ -73,7 +73,7 @@ sequenceDiagram
         G->>M: POST /internal/sagas/{id}/decision/compensate
         M-->>G: 200 COMPENSATED (decision voided)
         G->>L: saga COMPENSATED
-        G-->>C: 409 SAGA_COMPENSATED
+        G-->>C: 409 SAGA_COMPENSATED (202 if still COMPENSATING after 8 s)
     end
 ```
 

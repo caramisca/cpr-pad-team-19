@@ -71,8 +71,8 @@ not yet copied to a replica when the primary crashes is lost. It is at most the 
 writes, because the replicas stream continuously. For discord-dms-service that means at most the
 last queued notifications or chat messages. The ones the store had already replicated survive:
 the queue itself, the event deduplication keys, and the saga keys. A client that needs certainty
-can ask for it per write: `WAIT 1 <ms>` returns once a replica has the write. The failover check
-writes its marker that way.
+can ask for it per write: `WAIT <replicas> <ms>` returns once that many replicas have the write.
+The failover check writes its marker that way, with `WAIT 2 3000` (both replicas, at most 3 s).
 
 ## What the services do during a failover
 
