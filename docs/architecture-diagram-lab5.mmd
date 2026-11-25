@@ -4,6 +4,9 @@ flowchart TB
   subgraph EDGE["Edge"]
     GW["gateway-service<br/>public :8080 (API key), internal :8090 (Compose network only)<br/>routing, load balancing, circuit breakers, discovery snapshot cache<br/>saga coordinator: decision-verdict"]
     GWDATA[("gateway-data<br/>SQLite saga log")]
+    subgraph CACHE["Gateway cache overlay (Grades 6 and 7)"]
+      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards; optional fourth shard")]
+    end
   end
 
   subgraph PLATFORM["Platform"]
@@ -69,8 +72,17 @@ flowchart TB
       DRH --> DR1
     end
 
-    AR[("applicant-redis :6379<br/>session-scoped cache")]
-    CR[("credential-redis :6379<br/>session-scoped cache")]
+    subgraph ACRED["Applicant and Credential Redis HA (Grade 5)"]
+      AR["HAProxy applicant-redis :6379"]
+      CR["HAProxy credential-redis :6379"]
+      AM[("applicant-redis-1..3<br/>elected primary and two replicas")]
+      CM[("credential-redis-1..3<br/>elected primary and two replicas")]
+      ACS["redis-sentinel-1..3 :26379<br/>quorum 2 for each group"]
+      AR -->|elected primary| AM
+      CR -->|elected primary| CM
+      ACS -.->|monitor and promote| AM
+      ACS -.->|monitor and promote| CM
+    end
   end
 
   subgraph ANALYTICS["Analytics (Lab 5, Grade 4)"]
@@ -91,6 +103,7 @@ flowchart TB
   MB ==>|"2PC prepare / commit / abort"| PS
   MB ==>|"2PC prepare / commit / abort"| SS
   GW --- GWDATA
+  GW -->|"consistent hash: GET responses and auth metadata"| SHARDS
   MB --- MBDATA
 
   SERVICES -->|"register, heartbeat, subscriptions"| SD

@@ -6,9 +6,9 @@ A distributed system of eight domain services, Gateway, Service Discovery and Me
 
 ## Laboratory 4: Breaking and Brokering
 
-The common Compose configuration pins **all eleven application images to 0.5.0**. The
-published images have linux/amd64 and linux/arm64 manifests. Source gitlinks pin reviewed
-service main commits; private repository main tips still require confirmation by their owners.
+The common Compose configuration pins each application image to its verified release. The
+release checks verify linux/amd64 and linux/arm64 manifests and compare each pinned tag with
+`latest`. Source gitlinks pin individual service commits.
 The [current acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records exact commits,
 test results and the remaining release gates. These version pins alone do not certify Lab 4.
 
@@ -33,7 +33,7 @@ gRPC ports, logs, metrics and health endpoints stay inside the Compose network.
 | Broker 0.5.0 main | Thread-per-request gRPC; service-instance selection and breakers; per-subscriber topic fan-out, SQLite topic queues and DLC; `/topics` and `/dead-letters` |
 | Broker current dev | PR #11 adds in-memory subscriber request queues, default Rules/Record only; a new release is pending |
 | Service Discovery | Physical instance registry with topic subscriptions; broker uses instance and topic lookups over the HTTP control plane |
-| Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled by the Mihai overlay |
+| Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled in the base Compose |
 | Player / Session (Daria) | gRPC adapters, topic consumers and Session publisher; broker dependency modes configured in `.env` |
 | Moderation / DMS (Andi) | gRPC adapters, outbox/consumers, private logs/metrics and DMS Redis chat relay; enabled by the Andi overlay |
 | Rules / Record (Diana) | gRPC adapters; both require `BROKER_GRPC_URL=message-broker:9091` at startup (configured in base Compose) |
@@ -332,8 +332,9 @@ Prometheus (`9090`) and Grafana (`3000`) are published on `127.0.0.1` only. The 
   variables in `.env.example`).
 - **Replicated stores:** each has three members. Patroni clusters have one primary, one
   synchronous standby and one asynchronous standby. `rules-mongo` is a replica set, and
-  `dms-redis` has one primary and two replicas under three Sentinels. Each is reached through a
-  stable address that follows the primary.
+  Redis groups for DMS, Applicant and Credential each have one primary and two replicas.
+  Sentinels elect primaries and HAProxy exposes stable addresses. The optional Gateway cache
+  uses independent Redis shards for GET responses and authentication metadata.
 
 ```mermaid
 flowchart TB
@@ -342,6 +343,9 @@ flowchart TB
   subgraph EDGE["Edge"]
     GW["gateway-service<br/>public :8080 (API key), internal :8090 (Compose network only)<br/>routing, load balancing, circuit breakers, discovery snapshot cache<br/>saga coordinator: decision-verdict"]
     GWDATA[("gateway-data<br/>SQLite saga log")]
+    subgraph CACHE["Gateway cache overlay (Grades 6 and 7)"]
+      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards; optional fourth shard")]
+    end
   end
 
   subgraph PLATFORM["Platform"]
@@ -407,8 +411,17 @@ flowchart TB
       DRH --> DR1
     end
 
-    AR[("applicant-redis :6379<br/>session-scoped cache")]
-    CR[("credential-redis :6379<br/>session-scoped cache")]
+    subgraph ACRED["Applicant and Credential Redis HA (Grade 5)"]
+      AR["HAProxy applicant-redis :6379"]
+      CR["HAProxy credential-redis :6379"]
+      AM[("applicant-redis-1..3<br/>elected primary and two replicas")]
+      CM[("credential-redis-1..3<br/>elected primary and two replicas")]
+      ACS["redis-sentinel-1..3 :26379<br/>quorum 2 for each group"]
+      AR -->|elected primary| AM
+      CR -->|elected primary| CM
+      ACS -.->|monitor and promote| AM
+      ACS -.->|monitor and promote| CM
+    end
   end
 
   subgraph ANALYTICS["Analytics (Lab 5, Grade 4)"]
@@ -429,6 +442,7 @@ flowchart TB
   MB ==>|"2PC prepare / commit / abort"| PS
   MB ==>|"2PC prepare / commit / abort"| SS
   GW --- GWDATA
+  GW -->|"consistent hash: GET responses and auth metadata"| SHARDS
   MB --- MBDATA
 
   SERVICES -->|"register, heartbeat, subscriptions"| SD
@@ -462,7 +476,8 @@ flowchart TB
 | `player-postgres`, `session-postgres`, `record-postgres`, `moderation-postgres` | `5432` (HAProxy), `8008` (Patroni REST), `8404` (HAProxy health) | 3 each | Patroni with the `postgres-etcd-1..3` leader lock (`2379`) |
 | `rules-mongo` | `27017` | 3 (`rs0`) | MongoDB replica set election |
 | `dms-redis` | `6379` (HAProxy and members), `26379` (Sentinels) | 3 members, 3 Sentinels | Redis Sentinel, quorum 2 |
-| `applicant-redis`, `credential-redis` | `6379` | 1 each | Session-scoped data (AOF on), seeded once by `applicant-seed` / `credential-seed` |
+| `applicant-redis`, `credential-redis` | `6379` (HAProxy and members), `26379` (Sentinels) | 3 members per group, 3 shared Sentinels | Redis Sentinel, quorum 2; session-scoped data, AOF on |
+| Gateway cache overlay | `6379` per shard | 3 shards, optional fourth | Gateway-side consistent hashing for GET responses and authentication data |
 | `warehouse-db`, `etl` | `5432` | 1 each | Idempotent loads, a source outage only skips that source |
 | Prometheus, Grafana | `9090`, `3000` (on `127.0.0.1`) | 1 each | Profile `monitoring` |
 
@@ -2593,8 +2608,8 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | MongoDB 7 (Lab 5: 3-member replica set `rules-mongo-1/2/3`, RS name `rs0`); `MONGODB_URI` (RS-aware URI with all three seed hosts and `?replicaSet=rs0`). Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9085), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s during a primary election. Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: 3-member Patroni cluster `record-postgres-1/2/3`, HAProxy at `record-postgres`); `DB_URL` (`jdbc:postgresql://record-postgres:5432/university_record` — unchanged), `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9086), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s (HikariCP `connectionTimeout`) during a failover. Port `8086` (internal only — route through gateway on `8080`). |
 | `etl` | [`diana7376/pad-etl`](https://hub.docker.com/r/diana7376/pad-etl) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Lab 5, Grade 4: reads all 8 source databases (player-postgres, session-postgres, record-postgres, moderation-postgres, rules-mongo, applicant-redis, credential-redis, dms-redis) on a schedule and loads a star schema into `warehouse-db` idempotently. Required: `WAREHOUSE_DB_URL`, `PLAYER_POSTGRES_URL`, `SESSION_POSTGRES_URL`, `MODERATION_POSTGRES_URL`, `RECORD_POSTGRES_URL`, `RULES_MONGO_URI`, `APPLICANT_REDIS_URL`, `CREDENTIAL_REDIS_URL`, `DMS_REDIS_URL`. Optional: `ETL_INTERVAL_SECONDS` (default `300`). A source database being down produces a warning log and the run continues for the remaining sources. No published port. |
-| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
-| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
+| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 with Sentinel failover; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Grpc`, `Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
+| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 with Sentinel failover; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Grpc`, `Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
 | `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `player-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`: longest wait for a database connection before `503 DATABASE_UNAVAILABLE`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Lab 5 two-phase commit: `TWO_PHASE_PARTICIPANT_ENABLED` (default `false`, `true` in `docker-compose.yml`), `TWO_PHASE_COORDINATOR_URL` (default `http://localhost:8091`), see [`contracts/two-phase.md`](contracts/two-phase.md). Port `8081` (internal only — route through the gateway on `8080`). |
 | `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `session-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE` (`mock`, `http` or `broker`) and `DMS_CLIENT_MODE` (`mock` or `broker`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Lab 5 two-phase commit: `SHIFT_CLOSE_MODE` (`event` by default, `two-phase` in `docker-compose.yml`), `TWO_PHASE_PARTICIPANT_ENABLED`, `TWO_PHASE_COORDINATOR_URL`, `SHIFT_CLOSE_COORDINATOR_TIMEOUT` (default `7s`). Port `8082` (internal only — route through the gateway on `8080`). |
 
@@ -2672,6 +2687,15 @@ when it comes back. Every member keeps its data on its own volume (`<member>-dat
 volumes `player-postgres-data` / `session-postgres-data` are no longer used. Runbook, demo and
 measured results: [`docs/LAB_5_DATABASE_FAILOVER.md`](docs/LAB_5_DATABASE_FAILOVER.md); the check:
 `python3 scripts/check_postgres_failover.py`.
+
+**Gateway cache and Redis failover (Lab 5, Grades 5–7).** Applicant and Credential use two Redis
+replication groups behind stable primary-only endpoints. The Gateway cache overlay enables
+client-scoped GET caching and authentication caching on three Redis shards. Setup, cache headers,
+live ring changes and failover verification are in [Lab 5 · Mihai](docs/LAB_5_MIHAI.md).
+
+**Public Lab 5 images.** The default stack pins the published `0.6.0` application images.
+Applicant and Credential include the Lab 4 gRPC error-parity fixes. The same Gateway image
+provides the saga coordinator and, with the cache overlay, sharded response and auth caching.
 
 **Two-phase commit for closing a shift (Lab 5, Grade 8).** `POST /sessions/{id}/close` changes both
 databases (the shift; `totalShifts` / `lastShiftAt` of every moderator) as one transaction: the

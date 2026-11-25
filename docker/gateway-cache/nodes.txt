@@ -1,0 +1,3 @@
+cache-redis-1:6379
+cache-redis-2:6379
+cache-redis-3:6379
