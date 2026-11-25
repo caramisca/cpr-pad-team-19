@@ -34,12 +34,15 @@ CREATE TABLE IF NOT EXISTS dim_students (
 );
 
 -- Static dimension: one row per microservice in the system.
+-- notification_count is populated from dms-redis (discord-dms-service only).
 CREATE TABLE IF NOT EXISTS dim_services (
-    service_name TEXT        PRIMARY KEY,
-    description  TEXT,
-    tech         TEXT,
-    etl_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    service_name       TEXT        PRIMARY KEY,
+    description        TEXT,
+    tech               TEXT,
+    notification_count INT         NOT NULL DEFAULT 0,
+    etl_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE dim_services ADD COLUMN IF NOT EXISTS notification_count INT NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS fact_decisions (
     decision_id         UUID        PRIMARY KEY,
@@ -71,14 +74,20 @@ CREATE TABLE IF NOT EXISTS fact_shifts (
     etl_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Sourced from session_queue_entry (session-postgres) enriched with applicant-redis data.
+-- Sourced from session_queue_entry (session-postgres) enriched with applicant-redis and
+-- credential-redis data. deception_type and role come from applicant-redis (TTL 60 min,
+-- NULL when the entry has expired by ETL run time).
 CREATE TABLE IF NOT EXISTS fact_applicants (
-    applicant_id   TEXT        PRIMARY KEY,
-    session_id     UUID,
-    credential_id  TEXT,
-    queue_position INT,
-    action         TEXT,
-    presented_at   TIMESTAMPTZ,
-    resolved_at    TIMESTAMPTZ,
-    etl_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    applicant_id    TEXT        PRIMARY KEY,
+    session_id      UUID,
+    credential_id   TEXT,
+    deception_type  TEXT,
+    role            TEXT,
+    queue_position  INT,
+    action          TEXT,
+    presented_at    TIMESTAMPTZ,
+    resolved_at     TIMESTAMPTZ,
+    etl_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+ALTER TABLE fact_applicants ADD COLUMN IF NOT EXISTS deception_type TEXT;
+ALTER TABLE fact_applicants ADD COLUMN IF NOT EXISTS role TEXT;

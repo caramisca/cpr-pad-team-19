@@ -54,7 +54,7 @@ def load_all(data):
                  "study_year", "enrolment_status", "academic_standing"])
 
         _upsert(conn, "dim_services", data["dim_services"], "service_name",
-                ["service_name", "description", "tech"])
+                ["service_name", "description", "tech", "notification_count"])
 
         _upsert(conn, "fact_decisions", data["fact_decisions"], "decision_id",
                 ["decision_id", "session_id", "applicant_id", "moderator_player_id",
@@ -66,7 +66,7 @@ def load_all(data):
                  "applicants_processed", "correct_decisions", "incorrect_decisions", "score"])
 
         _upsert(conn, "fact_applicants", data["fact_applicants"], "applicant_id",
-                ["applicant_id", "session_id", "credential_id",
+                ["applicant_id", "session_id", "credential_id", "deception_type", "role",
                  "queue_position", "action", "presented_at", "resolved_at"])
 
         conn.commit()
