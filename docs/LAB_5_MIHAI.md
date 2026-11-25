@@ -2,10 +2,9 @@
 
 ## Gateway cache · G6 and G7
 
-The Gateway cache branch is `feat/gateway/lab5-cache` in [`gateway-service`](https://github.com/diana7376/gateway-service/tree/feat/gateway/lab5-cache). Build that checkout, set `GATEWAY_CACHE_PASSWORD` in `.env` and start the cache overlay with the regular stack.
+Gateway [PR #31](https://github.com/diana7376/gateway-service/pull/31) ships in `diana7376/gateway-service:0.6.0`. Set `GATEWAY_CACHE_PASSWORD` in `.env` and start the cache overlay with the regular stack.
 
 ```bash
-docker build -t pad-local/gateway-service:lab5-cache /path/to/gateway-service
 docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab5-cache.yml up -d --wait
 ```
 
@@ -24,7 +23,7 @@ The Gateway assumes one process for write invalidation. The TTL bounds staleness
 
 Run [the Gateway cache Postman collection](postman/gateway-cache.postman_collection.json) with `baseUrl`, `apiKey` and `secondApiKey`. Configure the two keys as separate named clients in `GATEWAY_API_KEYS`. The collection registers a temporary player, checks cache isolation and invalidation, then removes the player.
 
-With the Lab 5 Gateway image, set `expectedGatewayVersion=0.6.0` when running the Applicant and Credential collections. For a custom Gateway port, set both `baseUrl` and `credentialBaseUrl` to that Gateway URL for the Applicant integration checks.
+The Applicant and Credential collections expect Gateway runtime `0.6.0` by default. For a custom Gateway port, set both `baseUrl` and `credentialBaseUrl` to that Gateway URL for the Applicant integration checks.
 
 ## Redis failover · G5
 
@@ -40,8 +39,9 @@ python scripts/check_redis_failover.py --project pad-lab5-redis-demo
 
 The check writes a short-lived value, waits for both replicas, stops each primary in the demo project, checks reads and writes over the original hostnames, then starts the old primaries and verifies they rejoined as replicas.
 
-## Verified locally on 2026-11-23
+## Verified with published images on 2026-11-25
 
-- The Gateway accepted a change from three to four shards, wrote eight GET entries to the new shard and returned to three shards with the same Gateway container and start time.
-- The Redis failover check took 8.7 seconds for Applicant and 9.7 seconds for Credential. Both retained the replicated value, accepted a new write and restored the old primary as a replica.
-- Newman passed 12 Gateway cache, 62 Applicant and 79 Credential assertions against the local Lab 5 candidates. The Gateway, Applicant and Credential unit suites passed 300, 116 and 139 tests respectively.
+- The Gateway ring changed from three to four shards and back without a restart. The fourth Redis shard received 20 cache keys.
+- Applicant and Credential Redis failover took 9.2 s and 9.5 s, respectively. Both stable hostnames served reads and writes after promotion, and both former primaries rejoined as replicas.
+- Newman passed 12 Gateway cache, 81 Applicant and 103 Credential assertions, including the Lab 4 Gateway checks.
+- Rules, Record and Gateway Saga passed 52, 47 and 57 Newman assertions, respectively. The Rules and Record diagnostics used the Compose network.

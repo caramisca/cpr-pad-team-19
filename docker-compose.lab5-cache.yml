@@ -1,4 +1,4 @@
-# Lab 5 Gateway cache. Build the Gateway cache branch or set GATEWAY_CACHE_IMAGE to its release.
+# Lab 5 Gateway cache for the published Gateway image from docker-compose.yml.
 x-cache-node: &cache-node
   image: redis:7.4-alpine
   command: ["sh", "-ec", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --save '' --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru"]
@@ -9,9 +9,7 @@ x-cache-node: &cache-node
 
 services:
   gateway-service:
-    image: ${GATEWAY_CACHE_IMAGE:-pad-local/gateway-service:lab5-cache}
     environment:
-      BROKER_GRPC_URL: ${BROKER_GRPC_URL:-message-broker:9091}
       CACHE_MEMBERSHIP_FILE: /etc/gateway-cache/nodes.txt
       CACHE_PASSWORD: ${GATEWAY_CACHE_PASSWORD:?set GATEWAY_CACHE_PASSWORD in .env}
       CACHE_RESPONSE_TTL_SECONDS: ${GATEWAY_CACHE_RESPONSE_TTL_SECONDS:-15}

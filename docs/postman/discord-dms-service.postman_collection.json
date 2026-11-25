@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "discord-dms-service",
-    "description": "Endpoints of discord-dms-service 0.5.0 (Team 19, Topic 3: Student ID, Please; Laboratory 4). Run the folders top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Business requests go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder publishes the consumed events to the Message Broker (brokerUrl), which delivers them to the service over gRPC; POST /internal/events is retired. The Chat folder asks the gateway for a chat ticket through POST /ws/negotiate: open the url it returns with a WebSocket client before expiresAt to join the chat directly on discord-dms-service. The Internal diagnostics folder reads GET /metrics and GET /internal/logs on the instance itself (internalBaseUrl); these routes are not public Gateway routes.",
+    "description": "Endpoints of discord-dms-service 0.6.0 (Team 19, Topic 3: Student ID, Please; Laboratories 4 and 5). Run the folders top to bottom, or use the Collection Runner: later requests depend on ids captured from earlier responses. Business requests go through the API Gateway (baseUrl http://localhost:8080) and send the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). Discord is simulated: recipient 00000000-0000-0000-0000-000000000403 does not accept direct messages, and any random recipient receives its message on the first attempt. Get Failed Notification waits 3 s for the delivery worker. The Event Delivery folder publishes the consumed events to the Message Broker (brokerUrl), which delivers them to the service over gRPC; POST /internal/events is retired. The Chat folder asks the gateway for a chat ticket through POST /ws/negotiate: open the url it returns with a WebSocket client before expiresAt to join the chat directly on discord-dms-service. The Internal diagnostics folder reads GET /metrics and GET /internal/logs on the instance itself (internalBaseUrl); these routes are not public Gateway routes. The Lab 5 Saga participant folder calls POST /internal/sagas/{sagaId}/notification, step 2 of the Gateway's decision-verdict saga, and its compensation POST /internal/sagas/{sagaId}/notification/cancel on the instance itself (internalBaseUrl), as the Gateway's saga coordinator does; these routes are not Gateway routes either. The folder is skipped unless runInternalDiagnostics is true; in the CPR docker-compose.yml, internalBaseUrl reaches the discord-dms-service container that publishes 8088. It waits 2 s and 3 s for the delivery worker.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -28,6 +28,11 @@
     {
       "key": "internalBaseUrl",
       "value": "http://localhost:8088",
+      "type": "string"
+    },
+    {
+      "key": "runInternalDiagnostics",
+      "value": "false",
       "type": "string"
     },
     {
@@ -102,6 +107,31 @@
     },
     {
       "key": "chatUrl",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaDecisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaNotificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tombstoneSagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sentSagaId",
       "value": "",
       "type": "string"
     }
@@ -1400,9 +1430,9 @@
                 "exec": [
                   "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
                   "const body = pm.response.json();",
-                  "pm.test(\"reports discord-dms-service 0.5.0\", () => {",
+                  "pm.test(\"reports discord-dms-service 0.6.0\", () => {",
                   "  pm.expect(body.service).to.eql(\"discord-dms-service\");",
-                  "  pm.expect(body.version).to.eql(\"0.5.0\");",
+                  "  pm.expect(body.version).to.eql(\"0.6.0\");",
                   "  pm.expect(body.checks.redis).to.eql(\"Healthy\");",
                   "});"
                 ]
@@ -1423,6 +1453,614 @@
           }
         }
       ]
+    },
+    {
+      "name": "Lab 5 Saga participant (private network or the published instance only)",
+      "item": [
+        {
+          "name": "Queue Saga Notification",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sagaId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"sagaDecisionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"notification is queued for the saga\", () => {",
+                  "  pm.expect(body.id).to.be.a(\"string\");",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.createdAt).to.be.a(\"string\");",
+                  "  pm.expect(body.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\"));",
+                  "});",
+                  "pm.test(\"Location points at the delivery status\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/notifications/\" + body.id + \"/status\"));",
+                  "pm.test(\"is not a replay\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.be.oneOf([undefined, null]));",
+                  "pm.collectionVariables.set(\"sagaNotificationId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{sagaDecisionId}}\",\n  \"applicantId\": \"00000000-0000-0000-0000-000000000403\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Repeat Queue Saga Notification Is A Replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is a replay\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.eql(\"true\"));",
+                  "pm.test(\"has no Location\", () => pm.expect(pm.response.headers.get(\"Location\")).to.be.oneOf([undefined, null]));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"answers with the notification queued the first time\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"sagaNotificationId\"));",
+                  "  pm.expect(body.status).to.eql(\"QUEUED\");",
+                  "  pm.expect(body.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{sagaDecisionId}}\",\n  \"applicantId\": \"00000000-0000-0000-0000-000000000403\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Saga Notification",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Give the delivery worker time to make its one attempt: Discord refuses this applicant, so the",
+                  "// notification is never sent and the cancellation below does not meet a delivery in progress.",
+                  "setTimeout(() => {}, 2000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is the verdict message for the applicant\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"sagaNotificationId\"));",
+                  "  pm.expect(body.recipientId).to.eql(\"00000000-0000-0000-0000-000000000403\");",
+                  "  pm.expect(body.type).to.eql(\"VERDICT\");",
+                  "  pm.expect(body.message).to.include(\"Your student ID was not found in the university registry.\");",
+                  "});",
+                  "pm.test(\"metadata names the saga\", () => {",
+                  "  pm.expect(body.metadata.eventType).to.eql(\"saga.decision-verdict\");",
+                  "  pm.expect(body.metadata.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\"));",
+                  "  pm.expect(body.metadata.decisionId).to.eql(pm.collectionVariables.get(\"sagaDecisionId\"));",
+                  "  pm.expect(body.metadata.action).to.eql(\"REJECT\");",
+                  "  pm.expect(body.metadata.violatedRules).to.eql([\"RECORD_NOT_FOUND\"]);",
+                  "  pm.expect(body.metadata.issuedAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"is not delivered\", () => pm.expect(body.status).to.not.eql(\"SENT\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/notifications/{{sagaNotificationId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{sagaNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel Saga Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"the notification is cancelled\", () => pm.expect(pm.response.json()).to.eql({",
+                  "  sagaId: pm.collectionVariables.get(\"sagaId\"),",
+                  "  state: \"CANCELLED\",",
+                  "  notificationId: pm.collectionVariables.get(\"sagaNotificationId\")",
+                  "}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/notification/cancel",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "notification",
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel Saga Notification Again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"answers as the first cancellation did\", () => pm.expect(pm.response.json()).to.eql({",
+                  "  sagaId: pm.collectionVariables.get(\"sagaId\"),",
+                  "  state: \"CANCELLED\",",
+                  "  notificationId: pm.collectionVariables.get(\"sagaNotificationId\")",
+                  "}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/notification/cancel",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "notification",
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Cancelled Saga Notification Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{internalBaseUrl}}/notifications/{{sagaNotificationId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{sagaNotificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue After The Cancellation Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is SAGA_COMPENSATED\", () => pm.expect(body.error).to.eql(\"SAGA_COMPENSATED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{sagaDecisionId}}\",\n  \"applicantId\": \"00000000-0000-0000-0000-000000000403\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel Unknown Saga Leaves A Tombstone",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"tombstoneSagaId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is cancelled with no notification\", () => pm.expect(pm.response.json()).to.eql({",
+                  "  sagaId: pm.collectionVariables.get(\"tombstoneSagaId\"),",
+                  "  state: \"CANCELLED\",",
+                  "  notificationId: null",
+                  "}));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{tombstoneSagaId}}/notification/cancel",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{tombstoneSagaId}}",
+                "notification",
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue After The Tombstone Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is SAGA_COMPENSATED\", () => pm.expect(body.error).to.eql(\"SAGA_COMPENSATED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{tombstoneSagaId}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{tombstoneSagaId}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Saga Notification That Is Delivered",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sentSagaId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"notification is queued for the saga\", () => pm.expect(pm.response.json().sagaId).to.eql(pm.collectionVariables.get(\"sentSagaId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sentSagaId}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sentSagaId}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cancel Delivered Saga Notification Returns 409",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// Give the delivery worker time to send it: any random applicant receives it on the first attempt.",
+                  "setTimeout(() => {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOTIFICATION_ALREADY_SENT\", () => pm.expect(body.error).to.eql(\"NOTIFICATION_ALREADY_SENT\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sentSagaId}}/notification/cancel",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sentSagaId}}",
+                "notification",
+                "cancel"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Saga Notification With Missing Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is VALIDATION_FAILED\", () => pm.expect(body.error).to.eql(\"VALIDATION_FAILED\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"REJECT\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{$guid}}/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{$guid}}",
+                "notification"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Queue Saga Notification With Invalid Saga Id Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"error code is NOT_FOUND\", () => pm.expect(body.error).to.eql(\"NOT_FOUND\"));",
+                  "pm.test(\"error has a message\", () => pm.expect(body.message).to.be.a(\"string\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"decisionId\": \"{{$guid}}\",\n  \"applicantId\": \"{{$guid}}\",\n  \"action\": \"REJECT\",\n  \"violatedRules\": [\n    \"RECORD_NOT_FOUND\"\n  ],\n  \"issuedAt\": \"{{$isoTimestamp}}\"\n}"
+            },
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/not-a-uuid/notification",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "not-a-uuid",
+                "notification"
+              ]
+            }
+          }
+        }
+      ],
+      "auth": {
+        "type": "noauth"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('runInternalDiagnostics') !== 'true') pm.execution.skipRequest();"
+            ]
+          }
+        }
+      ],
+      "description": "Step 2 of the Gateway's decision-verdict saga, queue-verdict-notification, and its compensation, called on one instance (internalBaseUrl) as the Gateway's saga coordinator calls them; the public Gateway proxy does not route /internal/**. Skipped unless runInternalDiagnostics is true. The first saga notification goes to 00000000-0000-0000-0000-000000000403, who does not accept direct messages, so it is never sent and its cancellation succeeds; Cancel Delivered Saga Notification Returns 409 waits 3 s for the delivery of another one."
     }
   ]
 }
