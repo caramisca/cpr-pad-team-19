@@ -1,125 +1,827 @@
 {
   "id": null,
   "uid": "lab4-services",
-  "title": "Lab 4 \u2014 Services Overview",
+  "title": "Lab 4 — All Services",
   "tags": [
     "lab4"
   ],
   "timezone": "browser",
   "schemaVersion": 38,
-  "version": 1,
+  "version": 2,
   "refresh": "10s",
   "time": {
-    "from": "now-30m",
+    "from": "now-15m",
     "to": "now"
   },
   "panels": [
     {
+      "type": "row",
+      "title": "Overview: every service of the system",
+      "collapsed": false,
+      "panels": [],
       "id": 1,
-      "type": "timeseries",
-      "title": "HTTP Request Rate (req/s)",
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 12,
-        "h": 8
-      },
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Healthy instances per service",
+      "description": "Scrape/probe availability. Domain services run two replicas; Gateway, Service Discovery and Broker run one.",
       "targets": [
         {
-          "expr": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"server-rules-service|university-record-service\"}[1m]))",
+          "expr": "sum by (job) (up{job!~\"prometheus|service-health\"})",
           "legendFormat": "{{job}}"
+        },
+        {
+          "expr": "sum by (service) (probe_success{job=\"service-health\"})",
+          "legendFormat": "{{service}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps"
-        }
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "green",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 0,
+        "y": 1,
+        "w": 24,
+        "h": 7
       }
     },
     {
-      "id": 2,
       "type": "timeseries",
-      "title": "HTTP Error Rate (5xx req/s)",
-      "gridPos": {
-        "x": 12,
-        "y": 0,
-        "w": 12,
-        "h": 8
-      },
+      "title": "Instances UP over time",
+      "description": "",
       "targets": [
         {
-          "expr": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"server-rules-service|university-record-service\",status=~\"5..\"}[1m]))",
-          "legendFormat": "{{job}} 5xx"
+          "expr": "sum by (job) (up{job!~\"prometheus|service-health\"})",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "expr": "sum by (service) (probe_success{job=\"service-health\"})",
+          "legendFormat": "{{service}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Traffic: all services",
+      "collapsed": false,
+      "panels": [],
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Request rate per service (req/s)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",uri!~\"/actuator.*|/health.*\"}[1m]))",
+          "legendFormat": "{{job}} HTTP"
+        },
+        {
+          "expr": "sum by (job) (rate(service_requests_total[1m]))",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "expr": "sum by (job) (rate(grpc_server_seconds_count{rpc_method=\"Call\"}[1m]))",
+          "legendFormat": "{{job}} gRPC"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "reqps",
-          "color": {
-            "fixedColor": "red",
-            "mode": "fixed"
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
           }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
-      }
-    },
-    {
-      "id": 3,
-      "type": "timeseries",
-      "title": "P95 Latency (s)",
+      },
+      "id": 5,
       "gridPos": {
         "x": 0,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum by (job, le) (rate(http_server_requests_seconds_bucket{job=~\"server-rules-service|university-record-service\"}[5m])))",
-          "legendFormat": "{{job}} p95"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
+        "y": 17,
+        "w": 8,
+        "h": 9
       }
     },
     {
-      "id": 4,
       "type": "timeseries",
-      "title": "Active Threads",
-      "gridPos": {
-        "x": 12,
-        "y": 8,
-        "w": 12,
-        "h": 8
-      },
+      "title": "Error rate per service (5xx / failed gRPC, req/s)",
+      "description": "",
       "targets": [
         {
-          "expr": "http_threads_active{job=~\"server-rules-service|university-record-service\"}",
-          "legendFormat": "{{job}} active"
+          "expr": "sum by (job) (rate(http_server_requests_seconds_count{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",status=~\"5..\"}[1m]))",
+          "legendFormat": "{{job}} HTTP 5xx"
         },
         {
-          "expr": "http_threads_max{job=~\"server-rules-service|university-record-service\"}",
-          "legendFormat": "{{job}} max"
+          "expr": "sum by (job) (rate(service_errors_total[1m]))",
+          "legendFormat": "{{job}} 5xx"
+        },
+        {
+          "expr": "sum by (job) (rate(grpc_server_seconds_count{grpc_status_code!=\"OK\"}[1m]))",
+          "legendFormat": "{{job}} gRPC error"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 8,
+        "y": 17,
+        "w": 8,
+        "h": 9
       }
     },
     {
-      "id": 5,
       "type": "timeseries",
-      "title": "Broker Event Deliveries by Outcome",
+      "title": "Average request duration per service",
+      "description": "Mean = duration sum / request count. Not a percentile.",
+      "targets": [
+        {
+          "expr": "sum by (job) (rate(http_server_requests_seconds_sum{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",uri!~\"/actuator.*|/health.*\"}[1m])) / sum by (job) (rate(http_server_requests_seconds_count{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",uri!~\"/actuator.*|/health.*\"}[1m]))",
+          "legendFormat": "{{job}} HTTP"
+        },
+        {
+          "expr": "sum by (job) (rate(service_request_duration_seconds_sum[1m])) / sum by (job) (rate(service_requests_total[1m]))",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "expr": "sum by (job) (rate(grpc_server_seconds_sum{rpc_method=\"Call\"}[1m])) / sum by (job) (rate(grpc_server_seconds_count{rpc_method=\"Call\"}[1m]))",
+          "legendFormat": "{{job}} gRPC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 7,
+      "gridPos": {
+        "x": 16,
+        "y": 17,
+        "w": 8,
+        "h": 9
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Requests handled since start",
+      "description": "Cumulative counters (they reset when an instance restarts).",
+      "targets": [
+        {
+          "expr": "sum by (job) (http_server_requests_seconds_count{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",uri!~\"/actuator.*|/health.*\"})",
+          "legendFormat": "{{job}} HTTP"
+        },
+        {
+          "expr": "sum by (job) (service_requests_total)",
+          "legendFormat": "{{job}}"
+        },
+        {
+          "expr": "sum by (job) (grpc_server_seconds_count{rpc_method=\"Call\"})",
+          "legendFormat": "{{job}} gRPC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 8,
       "gridPos": {
         "x": 0,
-        "y": 16,
+        "y": 26,
+        "w": 24,
+        "h": 7
+      }
+    },
+    {
+      "type": "row",
+      "title": "Load balancing: traffic per replica",
+      "collapsed": false,
+      "panels": [],
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per instance: Applicant / Credential / Moderation / DMS",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum by (job, instance) (rate(service_requests_total[1m]))",
+          "legendFormat": "{{job}} @ {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 34,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per instance: Player / Session / Rules / Record",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum by (job, instance) (rate(http_server_requests_seconds_count{job=~\"player-service|server-moderation-session-service|server-rules-service|university-record-service\",uri!~\"/actuator.*|/health.*\"}[1m]))",
+          "legendFormat": "{{job}} @ {{instance}}"
+        },
+        {
+          "expr": "sum by (job, instance) (rate(grpc_server_seconds_count{rpc_method=\"Call\"}[1m]))",
+          "legendFormat": "{{job}} gRPC @ {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 34,
+        "w": 12,
+        "h": 9
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "In-flight requests per instance",
+      "description": "",
+      "targets": [
+        {
+          "expr": "service_active_requests",
+          "legendFormat": "{{job}} @ {{instance}}"
+        },
+        {
+          "expr": "tasks_active",
+          "legendFormat": "{{job}} @ {{instance}}"
+        },
+        {
+          "expr": "http_threads_active",
+          "legendFormat": "{{job}} @ {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
         "w": 12,
         "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Thread/task capacity in use (%)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "100 * tasks_active / tasks_max",
+          "legendFormat": "{{job}} @ {{instance}}"
+        },
+        {
+          "expr": "100 * http_threads_active / http_threads_max",
+          "legendFormat": "{{job}} @ {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
       },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 12,
+        "y": 43,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Message Broker",
+      "collapsed": false,
+      "panels": [],
+      "id": 14,
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Events accepted",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(broker_events_accepted_total)",
+          "legendFormat": "accepted"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 15,
+      "gridPos": {
+        "x": 0,
+        "y": 52,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Active requests",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(broker_active_requests)",
+          "legendFormat": "active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 16,
+      "gridPos": {
+        "x": 4,
+        "y": 52,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pending event copies",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(broker_pending_event_copies)",
+          "legendFormat": "pending"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 10
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 8,
+        "y": 52,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Dead letters (DLC)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(broker_dead_letter_messages)",
+          "legendFormat": "dead letters"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 12,
+        "y": 52,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Open circuits",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(broker_open_circuits)",
+          "legendFormat": "open"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 19,
+      "gridPos": {
+        "x": 16,
+        "y": 52,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Broker deliveries by outcome",
+      "description": "",
       "targets": [
         {
           "expr": "sum by (outcome) (rate(broker_event_deliveries_total[2m]))",
@@ -128,181 +830,938 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "ops"
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 57,
+        "w": 12,
+        "h": 8
       }
     },
     {
-      "id": 6,
-      "type": "stat",
-      "title": "Broker Active Requests",
-      "gridPos": {
-        "x": 12,
-        "y": 16,
-        "w": 6,
-        "h": 8
-      },
+      "type": "timeseries",
+      "title": "Events consumed by subscribers (by outcome)",
+      "description": "",
       "targets": [
         {
-          "expr": "broker_active_requests",
-          "legendFormat": "active"
+          "expr": "sum by (job, outcome) (rate(player_event_deliveries_total[2m]))",
+          "legendFormat": "{{job}} {{outcome}}"
+        },
+        {
+          "expr": "sum by (job, outcome) (rate(session_event_deliveries_total[2m]))",
+          "legendFormat": "{{job}} {{outcome}}"
+        },
+        {
+          "expr": "sum by (job, outcome) (rate(service_event_deliveries_total[2m]))",
+          "legendFormat": "{{job}} {{outcome}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "short"
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 12,
+        "y": 57,
+        "w": 12,
+        "h": 8
       }
     },
     {
-      "id": 7,
-      "type": "stat",
-      "title": "Broker Pending Event Copies",
+      "type": "row",
+      "title": "Player Service & Moderation Session Service",
+      "collapsed": false,
+      "panels": [],
+      "id": 22,
       "gridPos": {
-        "x": 18,
-        "y": 16,
-        "w": 6,
-        "h": 8
-      },
+        "x": 0,
+        "y": 65,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Players registered",
+      "description": "",
       "targets": [
         {
-          "expr": "broker_pending_event_copies",
+          "expr": "sum(player_registrations_total)",
+          "legendFormat": "registrations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 0,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Shifts credited",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(player_shifts_credited_total)",
+          "legendFormat": "shifts"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 24,
+      "gridPos": {
+        "x": 4,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "XP awarded",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(player_xp_awarded_total)",
+          "legendFormat": "XP"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 25,
+      "gridPos": {
+        "x": 8,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Sessions opened",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(sessions_opened_total)",
+          "legendFormat": "opened"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 26,
+      "gridPos": {
+        "x": 12,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Sessions closed",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(sessions_closed_total)",
+          "legendFormat": "closed"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 27,
+      "gridPos": {
+        "x": 16,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Applicants presented",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(session_applicants_presented_total)",
+          "legendFormat": "presented"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 28,
+      "gridPos": {
+        "x": 20,
+        "y": 66,
+        "w": 4,
+        "h": 5
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Session activity (per min)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "60 * sum(rate(sessions_opened_total[2m]))",
+          "legendFormat": "sessions opened"
+        },
+        {
+          "expr": "60 * sum(rate(sessions_closed_total[2m]))",
+          "legendFormat": "sessions closed"
+        },
+        {
+          "expr": "60 * sum(rate(session_applicants_presented_total[2m]))",
+          "legendFormat": "applicants presented"
+        },
+        {
+          "expr": "60 * sum(rate(session_published_events_total[2m]))",
+          "legendFormat": "events published"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 29,
+      "gridPos": {
+        "x": 0,
+        "y": 71,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Live SSE streams",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum by (instance) (sse_streams_open)",
+          "legendFormat": "open @ {{instance}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 30,
+      "gridPos": {
+        "x": 8,
+        "y": 71,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Player activity (per min)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "60 * sum(rate(player_registrations_total[2m]))",
+          "legendFormat": "registrations"
+        },
+        {
+          "expr": "60 * sum(rate(player_shifts_credited_total[2m]))",
+          "legendFormat": "shifts credited"
+        },
+        {
+          "expr": "60 * sum(rate(player_decision_events_total[2m]))",
+          "legendFormat": "decision events"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 31,
+      "gridPos": {
+        "x": 16,
+        "y": 71,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Moderation Service & Discord DMS Service",
+      "collapsed": false,
+      "panels": [],
+      "id": 32,
+      "gridPos": {
+        "x": 0,
+        "y": 79,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Moderation events published",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(service_events_published_total{job=\"moderation-service\"})",
+          "legendFormat": "published"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 33,
+      "gridPos": {
+        "x": 0,
+        "y": 80,
+        "w": 8,
+        "h": 5
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Moderation outbox pending",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(service_outbox_pending_events{job=\"moderation-service\"})",
           "legendFormat": "pending"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
+          "decimals": 0,
           "thresholds": {
+            "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
               },
               {
-                "color": "yellow",
-                "value": 10
-              },
-              {
-                "color": "red",
-                "value": 100
+                "color": "orange",
+                "value": 5
               }
             ]
           }
-        }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 34,
+      "gridPos": {
+        "x": 8,
+        "y": 80,
+        "w": 8,
+        "h": 5
       }
     },
     {
-      "id": 8,
+      "type": "stat",
+      "title": "DMS events received",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum(service_event_deliveries_total{job=\"discord-dms-service\"})",
+          "legendFormat": "deliveries"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "justifyMode": "auto",
+        "orientation": "auto"
+      },
+      "id": 35,
+      "gridPos": {
+        "x": 16,
+        "y": 80,
+        "w": 8,
+        "h": 5
+      }
+    },
+    {
       "type": "timeseries",
-      "title": "Services Up",
+      "title": "DMS events by topic and outcome",
+      "description": "",
+      "targets": [
+        {
+          "expr": "sum by (topic, outcome) (rate(service_event_deliveries_total{job=\"discord-dms-service\"}[2m]))",
+          "legendFormat": "{{topic}} {{outcome}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 36,
       "gridPos": {
         "x": 0,
-        "y": 24,
+        "y": 85,
         "w": 24,
-        "h": 6
-      },
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "Server Rules & University Record (gRPC)",
+      "collapsed": false,
+      "panels": [],
+      "id": 37,
+      "gridPos": {
+        "x": 0,
+        "y": 93,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "gRPC calls by method",
+      "description": "",
       "targets": [
         {
-          "expr": "up{job=~\"server-rules-service|university-record-service|message-broker|applicant-service|credential-service\"}",
-          "legendFormat": "{{job}} {{instance}}"
+          "expr": "sum by (job, rpc_method) (rate(grpc_server_seconds_count[1m]))",
+          "legendFormat": "{{job}} {{rpc_method}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 38,
+      "gridPos": {
+        "x": 0,
+        "y": 94,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "gRPC P95 call duration",
+      "description": "",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum by (job, le) (rate(grpc_server_call_duration_seconds_bucket[5m])))",
+          "legendFormat": "{{job}} p95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 39,
+      "gridPos": {
+        "x": 12,
+        "y": 94,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "API Gateway & Service Discovery (health probes)",
+      "collapsed": false,
+      "panels": [],
+      "id": 40,
+      "gridPos": {
+        "x": 0,
+        "y": 102,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Health probe result (1 = healthy)",
+      "description": "",
+      "targets": [
+        {
+          "expr": "probe_success{job=\"service-health\"}",
+          "legendFormat": "{{service}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
-          "min": 0,
-          "max": 1
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
-      }
-    },
-    {
-      "id": 9,
-      "type": "timeseries",
-      "title": "Applicant / Credential \u2014 Request Rate (req/s)",
+      },
+      "id": 41,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 103,
         "w": 12,
         "h": 8
-      },
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Health probe latency",
+      "description": "",
       "targets": [
         {
-          "expr": "rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}} {{instance}}"
+          "expr": "probe_duration_seconds{job=\"service-health\"}",
+          "legendFormat": "{{service}}"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "reqps"
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 15,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
         }
-      }
-    },
-    {
-      "id": 10,
-      "type": "timeseries",
-      "title": "Applicant / Credential \u2014 Error Rate (5xx req/s)",
+      },
+      "id": 42,
       "gridPos": {
         "x": 12,
-        "y": 30,
+        "y": 103,
         "w": 12,
         "h": 8
-      },
-      "targets": [
-        {
-          "expr": "rate(service_errors_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}} {{instance}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "reqps"
-        }
-      }
-    },
-    {
-      "id": 11,
-      "type": "timeseries",
-      "title": "Applicant / Credential \u2014 Avg Request Duration (s)",
-      "gridPos": {
-        "x": 0,
-        "y": 38,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "expr": "rate(service_request_duration_seconds_sum{job=~\"applicant-service|credential-service\"}[1m]) / rate(service_requests_total{job=~\"applicant-service|credential-service\"}[1m])",
-          "legendFormat": "{{job}} {{instance}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s"
-        }
-      }
-    },
-    {
-      "id": 12,
-      "type": "timeseries",
-      "title": "Applicant / Credential \u2014 Active Requests",
-      "gridPos": {
-        "x": 12,
-        "y": 38,
-        "w": 12,
-        "h": 8
-      },
-      "targets": [
-        {
-          "expr": "service_active_requests{job=~\"applicant-service|credential-service\"}",
-          "legendFormat": "{{job}} {{instance}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "min": 0
-        }
       }
     }
   ]

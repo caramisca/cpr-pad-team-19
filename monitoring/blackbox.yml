@@ -1,0 +1,9 @@
+# Gateway and Service Discovery expose /health but no Prometheus metrics endpoint.
+# The blackbox exporter turns their health checks into probe_success / probe_duration_seconds.
+modules:
+  http_2xx:
+    prober: http
+    timeout: 3s
+    http:
+      valid_status_codes: [200]
+      preferred_ip_protocol: ip4
