@@ -1191,6 +1191,10 @@ services:
     depends_on:
       warehouse-db:
         condition: service_healthy
+      applicant-redis:
+        condition: service_healthy
+      dms-redis:
+        condition: service_healthy
 
 networks:
   redis-ha:
