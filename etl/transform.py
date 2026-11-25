@@ -7,15 +7,21 @@ def transform(raw):
         for c in raw["credentials"]
         if c.get("applicantId")
     }
+    # Applicant-redis data: keyed by applicant id, carries deceptionType and role.
+    redis_applicant = {
+        str(a.get("id") or a.get("applicantId") or ""): a
+        for a in raw["applicants"]
+        if a.get("id") or a.get("applicantId")
+    }
 
     return {
         "dim_players":    _players(raw["players"]),
         "dim_rulesets":   _rulesets(raw["rulesets"]),
         "dim_students":   _students(raw["students"]),
-        "dim_services":   _services(raw["services"]),
+        "dim_services":   _services(raw["services"], raw["dms_count"]),
         "fact_decisions": _decisions(raw["decisions"]),
         "fact_shifts":    _shifts(raw["sessions"]),
-        "fact_applicants": _applicants(raw["queue"], cred_by_applicant),
+        "fact_applicants": _applicants(raw["queue"], cred_by_applicant, redis_applicant),
     }
 
 
@@ -63,9 +69,14 @@ def _students(rows):
     ]
 
 
-def _services(services):
+def _services(services, dms_count):
     return [
-        {"service_name": s[0], "description": s[1], "tech": s[2]}
+        {
+            "service_name":       s[0],
+            "description":        s[1],
+            "tech":               s[2],
+            "notification_count": dms_count if s[0] == "discord-dms-service" else 0,
+        }
         for s in services
     ]
 
@@ -108,16 +119,18 @@ def _shifts(rows):
     ]
 
 
-def _applicants(queue_rows, cred_by_applicant):
+def _applicants(queue_rows, cred_by_applicant, redis_applicant):
     return [
         {
-            "applicant_id":  str(r[2]),
-            "session_id":    str(r[1]) if r[1] else None,
-            "credential_id": cred_by_applicant.get(str(r[2]), {}).get("id"),
+            "applicant_id":   str(r[2]),
+            "session_id":     str(r[1]) if r[1] else None,
+            "credential_id":  cred_by_applicant.get(str(r[2]), {}).get("id"),
+            "deception_type": redis_applicant.get(str(r[2]), {}).get("deceptionType"),
+            "role":           redis_applicant.get(str(r[2]), {}).get("role"),
             "queue_position": r[3],
-            "action":        r[4],
-            "presented_at":  r[5],
-            "resolved_at":   r[6],
+            "action":         r[4],
+            "presented_at":   r[5],
+            "resolved_at":    r[6],
         }
         for r in queue_rows
     ]
