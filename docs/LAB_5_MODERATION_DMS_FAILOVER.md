@@ -15,12 +15,15 @@ PostgreSQL side reuses Daria's Patroni setup unchanged (`docker/postgres-ha/`,
 | `moderation-postgres-1..3` | `drateeva/postgres-ha:16.16-patroni4.1.5` | The members of moderation-service's database: PostgreSQL 16 managed by Patroni. One primary, one synchronous standby, one asynchronous standby, streaming replication |
 | `moderation-postgres` | `haproxy:3.0.31-alpine` | The cluster's stable address (the hostname moderation-service and the ETL job already use): forwards to the member whose `GET :8008/primary` answers 200 |
 | `postgres-etcd-1..3` | `quay.io/coreos/etcd:v3.6.17` | Shared with the other PostgreSQL clusters: holds the leader lock of `moderation-postgres` (Patroni scope `moderation-postgres`) |
-| `dms-redis-1..3` | `redis:7.4-alpine` | The members of discord-dms-service's Redis: one primary, two replicas (asynchronous replication, AOF on every member) |
-| `dms-redis-sentinel-1..3` | `redis:7.4-alpine` | Redis Sentinel: watch the primary under the name `dms-redis`, promote a replica when it is lost, and tell clients which member is the primary |
-| `dms-redis` | `haproxy:3.0.31-alpine` | The stable address under the old hostname, for clients that know one address only (the ETL job): forwards to the member that reports `role:master` |
+| `dms-redis-1..3` | `redis:7.4-alpine` | The members of discord-dms-service's Redis: one primary, two replicas (asynchronous replication, AOF on every member). Fixed addresses `172.30.58.11..13` on the private network `dms-redis-ha` |
+| `dms-redis-sentinel-1..3` | `redis:7.4-alpine` | Redis Sentinel: watch the primary under the name `dms-redis`, promote a replica when it is lost, and report which member is the primary. Fixed addresses `172.30.58.21..23` |
+| `dms-redis` | `haproxy:3.0.31-alpine` | The stable address under the old hostname, for discord-dms-service and the ETL job: forwards to the member that reports `role:master`. The only container on both the default network and `dms-redis-ha` |
 
-Everything is private to the Compose network (no published port). Every member and every Sentinel
-has its own volume (`moderation-postgres-N-data`, `dms-redis-N-data`, `dms-redis-sentinel-N-data`).
+Everything is private to the Compose networks (no published port). The Redis members and Sentinels
+are on the internal network `dms-redis-ha` only (subnet `${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.0/24`;
+Docker allocates other addresses from `.128` up, so a stopped member's address stays free). Every
+member and every Sentinel has its own volume (`moderation-postgres-N-data`, `dms-redis-N-data`,
+`dms-redis-sentinel-N-data`).
 
 ```mermaid
 flowchart LR
@@ -30,13 +33,12 @@ flowchart LR
     MP1 -->|"WAL"| MP3["moderation-postgres-3<br/>standby"]
     MP1 & MP2 & MP3 <-->|"leader lock"| E["postgres-etcd-1..3"]
 
-    DS["discord-dms-service x2"] -->|"serviceName=dms-redis"| S["dms-redis-sentinel-1..3<br/>:26379, quorum 2"]
-    DS -->|"commands, to the primary S names"| R1
-    S -.->|"PING, INFO; promote"| R1["dms-redis-1<br/>primary"]
-    R1 -->|"replication, async"| R2["dms-redis-2<br/>replica"]
-    R1 -->|"replication, async"| R3["dms-redis-3<br/>replica"]
-    ETL["etl"] -->|"dms-redis:6379"| RH["dms-redis<br/>HAProxy"]
-    RH -->|"only to role:master"| R1
+    DS["discord-dms-service x2"] -->|"dms-redis:6379"| RH["dms-redis<br/>HAProxy"]
+    ETL["etl"] -->|"dms-redis:6379"| RH
+    RH -->|"only to role:master"| R1["dms-redis-1 .11<br/>primary"]
+    S["dms-redis-sentinel-1..3<br/>.21-.23, quorum 2"] -.->|"PING, INFO; promote"| R1
+    R1 -->|"replication, async"| R2["dms-redis-2 .12<br/>replica"]
+    R1 -->|"replication, async"| R3["dms-redis-3 .13<br/>replica"]
 ```
 
 ## How a failover works
@@ -50,17 +52,16 @@ standby, so **no committed transaction is lost**. The details are in
 
 **dms-redis:**
 
-1. Each Sentinel PINGs every member once per second. When the primary does not answer for 5 s
+1. Each Sentinel PINGs every member once per second, by its fixed address. When the primary does not answer for 5 s
    (`down-after-milliseconds`), that Sentinel marks it subjectively down. When two of the three
    agree (`quorum 2`), it is objectively down.
 2. The Sentinels elect a leader among themselves; a majority (2 of 3) is needed. The leader
    promotes the replica with the most recent data (`REPLICAOF NO ONE`) and points the other
    replica at it (`parallel-syncs 1`).
-3. Clients ask any Sentinel for the primary. discord-dms-service (StackExchange.Redis in Sentinel
-   mode) also receives the `+switch-master` message and reconnects to the new primary on its own.
-   The HAProxy at `dms-redis` checks every member each second (`AUTH`, `INFO replication`,
+3. The HAProxy at `dms-redis` checks every member each second (`AUTH`, `INFO replication`,
    `role:master`). It marks the new primary up and the old one down, and it closes the connections
-   still open to the old one.
+   still open to the old one. discord-dms-service and the ETL job reconnect through it and reach
+   the new primary.
 4. When the old primary comes back, it starts as a replica of the new one. Two mechanisms ensure
    this, so there is never a second primary with older data:
    - The Sentinels rewrite each member's `redis.conf` on its volume.
@@ -106,8 +107,16 @@ An isolated run on 26 November 2026 used CPR commit `152ec94` and published `0.6
 Moderation PostgreSQL resumed writes after 22.1 seconds. It retained the committed marker and
 the former primary rejoined as a replica. DMS Redis writes remained unavailable at the 90-second
 timeout. Sentinel logged that it could not resolve the stopped primary `dms-redis-1`. DMS
-returned to healthy after that container was restarted. Track correction and retest in
-[#320](https://github.com/caramisca/cpr-pad-team-19/issues/320).
+returned to healthy after that container was restarted
+([#320](https://github.com/caramisca/cpr-pad-team-19/issues/320)).
+
+Cause: the Sentinels and members named each other by hostname (`resolve-hostnames yes`). Docker
+removes a stopped container's name from its DNS, and a Sentinel resolves a hostname with a blocking
+lookup on its only thread, once a second, for the member it cannot reach. While that name could not
+be resolved, the Sentinels did not fail over. Correction: the members and Sentinels now have fixed
+addresses on `dms-redis-ha` and know each other only by address, as the shared `redis-ha` of
+applicant-service and credential-service does; discord-dms-service reaches the primary through the
+HAProxy, which resolves names without blocking. The retest of the correction is pending (#320).
 
 ## Start and check
 
@@ -128,7 +137,7 @@ Expected results:
 - **moderation-postgres:** one `Leader` (`running`), one `Sync Standby` and one `Replica`
   (`streaming`).
 - **dms-redis:**
-  - the Sentinels name `dms-redis-1`, port 6379;
+  - the Sentinels name `172.30.58.11` (dms-redis-1), port 6379;
   - two replicas, `flags` `slave`, `master-link-status` `ok`;
   - `SENTINEL master dms-redis` shows `num-other-sentinels 2` and `quorum 2`.
 
@@ -151,7 +160,9 @@ python3 scripts/check_moderation_dms_failover.py --store both --gateway-url http
 
 **Manual demo (dms-redis):**
 
-1. `docker compose kill $(docker compose exec dms-redis-sentinel-1 redis-cli -p 26379 SENTINEL get-master-addr-by-name dms-redis | head -n 1)`.
+1. Ask a Sentinel for the primary (as above). It names an address; `dms-redis-N` has the address
+   ending in `.1N` (`docker compose exec dms-redis-N printenv REDIS_NODE_ADDRESS`). Then
+   `docker compose kill dms-redis-N`.
 2. Ask `SENTINEL get-master-addr-by-name dms-redis` again a few times. Within about 10 s it names
    another member, and `docker compose logs dms-redis-sentinel-1` shows `+odown`,
    `+elected-leader`, `+promoted-slave` and `+switch-master`.
@@ -177,6 +188,12 @@ A planned switch: `docker compose exec dms-redis-sentinel-1 redis-cli -p 26379 S
   migrations create the schema on start. The DMS keeps no long-lived data (`Storage:RetentionHours`).
   Remove the old volumes with `docker volume rm <project>_moderation-postgres-data
   <project>_dms-redis-data` once nothing in them is needed.
+- **Upgrading from before #320:** a Sentinel whose `sentinel.conf` still names the members by
+  hostname moves it aside (`sentinel.conf.hostnames`) and creates it again with addresses, asking
+  the members which of them is the primary right now. A member that still follows a hostname
+  (`replicaof dms-redis-1`) keeps replicating, since Docker resolves the name while that member
+  runs; at its next start or the next failover it is pointed at the address the Sentinels report.
+  No volume needs to be removed.
 - **Configuration on the volumes:**
   - `redis-node.sh` creates each member's `redis.conf` once, and `sentinel.sh` creates each
     Sentinel's `sentinel.conf` once. Redis and the Sentinels then rewrite those files themselves.
