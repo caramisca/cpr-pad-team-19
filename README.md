@@ -18,7 +18,6 @@ docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-
 Gateway serves `http://localhost:8080/health`. The public API uses the key in `.env`.
 Grafana is on port 3000 and Prometheus is on port 9090. For the individual demonstrations see the
 [deployment diagram](#laboratory-5-the-complete-deployment),
-[Redis and cache runbook](docs/LAB_5_MIHAI.md),
 [PostgreSQL failover](docs/LAB_5_DATABASE_FAILOVER.md),
 [2PC runbook](docs/LAB_5_TWO_PHASE_COMMIT.md) and [Saga runbook](docs/LAB_5_SAGA.md).
 
@@ -2730,8 +2729,8 @@ measured results: [`docs/LAB_5_DATABASE_FAILOVER.md`](docs/LAB_5_DATABASE_FAILOV
 
 **Gateway cache and Redis failover (Lab 5, Grades 5–7).** Applicant and Credential use two Redis
 replication groups behind stable primary-only endpoints. The Gateway cache overlay enables
-client-scoped GET caching and authentication caching on three Redis shards. Setup, cache headers,
-live ring changes and failover verification are in [Lab 5 · Mihai](docs/LAB_5_MIHAI.md).
+client-scoped GET caching and authentication caching on three Redis shards.
+Use `python scripts/check_redis_failover.py` for the Redis failover check.
 
 **Public Lab 5 images.** The default stack pins the published `0.6.0` application images.
 Applicant and Credential include the Lab 4 gRPC error-parity fixes. The same Gateway image
