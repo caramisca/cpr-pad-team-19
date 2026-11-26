@@ -213,9 +213,12 @@ def complete(check: Check, state: dict) -> dict:
            step_states(document) == {"record-decision": "SUCCEEDED", "queue-verdict-notification": "SUCCEEDED",
                                      "confirm-decision": "SUCCEEDED"}, step_states(document))
     actions = {(entry["step"], entry["action"]) for entry in document.get("log", [])}
+    # Entries about the saga as a whole (e.g. the "state" changes) have step null, and None does not
+    # compare with a string, so they sort first under "" (#321).
     expect(result, "the log records each forward call",
            {("record-decision", "forward"), ("queue-verdict-notification", "forward"),
-            ("confirm-decision", "forward")} <= actions, sorted(actions))
+            ("confirm-decision", "forward")} <= actions,
+           sorted(actions, key=lambda action: (action[0] or "", action[1] or "")))
 
     decision = check.decision(document["decisionId"])
     expect(result, "the decision exists", decision.status == 200, decision)

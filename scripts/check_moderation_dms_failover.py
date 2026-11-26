@@ -6,6 +6,10 @@ writes through the HAProxy until one succeeds, marker kept, old primary back as 
 
 dms-redis (docs/LAB_5_MODERATION_DMS_FAILOVER.md), against a running Compose project:
 
+The members and Sentinels know each other by their fixed addresses on dms-redis-ha (#320), so the
+Sentinels name the primary by address; the script maps each address to its Compose service from the
+members' REDIS_NODE_ADDRESS, and reports both.
+
 1. asks a Sentinel which member is the primary, and writes a marker key through the stable hostname
    dms-redis (the HAProxy), waiting until both replicas acknowledged it (WAIT: Redis replicates
    asynchronously, so only an acknowledged write is guaranteed to survive the crash);
@@ -69,7 +73,17 @@ class Redis:
         raise RuntimeError("no Sentinel of dms-redis answers")
 
     def primary(self) -> str:
+        """The address of the member the Sentinels name the primary."""
         return self.sentinel("get-master-addr-by-name", MASTER_NAME)[0]
+
+    def members(self) -> dict[str, str]:
+        """Each member's fixed address, mapped to its Compose service (all members must be running)."""
+        members = {}
+        for index in range(1, MEMBERS + 1):
+            service = f"dms-redis-{index}"
+            result = self.compose.run("exec", "-T", service, "printenv", "REDIS_NODE_ADDRESS", timeout=15)
+            members[result.stdout.strip()] = service
+        return members
 
     def via_router(self, commands: str) -> subprocess.CompletedProcess[str]:
         """Sends the commands (one per line) over one connection to dms-redis, the HAProxy."""
@@ -96,8 +110,12 @@ class Redis:
 def check_redis(compose: Compose) -> dict:
     result: dict = {"store": "dms-redis", "errors": []}
     redis = Redis(compose)
-    old_primary = redis.primary()
-    result["primaryBefore"] = old_primary
+    members = redis.members()
+    old_address = redis.primary()
+    if old_address not in members:
+        raise RuntimeError(f"the Sentinels name {old_address} the primary, which is no member's address")
+    old_primary = members[old_address]
+    result["primaryBefore"] = f"{old_primary} ({old_address})"
     result["replicasBefore"] = redis.replication(old_primary).get("connected_slaves")
 
     marker = f"failover-probe:{datetime.now(timezone.utc).isoformat()}"
@@ -129,16 +147,17 @@ def check_redis(compose: Compose) -> dict:
     result["markerKept"] = found.stdout.strip() == "before-crash"
     if not result["markerKept"]:
         result["errors"].append("the acknowledged marker is missing after the failover")
-    new_primary = redis.primary()
-    result["primaryAfter"] = new_primary
-    if new_primary == old_primary:
-        result["errors"].append(f"expected a new primary, the Sentinels still name {old_primary}")
+    new_address = redis.primary()
+    new_primary = members.get(new_address, new_address)
+    result["primaryAfter"] = f"{new_primary} ({new_address})"
+    if new_address == old_address:
+        result["errors"].append(f"expected a new primary, the Sentinels still name {old_primary} ({old_address})")
 
     compose.run("start", old_primary)
     started_at = time.monotonic()
     while time.monotonic() - started_at < REJOIN_TIMEOUT_SECONDS:
         info = redis.replication(old_primary)
-        if (info.get("role") == "slave" and info.get("master_host") == new_primary
+        if (info.get("role") == "slave" and info.get("master_host") == new_address
                 and info.get("master_link_status") == "up"):
             result["oldPrimaryRejoinedAs"] = f"replica of {new_primary}"
             result["rejoinSeconds"] = round(time.monotonic() - started_at, 1)

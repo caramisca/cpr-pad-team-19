@@ -2,10 +2,12 @@
 # Starts one member of a replicated Redis (Lab 5, Grade 5): one primary, two replicas, three
 # Sentinels that promote a replica when the primary is lost. Set in Compose:
 #   REDISCLI_AUTH          the password (requirepass, masterauth; redis-cli reads it too)
-#   REDIS_NODE_NAME        this member's hostname, e.g. dms-redis-2; what it announces to the others
-#   REDIS_INITIAL_PRIMARY  the member that is the primary when the cluster is created, e.g. dms-redis-1
+#   REDIS_NODE_ADDRESS     this member's fixed IPv4 address, e.g. 172.30.58.12; what it announces to
+#                          the others (sentinel.sh says why addresses, not hostnames)
+#   REDIS_INITIAL_PRIMARY  the fixed address of the member that is the primary when the cluster is
+#                          created, e.g. 172.30.58.11
 #   REDIS_MASTER_NAME      the name the Sentinels monitor it under, e.g. dms-redis
-#   REDIS_SENTINELS        the Sentinels' hostnames, separated by spaces (port 26379)
+#   REDIS_SENTINELS        the Sentinels' fixed addresses, separated by spaces (port 26379)
 #   REDIS_SENTINEL_WAIT_SECONDS  default 20; see 2.
 #
 # Which member is the primary changes at every failover, so it is never taken from Compose alone:
@@ -20,7 +22,7 @@
 set -eu
 
 : "${REDISCLI_AUTH:?REDISCLI_AUTH must be set}"
-: "${REDIS_NODE_NAME:?REDIS_NODE_NAME must be set}"
+: "${REDIS_NODE_ADDRESS:?REDIS_NODE_ADDRESS must be set}"
 : "${REDIS_INITIAL_PRIMARY:?REDIS_INITIAL_PRIMARY must be set}"
 : "${REDIS_MASTER_NAME:?REDIS_MASTER_NAME must be set}"
 : "${REDIS_SENTINELS:?REDIS_SENTINELS must be set}"
@@ -34,18 +36,20 @@ if [ ! -f "$config" ]; then
         echo "# Created by redis-node.sh on first start; rewritten by the Sentinels on failover."
         echo "dir /data"
         echo "appendonly yes"
-        if [ "$REDIS_NODE_NAME" != "$REDIS_INITIAL_PRIMARY" ]; then
+        if [ "$REDIS_NODE_ADDRESS" != "$REDIS_INITIAL_PRIMARY" ]; then
             echo "replicaof $REDIS_INITIAL_PRIMARY 6379"
         fi
     } > "$config"
-    echo "redis-node: created $config ($REDIS_NODE_NAME, initial primary $REDIS_INITIAL_PRIMARY)"
+    echo "redis-node: created $config ($REDIS_NODE_ADDRESS, initial primary $REDIS_INITIAL_PRIMARY)"
 fi
 
-# The Sentinels answer with the primary's hostname (announce-hostnames). No answer: the cluster is
-# being created, or every Sentinel is down; then the role in redis.conf stands.
+# The Sentinels answer with the primary's address. No answer: the cluster is being created, or every
+# Sentinel is down; then the role in redis.conf stands. A configuration from before #320 may still
+# say "replicaof dms-redis-1 6379" (a hostname): the --replicaof below replaces it whenever a
+# Sentinel answers, and the Sentinels rewrite the file with addresses at their next change.
 ask_sentinels() {
     for sentinel in $REDIS_SENTINELS; do
-        answer=$(redis-cli -h "$sentinel" -p 26379 --no-auth-warning \
+        answer=$(timeout 2 redis-cli -h "$sentinel" -p 26379 --no-auth-warning \
             SENTINEL get-master-addr-by-name "$REDIS_MASTER_NAME" 2>/dev/null | head -n 1 || true)
         case "$answer" in
             ""|*ERR*|*NOAUTH*|*"Could not connect"*|*"(nil)"*) ;;
@@ -66,11 +70,11 @@ done
 set -- redis-server "$config" \
     --requirepass "$REDISCLI_AUTH" \
     --masterauth "$REDISCLI_AUTH" \
-    --replica-announce-ip "$REDIS_NODE_NAME"
+    --replica-announce-ip "$REDIS_NODE_ADDRESS"
 
 if [ -n "$primary" ]; then
-    if [ "$primary" = "$REDIS_NODE_NAME" ]; then
-        echo "redis-node: the Sentinels name $REDIS_NODE_NAME the primary"
+    if [ "$primary" = "$REDIS_NODE_ADDRESS" ]; then
+        echo "redis-node: the Sentinels name $REDIS_NODE_ADDRESS (this member) the primary"
         set -- "$@" --replicaof no one
     else
         echo "redis-node: the Sentinels name $primary the primary; starting as its replica"
