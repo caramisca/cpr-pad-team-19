@@ -23,7 +23,7 @@ these copies.
 The shared `docker-compose.yml` runs `seed.sh` as the one-shot `applicant-seed` container.
 It connects through `applicant-redis:6379`, the HAProxy endpoint for the current primary. The three
 Redis members have separate append-only volumes and Sentinel elects a replica after a primary
-failure. See [Lab 5 Redis failover](../../LAB_5_MIHAI.md). To seed a standalone Redis by hand:
+failure. See the [Lab 5 deployment](../../../README.md#laboratory-5-the-complete-deployment). To seed a standalone Redis by hand:
 
 ```bash
 REDIS_HOST=localhost REDISCLI_AUTH=<password> sh docs/db/applicant-service/seed.sh
