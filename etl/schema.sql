@@ -75,19 +75,26 @@ CREATE TABLE IF NOT EXISTS fact_shifts (
 );
 
 -- Sourced from session_queue_entry (session-postgres) enriched with applicant-redis and
--- credential-redis data. deception_type and role come from applicant-redis (TTL 60 min,
--- NULL when the entry has expired by ETL run time).
+-- credential-redis data. deceptions (JSON array) and role come from applicant-redis (TTL 60 min,
+-- NULL/empty when the entry has expired by ETL run time).
 CREATE TABLE IF NOT EXISTS fact_applicants (
-    applicant_id    TEXT        PRIMARY KEY,
-    session_id      UUID,
-    credential_id   TEXT,
-    deception_type  TEXT,
-    role            TEXT,
-    queue_position  INT,
-    action          TEXT,
-    presented_at    TIMESTAMPTZ,
-    resolved_at     TIMESTAMPTZ,
-    etl_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    applicant_id  TEXT        PRIMARY KEY,
+    session_id    UUID,
+    credential_id TEXT,
+    deceptions    TEXT,
+    role          TEXT,
+    queue_position INT,
+    action        TEXT,
+    presented_at  TIMESTAMPTZ,
+    resolved_at   TIMESTAMPTZ,
+    etl_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-ALTER TABLE fact_applicants ADD COLUMN IF NOT EXISTS deception_type TEXT;
+-- Rename deception_type -> deceptions if upgrading from a previous ETL run.
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+               WHERE table_name='fact_applicants' AND column_name='deception_type') THEN
+        ALTER TABLE fact_applicants RENAME COLUMN deception_type TO deceptions;
+    END IF;
+END $$;
+ALTER TABLE fact_applicants ADD COLUMN IF NOT EXISTS deceptions TEXT;
 ALTER TABLE fact_applicants ADD COLUMN IF NOT EXISTS role TEXT;

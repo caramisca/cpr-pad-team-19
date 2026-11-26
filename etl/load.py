@@ -66,7 +66,7 @@ def load_all(data):
                  "applicants_processed", "correct_decisions", "incorrect_decisions", "score"])
 
         _upsert(conn, "fact_applicants", data["fact_applicants"], "applicant_id",
-                ["applicant_id", "session_id", "credential_id", "deception_type", "role",
+                ["applicant_id", "session_id", "credential_id", "deceptions", "role",
                  "queue_position", "action", "presented_at", "resolved_at"])
 
         conn.commit()
