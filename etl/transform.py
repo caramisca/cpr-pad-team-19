@@ -125,7 +125,10 @@ def _applicants(queue_rows, cred_by_applicant, redis_applicant):
             "applicant_id":   str(r[2]),
             "session_id":     str(r[1]) if r[1] else None,
             "credential_id":  cred_by_applicant.get(str(r[2]), {}).get("id"),
-            "deception_type": redis_applicant.get(str(r[2]), {}).get("deceptionType"),
+            # deceptions is a JSON array in applicant-redis (e.g. ["FALSE_FACULTY_CLAIM"]).
+            # Store as a JSON text so all values are preserved; NULL when the Redis key expired.
+            "deceptions":     json.dumps(redis_applicant[str(r[2])]["deceptions"])
+                              if str(r[2]) in redis_applicant else None,
             "role":           redis_applicant.get(str(r[2]), {}).get("role"),
             "queue_position": r[3],
             "action":         r[4],
