@@ -102,9 +102,12 @@ The Gateway's and the broker's circuit breakers do not count a 503 against the i
 
 ## Measured
 
-Not measured yet. The numbers and the evidence file
-(`evidence/lab5-moderation-dms-failover-<date>.json`) are added after the first run of the check
-below against the full Compose stack.
+An isolated run on 26 November 2026 used CPR commit `152ec94` and published `0.6.0` images.
+Moderation PostgreSQL resumed writes after 22.1 seconds. It retained the committed marker and
+the former primary rejoined as a replica. DMS Redis writes remained unavailable at the 90-second
+timeout. Sentinel logged that it could not resolve the stopped primary `dms-redis-1`. DMS
+returned to healthy after that container was restarted. Track correction and retest in
+[#320](https://github.com/caramisca/cpr-pad-team-19/issues/320).
 
 ## Start and check
 

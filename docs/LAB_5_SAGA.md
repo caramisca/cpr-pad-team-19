@@ -130,8 +130,11 @@ The coordinator's log lines: `docker compose logs gateway-service | grep Saga`.
 
 ## Measured
 
-Not measured yet. The table and the evidence file (`evidence/lab5-saga-<date>.json`) are added
-after the first run of the check above against the full Compose stack with the 0.6.0 images.
+The 26 November 2026 isolated run at CPR commit `152ec94` verified compensation and recovery
+after stopping Gateway between the first and second steps. The saga completed 10.3 seconds after
+Gateway restarted. Refusal and API checks also passed. The published Gateway passed completion
+and replay when rerun with a local diagnostic sorting correction. The repository script still
+needs to handle `step: null` in its log sort before its unmodified complete/replay checks can pass.
 
 ## Notes
 

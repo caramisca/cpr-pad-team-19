@@ -20,9 +20,10 @@ these copies.
   one per kind of deception, holding the bundles seeded by credential-service and using the demo
   students of university-record-service. They do not expire before 2027-09-01.
 
-The shared `docker-compose.yml` runs `seed.sh` as the one-shot `applicant-seed` container before the
-service starts, and runs Redis with append-only persistence on the `applicant-redis-data` volume. To
-seed a Redis by hand:
+The shared `docker-compose.yml` runs `seed.sh` as the one-shot `applicant-seed` container.
+It connects through `applicant-redis:6379`, the HAProxy endpoint for the current primary. The three
+Redis members have separate append-only volumes and Sentinel elects a replica after a primary
+failure. See [Lab 5 Redis failover](../../LAB_5_MIHAI.md). To seed a standalone Redis by hand:
 
 ```bash
 REDIS_HOST=localhost REDISCLI_AUTH=<password> sh docs/db/applicant-service/seed.sh
