@@ -12,7 +12,8 @@ message-broker (contracts/two-phase.md, docs/LAB_5_TWO_PHASE_COMMIT.md). Five sc
 4. coordinator crash: the broker killed after writing the decision, before phase 2 -> after its
    restart it finishes the commit from its log;
 5. database failover: the primary of player-postgres killed while the transaction is prepared ->
-   the new primary has it (synchronous replication) and the broker commits it there.
+   the new primary has it (synchronous replication) and the broker commits it there. If the close
+   request times out waiting for the broker, the check verifies the final shift state independently.
 
 Scenarios 3-5 kill something between the decision and phase 2, so the broker must run with
 BROKER_TWO_PHASE_PHASE_TWO_DELAY_SECONDS (e.g. 4): the coordinator then waits that long after the
@@ -318,26 +319,38 @@ def database_failover(check: Check) -> dict:
     result: dict = {"scenario": "database-failover", "errors": []}
     moderator = check.register()
     session = check.open_shift(moderator, [])
+    primary = check.leader("player")
+    if primary is None:
+        raise RuntimeError("player-postgres had no primary before closing the shift")
     since = now_iso(-1)
     closing = Background(check, session)
     transaction = decided(check, since)
     transaction_id = transaction["transactionId"]
-    primary = check.leader("player")
+    if transaction["state"] != "COMMITTED" or transaction["completed"]:
+        raise RuntimeError("expected a persisted commit decision with phase two still pending")
     check.run("kill", primary)
     killed = time.monotonic()
     result["transactionId"], result["primaryKilled"] = transaction_id, primary
-    status, body = closing.result()
-    result["closeStatus"] = status
-    expect(result, "close answered 200 (session committed its part)", status == 200, body)
-    done = check.wait_until("the commit on the new primary", lambda: (
-        lambda t: t if t and t["completed"] else None)(check.transaction(transaction_id)), timeout=150, interval=2)
-    result["completedAfterKillSeconds"] = round(time.monotonic() - killed, 1)
-    result["coordinator"] = done
-    result["primaryAfter"] = check.leader("player")
-    expect(result, "another member is the primary", result["primaryAfter"] not in (None, primary), result["primaryAfter"])
-    expect(result, "moderator credited once on the new primary", check.shifts(moderator) == 1)
-    expect(result, "no prepared transaction left", not check.prepared("player"))
-    check.run("start", primary)
+    try:
+        status, body = closing.result()
+        result["closeStatus"] = status
+        if status != 200:
+            result["closeBody"] = body
+        broker_unavailable = status == 503 and isinstance(body, dict) and body.get("error") == "DEPENDENCY_UNAVAILABLE"
+        expect(result, "close answered 200 or 503 DEPENDENCY_UNAVAILABLE", status == 200 or broker_unavailable, body)
+        result["primaryAfter"] = check.wait_until("a different player-postgres primary", lambda: (
+            lambda leader: leader if leader != primary else None)(check.leader("player")), timeout=90, interval=2)
+        done = check.wait_until("the commit on the new primary", lambda: (
+            lambda t: t if t and t["completed"] else None)(check.transaction(transaction_id)), timeout=150, interval=2)
+        result["completedAfterKillSeconds"] = round(time.monotonic() - killed, 1)
+        result["coordinator"] = done
+        expect(result, "recovered as COMMITTED", done["state"] == "COMMITTED")
+        row = check.session_row(session)
+        expect(result, "session closed by the transaction", row == {"status": "CLOSED", "closeTransactionId": transaction_id}, row)
+        expect(result, "moderator credited once on the new primary", check.shifts(moderator) == 1)
+        expect(result, "no prepared transaction left", not check.prepared("player") and not check.prepared("session"))
+    finally:
+        check.run("start", primary)
     try:
         check.wait_until(f"{primary} back as a standby", lambda: any(
             m["Member"] == primary and m.get("State") == "streaming" for m in check.members("player")), timeout=120, interval=2)
