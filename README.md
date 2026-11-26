@@ -4,13 +4,208 @@ Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (
 
 A distributed system of eight domain services, Gateway, Service Discovery and Message Broker powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
+## Laboratory 5: sharding and replication
+
+[![Lab 5 architecture overview. The client enters through the Gateway, which uses a sharded Redis cache and coordinates Saga. The Broker coordinates 2PC. ETL reads eight operational stores and loads the PostgreSQL warehouse.](docs/architecture-diagram-lab5-overview.png)](docs/architecture-diagram-lab5.png)
+
+[Open the full deployment diagram](docs/architecture-diagram-lab5.png) ·
+[Deployment details and service counts](#laboratory-5-the-complete-deployment) ·
+[Full Mermaid source](docs/architecture-diagram-lab5.mmd) and [overview source](docs/architecture-diagram-lab5-overview.mmd)
+
+### Start the demonstration stack
+
+Create `.env` from [`.env.example`](.env.example) and set the local database passwords, two
+distinct `GATEWAY_API_KEYS` clients, `GATEWAY_WS_TICKET_SECRET` and `GATEWAY_CACHE_PASSWORD`.
+Keep `DMS_PUBLIC_WS_URL` aligned with the published DMS endpoint for the WebSocket demo.
+The overlays enable the Applicant, Credential, Moderation and DMS gRPC adapters, the
+Gateway cache and the monitoring profile. Run these PowerShell commands from the CPR root.
+
+```powershell
+$env:COMPOSE_PROJECT_NAME = 'pad-lab5-demo'
+$env:COMPOSE_PROFILES = 'monitoring'
+$env:COMPOSE_FILE = @(
+    'docker-compose.yml', 'docker-compose.lab4-mihai.yml',
+    'docker-compose.lab4-andi.yml', 'docker-compose.lab5-cache.yml',
+    'docker-compose.monitoring.yml'
+) -join [IO.Path]::PathSeparator
+docker compose up -d --pull always --wait
+```
+
+Use a dedicated Compose project for the failure tests. They intentionally stop members of
+the clusters. If another project already owns a Redis HA subnet, choose a free
+`REDIS_HA_IP_PREFIX` or `DMS_REDIS_HA_IP_PREFIX` in `.env`.
+
+### Grade 1 · Start and inspect the system
+
+Run `docker compose ps -a` and open [Gateway health](http://localhost:8080/health).
+The application replicas should be running. The three one-shot jobs for Applicant, Credential
+and Rules MongoDB should exit with code 0. Open [Prometheus targets](http://localhost:9090/targets)
+and the [Grafana dashboard](http://localhost:3000/d/lab4-services) to inspect the live services.
+
+### Grade 2 · Account for the existing architecture
+
+Start at the [full deployment diagram](docs/architecture-diagram-lab5.png) and trace HTTP,
+gRPC, event delivery, WebSocket chat and SSE. The diagram labels the Gateway's public and
+private listeners, Service Discovery, the Message Broker, the eight domain services and
+their replicas, seed jobs, health probes, and the volumes that hold the Broker and Gateway logs.
+Use `docker compose config --services` and `docker compose ps -a` to match the components
+shown in the diagram to the configured services and running containers.
+
+### Grade 3 · Trace the new analytics and cache components
+
+Trace two paths in the diagram. The first is eight operational stores → `etl` →
+the `warehouse-db` PostgreSQL database. The second is client → Gateway → the Redis cache
+shards. The warehouse stores facts and dimensions for analytics. The cache stores
+short-lived GET responses and API client lookups for the request path.
+
+### Grade 4 · Run ETL and read the warehouse
+
+The [ETL job](etl/main.py) reads four PostgreSQL clusters, the Rules MongoDB replica set and
+three Redis groups. It joins Session queue rows with Applicant and Credential data and maps
+DMS notification counts to `dim_services`. It preserves every value in an Applicant's
+`deceptions` array and the `role` from Redis. The [warehouse schema](etl/schema.sql) declares
+three fact tables and four dimensions. The [loader](etl/load.py) uses primary-key upserts
+so a repeat run updates the same rows.
+
+```powershell
+docker compose logs --tail 45 etl
+docker compose exec -T warehouse-db psql -U warehouse -d warehouse -c "SELECT role, deceptions FROM fact_applicants WHERE deceptions IS NOT NULL LIMIT 5;"
+docker compose exec -T warehouse-db psql -U warehouse -d warehouse -c "SELECT notification_count, etl_at FROM dim_services WHERE service_name = 'discord-dms-service';"
+```
+
+Generate a shift and a verdict before reading the warehouse to produce reportable data.
+Look for `ETL run completed` and next-run `Upserted` messages. Repeat the queries after
+another `ETL_INTERVAL_SECONDS` interval with the source data stable. Check that the
+values and counts are preserved and that `etl_at` advances.
+
+### Grade 5 · Fail over the replicated stores
+
+Player, Session, University Record and Moderation use three-member PostgreSQL/Patroni clusters.
+Rules uses a three-member MongoDB replica set. Applicant, Credential and DMS use three-member
+Redis groups with Sentinel and stable HAProxy service names. DMS runs Sentinel and its Redis
+members on a private network with fixed addresses so a stopped Redis member can still be
+identified during the election.
+
+```powershell
+python scripts/check_postgres_failover.py
+python scripts/check_redis_failover.py --project $env:COMPOSE_PROJECT_NAME --env-file .env
+python scripts/check_moderation_dms_failover.py
+docker compose logs --tail 100 dms-redis-sentinel-1 dms-redis-sentinel-2 dms-redis-sentinel-3
+```
+
+Look for the old and promoted primary, the time until writes resume, the retained marker
+and the old primary rejoining as a replica. For the other stores use the
+[PostgreSQL runbook](docs/LAB_5_DATABASE_FAILOVER.md),
+[Moderation/DMS runbook](docs/LAB_5_MODERATION_DMS_FAILOVER.md),
+[Rules runbook](docs/db/server-rules-service/README.md) and
+[University Record runbook](docs/db/university-record-service/README.md).
+
+### Grade 6 · Cache GET responses and authentication
+
+The Gateway caches selected successful GET responses with the API client included in the
+cache key. A successful write invalidates cached responses by advancing the generation.
+Valid API key lookups have a separate hashed key and TTL. In the
+[Gateway Cache Postman collection](docs/postman/gateway-cache.postman_collection.json),
+set two valid client keys in `apiKey` and `secondApiKey`. Look for `X-Cache: MISS`,
+then `HIT`, a separate `MISS` for the second client and updated data after a write.
+
+```powershell
+docker compose exec -T cache-redis-1 redis-cli --scan --pattern 'gateway:auth:*'
+```
+
+Repeat the Redis scan on the other two shards if needed. Send a valid authenticated
+request immediately before scanning to stay within the auth TTL. Redis stores hashed
+cache keys. Keep Bearer credentials out of logs and screenshots.
+
+### Grade 7 · Add a cache shard without restarting Gateway
+
+The Gateway hashes keys onto a ring of virtual nodes. Adding a node moves a portion of the
+keys to the new shard. The cache overlay starts three independent Redis nodes and provides
+a fourth through the `cache-extra` profile.
+
+```powershell
+docker compose --profile cache-extra up -d cache-redis-4
+docker compose logs -f gateway-service
+```
+
+Add `cache-redis-4:6379` to `docker/gateway-cache/nodes.txt`, or to the equivalent file in
+`GATEWAY_CACHE_CONFIG_DIR` if you set it. Look for `Gateway cache ring updated: 4 Redis nodes`.
+Issue authenticated GETs with different query strings, then run
+`docker compose exec -T cache-redis-4 redis-cli DBSIZE` and show that the new shard holds
+keys. Remove the line from `nodes.txt`, watch the log return to three nodes, then stop the
+optional fourth shard. The same Gateway container handles both changes.
+
+### Grade 8 · Close a shift with two-phase commit
+
+`POST /sessions/{id}/close` uses the Message Broker as coordinator. Session and Player
+prepare their database updates and receive the persisted commit or abort decision.
+The [2PC check](scripts/check_two_phase_commit.py) covers commit, a negative vote,
+participant crash, coordinator crash and PostgreSQL failover while prepared.
+
+Set `BROKER_TWO_PHASE_PHASE_TWO_DELAY_SECONDS=4` in `.env` so the crash probes can stop
+a participant or coordinator between phases. Apply the setting and run the check.
+
+```powershell
+docker compose up -d --no-deps --wait message-broker
+python scripts/check_two_phase_commit.py --scenario all
+docker compose logs --tail 80 message-broker
+```
+
+For an isolated failover run, increase the delay to 12 seconds if the broker starts
+phase two before Docker can stop the primary. Run the check with
+`--scenario database-failover`. During recovery the initial close request can return
+`503 DEPENDENCY_UNAVAILABLE`. Inspect the broker's persisted outcome and
+`GET /sessions/{id}` to confirm the same shift closes, the moderator receives credit
+once and the prepared transactions are cleared.
+
+Show the committed or aborted outcome and the state in both services. The
+[2PC runbook](docs/LAB_5_TWO_PHASE_COMMIT.md) and [contract](contracts/two-phase.md)
+describe the endpoints and failure cases.
+
+### Grade 9 · Run and recover a verdict saga
+
+`POST /sagas/decision-verdicts` makes the Gateway record a moderation decision, enqueue a
+DMS notification and confirm the decision. Each step commits independently. The Gateway
+stores progress in SQLite, compensates completed steps in reverse order when needed and
+resumes after a restart. Repeating an `Idempotency-Key` returns the existing Saga.
+
+Set `GATEWAY_SAGA_STEP_DELAY_SECONDS=4` in `.env` for the crash window. Apply it and
+run all six scenarios.
+
+```powershell
+docker compose up -d --no-deps --wait gateway-service
+python scripts/check_saga.py --scenario all
+docker compose logs --tail 80 gateway-service
+```
+
+Show completion, replay, credential rejection, compensation while DMS is unavailable,
+Gateway restart recovery and the API checks. The [Saga runbook](docs/LAB_5_SAGA.md)
+and [contract](contracts/saga.md) describe the states and DTOs. Set both demo delays back
+to `0` and recreate Gateway and Broker after demonstrating the crash cases.
+
+### Grade 10 · Verify the delivery
+
+Run [the Postman collections](docs/postman) against the Gateway and run the internal
+diagnostic folders from the Compose network. Check application image tags and public
+manifests, then inspect Prometheus and Grafana.
+
+```powershell
+python scripts/check_lab4_release.py --require-published
+python scripts/check_lab4_monitoring.py --scope team
+docker compose images
+```
+
+The [service API reference in this README](#endpoint-contracts), the
+[2PC contract](contracts/two-phase.md) and the [Saga contract](contracts/saga.md) record
+the endpoint and DTO details. Compare the diagram with the stack actually run and use the
+collection assertion counts, failed assertions and image digests as presentation evidence.
+
 ## Laboratory 4: Breaking and Brokering
 
-The common Compose configuration pins **all eleven application images to 0.5.0**. The
-published images have linux/amd64 and linux/arm64 manifests. Source gitlinks pin reviewed
-service main commits; private repository main tips still require confirmation by their owners.
-The [current acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records exact commits,
-test results and the remaining release gates. These version pins alone do not certify Lab 4.
+The common Compose configuration pins each application image to its verified release. The
+release checks verify linux/amd64 and linux/arm64 manifests and compare each pinned tag with
+`latest`. Source gitlinks pin individual service commits.
+The [Lab 4 acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records the 12 November commits and test results.
 
 Start the complete documented Lab 4 mode after creating `.env` from `.env.example` and setting
 local credentials. Set `BROKER_GRPC_URL=message-broker:9091`,
@@ -30,14 +225,13 @@ gRPC ports, logs, metrics and health endpoints stay inside the Compose network.
 | Component | Current implementation |
 |---|---|
 | Gateway | Optional gRPC `MessageBroker.Call` for Applicant/Credential/Rules/Record; other client routes and Session SSE still use HTTP. `GET /logs` downloads correlated NDJSON; retired internal event routes are blocked |
-| Broker 0.5.0 main | Thread-per-request gRPC; service-instance selection and breakers; per-subscriber topic fan-out, SQLite topic queues and DLC; `/topics` and `/dead-letters` |
-| Broker current dev | PR #11 adds in-memory subscriber request queues, default Rules/Record only; a new release is pending |
+| Broker | Thread-per-request gRPC, instance selection and breakers, per-subscriber topic fan-out, SQLite topic queues and dead letters. Release `0.6.0` adds in-memory subscriber request queues for Rules and Record by default. |
 | Service Discovery | Physical instance registry with topic subscriptions; broker uses instance and topic lookups over the HTTP control plane |
-| Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled by the Mihai overlay |
+| Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled in the base Compose |
 | Player / Session (Daria) | gRPC adapters, topic consumers and Session publisher; broker dependency modes configured in `.env` |
 | Moderation / DMS (Andi) | gRPC adapters, outbox/consumers, private logs/metrics and DMS Redis chat relay; enabled by the Andi overlay |
 | Rules / Record (Diana) | gRPC adapters; both require `BROKER_GRPC_URL=message-broker:9091` at startup (configured in base Compose) |
-| Monitoring | All eight domain services scraped per replica plus Broker/Prometheus. Dashboard coverage and P95 still have gaps documented in the report |
+| Monitoring | All eight domain services scraped per replica, plus Broker and Prometheus. Gateway and Service Discovery have blackbox health probes. |
 
 ```mermaid
 flowchart LR
@@ -54,9 +248,9 @@ flowchart LR
   GRAF[Grafana] --> PROM
 ```
 
-The diagram shows the current mixed transport. Subscriber request queues in Broker dev do not
-yet cover every Gateway route. Live service-load feeding and same-call rerouting remain
-unverified/incomplete; do not claim all cumulative grade criteria from a successful basic flow.
+The diagram shows the current mixed transport. Broker request queues cover Rules and Record by
+default. The broker skips instances with open circuits on subsequent calls. Feeding live service
+load into the selector and retrying a failed call on another instance remain Lab 4 follow-ups.
 
 Use the [Lab 4 runbook](docs/LAB_4_RUNBOOK.md), [message contract](docs/MESSAGE_BROKER_CONTRACT.md),
 [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md) and
@@ -312,6 +506,193 @@ most.
 
 ## Architecture Diagram
 
+### Laboratory 5: the complete deployment
+
+[Open the high-resolution deployment diagram](docs/architecture-diagram-lab5.png).
+
+The diagram below shows every container of the common Compose configuration (`docker-compose.yml`,
+plus `docker-compose.monitoring.yml` for the monitoring profile and `docker-compose.lab5-cache.yml`
+for the Gateway cache) and every port inside the Compose network. Only the Gateway's `8080` and the
+DMS WebSocket port `8088` are published to the host;
+Prometheus (`9090`) and Grafana (`3000`) are published on `127.0.0.1` only. The source is kept in
+[`docs/architecture-diagram-lab5.mmd`](docs/architecture-diagram-lab5.mmd).
+
+- **Thin arrows:** synchronous calls.
+- **Dashed arrows:** the direct WebSocket connection and the control traffic of the coordinators
+  (Sentinel, etcd).
+- **Thick arrows:** the two distributed transactions:
+  - the decision-verdict **saga**, coordinated by the Gateway
+    ([`contracts/saga.md`](contracts/saga.md));
+  - the shift-close **two-phase commit**, coordinated by the message broker
+    ([`contracts/two-phase.md`](contracts/two-phase.md)).
+- **Instance counts:** `x2` marks the replicas each service runs by default (the `*_REPLICAS`
+  variables in `.env.example`).
+- **Replicated stores:** each has three members. Patroni clusters have one primary, one
+  synchronous standby and one asynchronous standby. `rules-mongo` is a replica set, and
+  Redis groups for DMS, Applicant and Credential each have one primary and two replicas.
+  Sentinels elect primaries and HAProxy exposes stable addresses. The optional Gateway cache
+  uses independent Redis shards for GET responses and authentication metadata.
+
+```mermaid
+flowchart TB
+  CLIENT["Client<br/>Postman, Discord-side tools"]
+
+  subgraph EDGE["Edge"]
+    GW["gateway-service<br/>public :8080 (API key), internal :8090 (Compose network only)<br/>routing, load balancing, circuit breakers, discovery snapshot cache<br/>saga coordinator: decision-verdict"]
+    GWDATA[("gateway-data<br/>SQLite saga log")]
+    subgraph CACHE["Gateway cache overlay (Grades 6 and 7)"]
+      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards")]
+      SHARD4[("cache-redis-4 :6379<br/>profile cache-extra, joins the ring<br/>once listed in nodes.txt")]
+    end
+  end
+
+  subgraph PLATFORM["Platform"]
+    SD["service-discovery :8089<br/>instance registry, topic subscriptions,<br/>health checks, Discord / Telegram alerts"]
+    MB["message-broker<br/>HTTP :8091, gRPC :9091<br/>Call routing, topic fan-out, dead letters,<br/>two-phase commit coordinator"]
+    MBDATA[("broker-data<br/>SQLite topic queues, dead letters, 2PC log")]
+  end
+
+  subgraph MON["Monitoring (profile monitoring)"]
+    PROM["prometheus :9090<br/>published on 127.0.0.1"]
+    GRAF["grafana :3000<br/>published on 127.0.0.1"]
+    BBX["blackbox-exporter :9115<br/>HTTP probes of /health"]
+  end
+
+  subgraph SERVICES["Domain services: every instance registers with service-discovery"]
+    PS["player-service x2<br/>HTTP :8081, gRPC :9081"]
+    SS["server-moderation-session-service x2<br/>HTTP :8082, gRPC :9082"]
+    AS["applicant-service x2<br/>HTTP :8083, gRPC :9083"]
+    CS["credential-service x2<br/>HTTP :8084, gRPC :9084"]
+    RS["server-rules-service x2<br/>HTTP :8085, gRPC :9085"]
+    US["university-record-service x2<br/>HTTP :8086, gRPC :9086"]
+    MS["moderation-service x2<br/>HTTP :8087, gRPC :9087"]
+    DS["discord-dms-service and discord-dms-service-replica<br/>HTTP + WebSocket :8088 (published by discord-dms-service), gRPC :9088"]
+  end
+
+  subgraph DATA["Data stores: Database-per-Service, private to the Compose network"]
+    ETCD["postgres-etcd-1..3 :2379<br/>leader locks of the four Patroni clusters"]
+
+    subgraph PPG["player-postgres: Patroni"]
+      PPGH["HAProxy player-postgres :5432<br/>health :8404"] --> PP1[("player-postgres-1<br/>primary")]
+      PP1 -->|"WAL, synchronous"| PP2[("player-postgres-2<br/>sync standby")]
+      PP1 -->|"WAL"| PP3[("player-postgres-3<br/>standby")]
+    end
+
+    subgraph SPG["session-postgres: Patroni"]
+      SPGH["HAProxy session-postgres :5432"] --> SP1[("session-postgres-1<br/>primary")]
+      SP1 -->|"WAL, synchronous"| SP2[("session-postgres-2<br/>sync standby")]
+      SP1 -->|"WAL"| SP3[("session-postgres-3<br/>standby")]
+    end
+
+    subgraph RPG["record-postgres: Patroni"]
+      RPGH["HAProxy record-postgres :5432"] --> RP1[("record-postgres-1<br/>primary")]
+      RP1 -->|"WAL, synchronous"| RP2[("record-postgres-2<br/>sync standby")]
+      RP1 -->|"WAL"| RP3[("record-postgres-3<br/>standby")]
+    end
+
+    subgraph MPG["moderation-postgres: Patroni"]
+      MPGH["HAProxy moderation-postgres :5432"] --> MP1[("moderation-postgres-1<br/>primary")]
+      MP1 -->|"WAL, synchronous"| MP2[("moderation-postgres-2<br/>sync standby")]
+      MP1 -->|"WAL"| MP3[("moderation-postgres-3<br/>standby")]
+    end
+
+    subgraph RMG["rules-mongo: replica set rs0"]
+      RM1[("rules-mongo-1 :27017<br/>primary")] -->|"oplog"| RM2[("rules-mongo-2<br/>secondary")]
+      RM1 -->|"oplog"| RM3[("rules-mongo-3<br/>secondary")]
+    end
+
+    subgraph DRD["dms-redis: Sentinel"]
+      DRS["dms-redis-sentinel-1..3 :26379<br/>master name dms-redis, quorum 2"]
+      DRH["HAProxy dms-redis :6379<br/>to the member with role:master"]
+      DR1[("dms-redis-1 :6379<br/>primary, fixed address")] -->|"replication, async"| DR2[("dms-redis-2<br/>replica")]
+      DR1 -->|"replication, async"| DR3[("dms-redis-3<br/>replica")]
+      DRS -.->|"monitor, promote"| DR1
+      DRH --> DR1
+    end
+
+    subgraph ACRED["Applicant and Credential Redis HA (Grade 5)"]
+      AR["HAProxy applicant-redis :6379"]
+      CR["HAProxy credential-redis :6379"]
+      AM[("applicant-redis-1..3<br/>elected primary and two replicas")]
+      CM[("credential-redis-1..3<br/>elected primary and two replicas")]
+      ACS["redis-sentinel-1..3 :26379<br/>quorum 2 for each group"]
+      AR -->|elected primary| AM
+      CR -->|elected primary| CM
+      ACS -.->|monitor and promote| AM
+      ACS -.->|monitor and promote| CM
+    end
+  end
+
+  subgraph ANALYTICS["Analytics (Lab 5, Grade 4)"]
+    ETL["etl (pad-etl)<br/>scheduled, every ETL_INTERVAL_SECONDS"]
+    WH[("warehouse-db :5432<br/>PostgreSQL star schema")]
+  end
+
+  subgraph SETUP["One-shot setup jobs: run once at start, exit 0"]
+    SEED["applicant-seed, credential-seed<br/>load the demo data of docs/db/ into an empty Redis"]
+    RMSET["rules-mongo-setup<br/>rs.initiate of rs0"]
+  end
+
+  CLIENT -->|"HTTP + API key"| GW
+  CLIENT -.->|"WebSocket chat, ticket from POST /ws/negotiate"| DS
+
+  GW -->|"HTTP: player, session, moderation, DMS; SSE"| SERVICES
+  GW -->|"gRPC MessageBroker.Call: applicant, credential, rules, record"| MB
+  SERVICES -->|"service-to-service HTTP through :8090"| GW
+  MB <-->|"gRPC Call / Publish / Deliver"| SERVICES
+  GW ==>|"saga steps 1 and 3: /internal/sagas/{id}/decision"| MS
+  GW ==>|"saga step 2: /internal/sagas/{id}/notification"| DS
+  SS ==>|"POST /two-phase/transactions"| MB
+  MB ==>|"2PC prepare / commit / abort"| PS
+  MB ==>|"2PC prepare / commit / abort"| SS
+  GW --- GWDATA
+  GW -->|"consistent hash: GET responses and auth metadata"| SHARDS
+  GW -->|"once listed in nodes.txt"| SHARD4
+  MB --- MBDATA
+
+  SERVICES -->|"register, heartbeat, subscriptions"| SD
+  GW -->|"instance lookup"| SD
+  MB -->|"instance + topic lookup"| SD
+  PROM -->|"scrape /metrics per replica"| SERVICES
+  PROM -->|"scrape /metrics"| MB
+  GRAF --> PROM
+  PROM -->|"probe"| BBX
+  BBX -->|"GET /health"| GW
+  BBX -->|"GET /health"| SD
+
+  PS --> PPGH
+  SS --> SPGH
+  US --> RPGH
+  MS --> MPGH
+  RS -->|"replica set URI"| RM1
+  AS --> AR
+  CS --> CR
+  DS -->|"dms-redis:6379"| DRH
+  PPG & SPG & RPG & MPG <-.->|"leader lock"| ETCD
+
+  ETL -->|"read-only: 4 Postgres and 3 Redis HAProxys, rs0 URI"| DATA
+  ETL -->|"INSERT ... ON CONFLICT"| WH
+  SEED --> AR
+  SEED --> CR
+  RMSET -->|"mongosh"| RM1
+```
+
+| Component | Ports (Compose network) | Replicas / members | Coordinator or failover mechanism |
+|---|---|---|---|
+| `gateway-service` | `8080` public (API key), `8090` internal | 1 (owns the saga log) | Saga coordinator, `gateway-data` SQLite log, recovery loop |
+| `message-broker` | HTTP `8091`, gRPC `9091` | 1 | Two-phase commit coordinator, `broker-data` SQLite log |
+| `service-discovery` | `8089` | 1 | Health checks and alerts |
+| Domain services | HTTP `8081`-`8088`, gRPC `9081`-`9088` | 2 each | Registered per instance; the Gateway and the broker pick instances |
+| `player-postgres`, `session-postgres`, `record-postgres`, `moderation-postgres` | `5432` (HAProxy), `8008` (Patroni REST), `8404` (HAProxy health) | 3 each | Patroni with the `postgres-etcd-1..3` leader lock (`2379`) |
+| `rules-mongo` | `27017` | 3 (`rs0`) | MongoDB replica set election |
+| `dms-redis` | `6379` (HAProxy and members), `26379` (Sentinels) | 3 members, 3 Sentinels | Redis Sentinel, quorum 2 |
+| `applicant-redis`, `credential-redis` | `6379` (HAProxy and members), `26379` (Sentinels) | 3 members per group, 3 shared Sentinels | Redis Sentinel, quorum 2; session-scoped data, AOF on |
+| Gateway cache overlay | `6379` per shard | 3 shards, optional fourth | Gateway-side consistent hashing for GET responses and authentication data |
+| `warehouse-db`, `etl` | `5432` | 1 each | Idempotent loads, a source outage only skips that source |
+| Prometheus, Grafana | `9090`, `3000` (on `127.0.0.1`) | 1 each | Profile `monitoring` |
+
+### Laboratory 1-3: layered view
+
 Solid arrows represent synchronous REST requests in the request path (all routed via the API Gateway).
 Dashed arrows represent asynchronous domain events delivered through the message broker. The dotted
 arrow denotes direct client WebSocket streaming following Gateway ticket negotiation.
@@ -329,6 +710,9 @@ arrow denotes direct client WebSocket streaming following Gateway ticket negotia
 | `gateway-service` | `moderation-service` | Sync REST | Forward decision evaluation calls (`/decisions/**`) |
 | `gateway-service` | `player-service` | Sync REST | Forward player profile and rank queries (`/players/**`) |
 | `gateway-service` | `message-broker` $\rightarrow$ `player-service`, `server-moderation-session-service` | gRPC `Call` (Lab 4) | Every client endpoint of both services can also be served through the broker, with the same answers; the SSE stream `GET /sessions/{id}/events` stays direct REST |
+| `Moderator UI` | `gateway-service` | Sync REST (Lab 5) | Issue a verdict as one saga (`POST /sagas/decision-verdicts`) and follow it (`GET /sagas/{id}`, `GET /sagas`); [`contracts/saga.md`](contracts/saga.md) |
+| `gateway-service` (saga coordinator) | `moderation-service` | Sync REST (Lab 5) | Saga steps 1 and 3 and their compensation: `POST /internal/sagas/{id}/decision`, `/decision/confirm`, `/decision/compensate` |
+| `gateway-service` (saga coordinator) | `discord-dms-service` | Sync REST (Lab 5) | Saga step 2 and its compensation: `POST /internal/sagas/{id}/notification`, `/notification/cancel` |
 | `server-moderation-session-service` | `gateway-service` $\rightarrow$ `applicant-service` | Sync REST | Pull next queued applicant for current shift (Lab 4: or gRPC `MessageBroker.Call` through `message-broker`, `APPLICANT_CLIENT_MODE=broker`) |
 | `server-moderation-session-service` | `gateway-service` $\rightarrow$ `server-rules-service` | Sync REST | Fetch active ruleset in force for current session |
 | `applicant-service` | `gateway-service` $\rightarrow$ `credential-service` | Sync REST | Attach issued credential bundle to generated applicant |
@@ -338,9 +722,12 @@ arrow denotes direct client WebSocket streaming following Gateway ticket negotia
 | `moderation-service` | `gateway-service` $\rightarrow$ `university-record-service` | Sync REST | Verify registry enrollment standing for verdict |
 | `moderation-service` | `server-moderation-session-service` | Async event (broker topic, Lab 4) | `decision.recorded` advances shift queue |
 | `moderation-service` | `player-service` | Async event (broker topic, Lab 4) | `decision.evaluated` updates score, rank, penalties |
-| `moderation-service` | `discord-dms-service` | Async event | `verdict.issued` delivers the DM to the applicant |
+| `moderation-service` | `discord-dms-service` | Async event | `verdict.issued` delivers the DM to the applicant (not published for a saga decision: saga step 2 queues the DM) |
 | `server-moderation-session-service` | `discord-dms-service` | Async event (broker topic, Lab 4) | `session.started` and `session.closed` notify moderators |
-| `server-moderation-session-service` | `player-service` | Async event (broker topic, Lab 4) | `session.closed` credits the shift to the moderator and every junior moderator (`totalShifts`) |
+| `server-moderation-session-service` | `player-service` | Async event (broker topic, Lab 4) | `session.closed` credits the shift to the moderator and every junior moderator (`totalShifts`); with the Lab 5 two-phase close the shift is credited inside the commit and this event is skipped as already applied |
+| `server-moderation-session-service` | `message-broker` (two-phase commit coordinator) | Sync HTTP `POST /two-phase/transactions` (Lab 5) | Closing a shift (`SHIFT_CLOSE_MODE=two-phase`): one transaction across the session and player databases; the close waits for the decision ([`contracts/two-phase.md`](contracts/two-phase.md)) |
+| `message-broker` | `server-moderation-session-service`, `player-service` | gRPC `ServiceEndpoint.Call` (Lab 5) | Two-phase commit: phase 1 `POST /internal/two-phase/{id}/prepare` (the vote), phase 2 `commit` / `abort`, sent again until acknowledged |
+| `player-service`, `server-moderation-session-service` | `message-broker` | Sync HTTP `GET /two-phase/transactions/{id}` (Lab 5) | The participants' sweeper asks for the decision of a transaction prepared too long (`404` = presumed abort) |
 | `server-rules-service` | `discord-dms-service` | Async event | `ruleset.updated` announces a mid-shift rule change |
 
 Synchronous REST is routed centrally through the API Gateway, ensuring unified access logging, task
@@ -352,6 +739,14 @@ asynchronous via the message broker.
 `player-service` and `discord-dms-service` are never called synchronously by another service, and
 `discord-dms-service` never calls back into the domain. These two boundaries are deliberately kept
 event-driven so that a failure in scoring or in the Discord API cannot block a shift in progress.
+Lab 5 adds two exceptions:
+
+- the two-phase commit that closes a shift: the coordinator in `message-broker` calls
+  `player-service`'s internal participant routes while the close waits, and a NO vote or no answer
+  aborts the close (`409 SHIFT_CLOSE_ABORTED`) instead of blocking the shift.
+- the verdict saga: its coordinator in the Gateway calls `discord-dms-service` to queue (or cancel)
+  the verdict DM, and the DM is still delivered by the service's own worker, so the Discord API never
+  blocks the saga.
 
 ## Communication Contract
 
@@ -371,7 +766,7 @@ engine is picked per service based on the shape of the data it owns, not on team
 | `university-record-service` | PostgreSQL | Enrolments and faculties need referential integrity as the system of record. |
 | `moderation-service` | PostgreSQL | Decisions/verdicts/violations form the permanent audit trail and must not be lost. |
 | `discord-dms-service` | Redis | The outbox, the delivery queue, and the processed event ids must survive a restart so that retries continue and redelivered events are not sent twice; entries expire once they are no longer needed. |
-| `gateway-service` | In-Memory / Stateless | Routing table, concurrency control semaphores, and short-lived connection tickets; zero persistent storage required. |
+| `gateway-service` | In-Memory + SQLite (Lab 5) | Routing table, concurrency control semaphores, and short-lived connection tickets in memory. Since Lab 5 the saga coordinator keeps its write-ahead saga log in SQLite on the `gateway-data` volume, so a saga survives a Gateway restart. |
 
 All cross-service data access happens exclusively over the contract published below:
 
@@ -519,6 +914,11 @@ invalid, `404 Not Found` (`PLAYER_NOT_FOUND`) when `playerId` is not a registere
   (default `10s`) gets `504 Gateway Timeout` (`REQUEST_TIMEOUT`); a request while
   `MAX_CONCURRENT_TASKS` (default `20`) are running gets `503 Service Unavailable` (`SERVICE_BUSY`)
   with `Retry-After: 1`, straight away.
+- **Database unavailable** (Lab 5): while the replicated `player-postgres` fails over to a new
+  primary (about 20 s), a request that needs the database gets `503 Service Unavailable`
+  (`DATABASE_UNAVAILABLE`, "The database is unavailable right now; retry shortly") with
+  `Retry-After: 5`, within `DATABASE_CONNECTION_TIMEOUT_MS` (default 3 s); the same request succeeds
+  once the new primary is in place. A broker delivery that can't reach the database is answered `RETRY`.
 - **`GET /health`** (Lab 3): the status of this instance, polled by `service-discovery` at the
   `healthUrl` the instance registered; not routed through the Gateway, and never blocked by the task
   limit. `200 OK`, or `503 Service Unavailable` with `"status": "Unhealthy"` when PostgreSQL refuses
@@ -610,6 +1010,14 @@ Response `200 OK`:
   }
 }
 ```
+Response `404 Not Found` (`SESSION_NOT_FOUND`), `409 Conflict` (`SESSION_ALREADY_CLOSED`). **Lab 5
+(two-phase commit, `SHIFT_CLOSE_MODE=two-phase`, the Compose default):** the shift is closed in this
+service's database and credited to its moderators in `player-service`'s as one distributed
+transaction, coordinated by `message-broker` ([`contracts/two-phase.md`](contracts/two-phase.md)).
+`409 Conflict` (`SHIFT_CLOSE_ABORTED`): a participant refused (e.g. a moderator of the shift isn't a
+registered player) or didn't answer; the shift stays open and nothing changed anywhere.
+`503 Service Unavailable` (`DEPENDENCY_UNAVAILABLE`) with `Retry-After: 5`: no decision from the
+coordinator; the close may still complete, so read `GET /sessions/{id}` before closing again.
 
 **`GET /sessions/{id}/next-applicant`** — pull the next queued applicant.
 
@@ -719,6 +1127,10 @@ now stops the service at startup).
   after `TASK_TIMEOUT` (default `10s`); `503 Service Unavailable` (`SERVICE_BUSY`) with
   `Retry-After: 1` while `MAX_CONCURRENT_TASKS` (default `20`) requests are running. The SSE stream
   has its own limits (above).
+- **Database unavailable** (Lab 5): as in `player-service`, `503 Service Unavailable`
+  (`DATABASE_UNAVAILABLE`) with `Retry-After: 5` while the replicated `session-postgres` fails over;
+  an open SSE stream stays open and gets the session's current `state` again once the instances
+  receive each other's changes again.
 - **`GET /health`** (Lab 3): the status of this instance, polled by `service-discovery`; not routed
   through the Gateway, and never blocked by the task or stream limits. The same shape as
   `player-service`'s (with `"service": "server-moderation-session-service"`), plus the SSE streams:
@@ -1174,9 +1586,16 @@ Response `201 Created`, with a `Location: /decisions/{id}` header:
     "xpAwarded": "integer",
     "rulesetVersion": "integer",
     "evaluatedAt": "string (ISO-8601 datetime)"
+  },
+  "saga": {
+    "sagaId": "string (uuid)",
+    "state": "string (PENDING | CONFIRMED)"
   }
 }
 ```
+`saga` is `null` for a decision recorded through `POST /decisions`. For a decision recorded by the
+`decision-verdict` saga, it names the saga and how far it has got, on every route that returns the
+decision (see the saga participant routes below).
 Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `409 DUPLICATE_DECISION`,
 `415 UNSUPPORTED_MEDIA_TYPE`, `422 CREDENTIAL_NOT_FOUND`, `422 CREDENTIAL_APPLICANT_MISMATCH`,
 `503 NO_ACTIVE_RULESET`, `503 DEPENDENCY_UNAVAILABLE`.
@@ -1196,13 +1615,14 @@ Request:
 Response `200 OK`: same shape as the `POST /decisions` response, with `updatedAt` set. Sending the
 current action changes nothing.
 Errors: `400 VALIDATION_FAILED`, `400 MALFORMED_REQUEST`, `404 DECISION_NOT_FOUND`,
-`415 UNSUPPORTED_MEDIA_TYPE`.
+`409 DECISION_PENDING`, `415 UNSUPPORTED_MEDIA_TYPE`.
 
 **`DELETE /decisions/{id}`** — void a decision. It stays in the audit trail but is no longer
 returned, and the applicant can be decided again in the same session.
 
 Response `204 No Content`.
 Response `404 Not Found`: `DECISION_NOT_FOUND`, also for a decision that is already void.
+Response `409 Conflict`: `DECISION_PENDING`.
 
 **`GET /sessions/{id}/decisions`** — list the decisions of a session that are not void, oldest
 first. An unknown session returns an empty list.
@@ -1211,6 +1631,69 @@ Response `200 OK`:
 ```json
 { "sessionId": "string (uuid)", "decisions": [ "object (same shape as POST /decisions response)" ] }
 ```
+
+**Saga participant routes.** This service runs steps 1 and 3 of the Gateway's `decision-verdict`
+saga: `record-decision`, with its compensation, and `confirm-decision`. The routes are internal:
+the Gateway's public proxy does not route `/internal/**` (`404 ROUTE_NOT_FOUND`), and only its saga
+coordinator calls them. `{sagaId}` is the UUID the Gateway gives the saga; a path whose `sagaId` is
+not a UUID is `404 NOT_FOUND`. Every call is idempotent per `sagaId`, and accepts `X-Request-Id`
+like any other request.
+
+A saga decision is recorded `PENDING`, and its events are held back until the saga confirms it
+(semantic lock with deferred publication): no other service sees the decision before the saga has
+finished, so a compensation never has to be undone elsewhere. Meanwhile `PATCH /decisions/{id}` and
+`DELETE /decisions/{id}` refuse it with `409 DECISION_PENDING`; `GET` returns it with
+`"saga": { "state": "PENDING" }`. `verdict.issued` is not published when a saga records or confirms
+its decision, because step 2 of the saga queues the verdict DM in `discord-dms-service` itself; only
+a later `PATCH` of the confirmed decision publishes it, as for any amended decision.
+
+**`POST /internal/sagas/{sagaId}/decision`** — saga step `record-decision`: validate, gather the
+evidence and evaluate exactly as `POST /decisions` does, then store the decision and the saga's
+participation, `PENDING`, in one transaction, with no outbox event.
+
+Request: same body as `POST /decisions`.
+Response `201 Created`, with a `Location: /decisions/{id}` header: same shape as the
+`POST /decisions` response, with `"saga": { "sagaId": "...", "state": "PENDING" }`.
+Response `200 OK`, with an `Idempotent-Replay: true` header, when an earlier call for the saga has
+recorded the decision (`PENDING` or `CONFIRMED`): the stored decision, which is not evaluated or
+recorded again. Of concurrent calls for one saga, one records the decision and the others get this
+replay; there is never a second decision.
+Errors: those of `POST /decisions`, and `409 SAGA_COMPENSATED` when the saga has been compensated,
+also when the compensation arrived before this call.
+
+**`POST /internal/sagas/{sagaId}/decision/confirm`** — saga step `confirm-decision`, which the
+Gateway retries until it succeeds. No body. Writes the held events `decision.recorded` and
+`decision.evaluated` to the outbox, with the payloads and timestamps (the decision's `createdAt`)
+they have for an ordinary decision and the request ID of this call, and marks the participation
+`CONFIRMED`, in one transaction. `verdict.issued` is not written.
+
+Response `200 OK`, a `SagaDecisionStateResponse`:
+```json
+{
+  "sagaId": "string (uuid)",
+  "state": "string (CONFIRMED | COMPENSATED)",
+  "decisionId": "string (uuid) | null",
+  "updatedAt": "string (ISO-8601 datetime)"
+}
+```
+Confirming a `CONFIRMED` saga again answers the same and writes nothing.
+Errors: `404 SAGA_NOT_FOUND` (no decision recorded for the saga), `409 SAGA_COMPENSATED`.
+
+**`POST /internal/sagas/{sagaId}/decision/compensate`** — compensation of `record-decision`. No
+body. Always `200 OK` with a `SagaDecisionStateResponse` whose `state` is `COMPENSATED`, unless the
+database is unavailable:
+
+- `PENDING`: the decision is voided without an event, since nothing about it was published.
+- `CONFIRMED`: the decision is voided as by `DELETE /decisions/{id}`, publishing `decision.voided`
+  (not a second time when it was already deleted).
+- No decision recorded for the saga: a tombstone is stored instead (`decisionId` is `null`), so the
+  forward call, if it arrives later, gets `409 SAGA_COMPENSATED` and records nothing.
+- `COMPENSATED`: nothing changes.
+
+Calls for one saga that race (a forward call or `confirm` with its compensation, or the same call
+twice) end consistent: the saga never records a second decision; after a compensation, either the
+decision exists and is voided or the tombstone refuses it; and events are published only for a
+decision confirmed before its compensation, which then also publishes `decision.voided`.
 
 **`GET /health`** — the status of this instance: service and database health, and load
 ([see Status Endpoint](#status-endpoint)).
@@ -1245,6 +1728,18 @@ its calls to dependencies, and answered with `504 REQUEST_TIMEOUT`. When
 processed: it is answered at once with `503 TOO_MANY_REQUESTS` and a `Retry-After: 1` header
 instead of waiting for a free slot.
 
+**Database failover.** While PostgreSQL cannot be used, every endpoint that needs it answers
+`503 DATABASE_UNAVAILABLE` with a `Retry-After: 5` header, about the time a restart or a failover
+to the replica takes, and `GET /health` reports `Unhealthy` with `503`. This covers a connection
+that cannot be opened or breaks (the errors Npgsql reports as transient, and SQLSTATE class `08`),
+a server that is shutting down or not yet accepting connections (`57P01` admin shutdown, `57P02`
+crash shutdown, `57P03` cannot connect now), and a demoted primary that has become read-only
+(`25006` read-only SQL transaction). Any other unexpected database error is
+`500 INTERNAL_ERROR`. Opening a connection gives up after `Database__ConnectTimeoutSeconds` (3 s by
+default) when the connection string sets no `Timeout`, so a request fails fast during a failover
+instead of waiting out the Npgsql default of 15 s. A decision and its events are stored in one
+transaction, so a failed request leaves nothing half recorded and can be retried.
+
 **Request ID.** Every response, errors included, has an `X-Request-Id` header: the caller's
 `X-Request-Id` when it is usable (1 to 64 letters, digits, `.`, `_`, `:`, `-`, as `gateway-service`
 accepts it), otherwise a new UUID. The same ID is sent on the calls to the dependencies and written
@@ -1258,16 +1753,19 @@ this service and its dependencies.
 | `400` | `VALIDATION_FAILED` | A field is missing, an id is not a non-empty UUID, or `action` is not one of the four values. The message lists every problem. |
 | `400` | `MALFORMED_REQUEST` | The body is missing or is not valid JSON for the endpoint. |
 | `404` | `DECISION_NOT_FOUND` | No decision that is not void has this id. |
+| `404` | `SAGA_NOT_FOUND` | `confirm` for a saga that has recorded no decision. |
 | `404` | `NOT_FOUND` | No endpoint matches the path. |
 | `405` | `METHOD_NOT_ALLOWED` | The path exists, but not for this method. |
 | `409` | `DUPLICATE_DECISION` | The applicant already has a decision in this session; amend it with `PATCH` instead. |
+| `409` | `DECISION_PENDING` | `PATCH` or `DELETE` of a decision whose saga has not finished. Retry once it has. |
+| `409` | `SAGA_COMPENSATED` | The saga has been compensated: its decision is not recorded or confirmed again. |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
 | `422` | `CREDENTIAL_NOT_FOUND` | `credential-service` does not know `credentialId`. |
 | `422` | `CREDENTIAL_APPLICANT_MISMATCH` | The credential belongs to a different applicant. |
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
 | `503` | `NO_ACTIVE_RULESET` | `server-rules-service` has no ruleset in force. Nothing was recorded. |
 | `503` | `DEPENDENCY_UNAVAILABLE` | A dependency timed out, could not be reached, or answered outside its contract, or its circuit is open ([see Circuit Breaker](#circuit-breaker)). Nothing was recorded. |
-| `503` | `DATABASE_UNAVAILABLE` | PostgreSQL is unreachable. |
+| `503` | `DATABASE_UNAVAILABLE` | PostgreSQL is unreachable, restarting or failing over (see Database failover above). Sent with `Retry-After: 5`. |
 | `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached. The request was not processed; retry after the `Retry-After` delay. |
 | `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
 
@@ -1279,7 +1777,10 @@ active ruleset, student missing from the registry). The exception is the gateway
 returns `503 DEPENDENCY_UNAVAILABLE`.
 
 Events are written to a transactional outbox in the same transaction as the decision and delivered
-at least once, in order; consumers deduplicate on `eventId`. `playerId` is the `moderatorId`.
+at least once, in order; consumers deduplicate on `eventId`. `playerId` is the `moderatorId`. For a
+decision recorded by the `decision-verdict` saga, `decision.recorded` and `decision.evaluated` are
+written when the saga confirms it, with the same payloads and timestamps, no `verdict.issued`
+follows them, and `decision.voided` is published only when a confirmed decision is compensated.
 
 **Publishes `decision.recorded`:**
 ```json
@@ -1289,7 +1790,7 @@ at least once, in order; consumers deduplicate on `eventId`. `playerId` is the `
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "correct": "boolean", "xpAwarded": "integer", "evaluatedAt": "string (ISO-8601 datetime)" }
 ```
-**Publishes `verdict.issued`** (after `POST` and after `PATCH`):
+**Publishes `verdict.issued`** (after `POST /decisions` and after `PATCH`):
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "applicantId": "string (uuid)", "action": "string", "correct": "boolean", "violatedRules": ["string"], "issuedAt": "string (ISO-8601 datetime)" }
 ```
@@ -1298,7 +1799,8 @@ is adjusted by the difference instead of being counted twice):
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "applicantId": "string (uuid)", "previousAction": "string", "action": "string", "previousCorrect": "boolean", "correct": "boolean", "previousXpAwarded": "integer", "xpAwarded": "integer", "amendedAt": "string (ISO-8601 datetime)" }
 ```
-**Publishes `decision.voided`** (after `DELETE`; the XP it awarded no longer counts):
+**Publishes `decision.voided`** (after `DELETE`, and after the compensation of a confirmed saga
+decision; the XP it awarded no longer counts):
 ```json
 { "eventId": "string (uuid)", "decisionId": "string (uuid)", "playerId": "string (uuid)", "sessionId": "string (uuid)", "applicantId": "string (uuid)", "correct": "boolean", "xpAwarded": "integer", "voidedAt": "string (ISO-8601 datetime)" }
 ```
@@ -1371,6 +1873,95 @@ never sent.
 
 Response `204 No Content`.
 Response `404 Not Found`: `NOTIFICATION_NOT_FOUND`.
+
+**Saga participant.** In the Gateway's `decision-verdict` saga (CPR `contracts/saga.md`), this
+service carries out step 2, `queue-verdict-notification`, the pivot step, and its compensation.
+The two routes are internal: the Gateway's public proxy does not route `/internal/**`
+(`404 ROUTE_NOT_FOUND`), and only its saga coordinator calls them. The service does not
+authenticate its callers, so in the CPR `docker-compose.yml` the instance that publishes port
+`8088` for the chat answers them on the host too, like every other route of its REST API. Both are
+idempotent per `sagaId`, so the coordinator may repeat a call whose outcome it does not know.
+
+**`POST /internal/sagas/{sagaId}/notification`** — saga step `queue-verdict-notification`: queue
+the verdict direct message for the applicant.
+
+Request (`SagaVerdictNotificationRequest`; `violatedRules` may be omitted). It has the fields and
+validation of the `verdict.issued` payload, without `eventId` and `correct`:
+```json
+{
+  "decisionId": "string (uuid)",
+  "applicantId": "string (uuid)",
+  "action": "string (ACCEPT | REJECT | FLAG | BAN, case-insensitive)",
+  "violatedRules": ["string"],
+  "issuedAt": "string (ISO-8601 datetime)"
+}
+```
+The coordinator fills it from the `DecisionResponse` of step 1: `id` as `decisionId`, `applicantId`,
+`action`, `verdict.violatedRules`, and `createdAt` as `issuedAt`.
+
+| Answer | When |
+| :--- | :--- |
+| `202 Accepted`, with a `Location: /notifications/{id}/status` header and the body below | New: a `VERDICT` notification for `applicantId` is queued, and the saga's receipt is stored in the same Redis transaction. |
+| `200 OK`, with an `Idempotent-Replay: true` header and the same body as the first answer | The saga has queued its notification already. Nothing is queued again, and the body of the repeated call is not compared with the first one. |
+| `409 Conflict`: `SAGA_COMPENSATED` | The saga's notification step was compensated first, so nothing is queued. |
+| `400 Bad Request`: `VALIDATION_FAILED`, `MALFORMED_REQUEST`; `415 UNSUPPORTED_MEDIA_TYPE` | The body is invalid, as for `POST /notifications/dm`. Nothing is stored. |
+| `503 Service Unavailable`: `STORE_UNAVAILABLE`, with `Retry-After: 5` | Redis is unreachable or failing over. Nothing is queued. |
+
+```json
+{
+  "id": "string (uuid, the notification)",
+  "status": "QUEUED",
+  "createdAt": "string (ISO-8601 datetime)",
+  "sagaId": "string (uuid)"
+}
+```
+`status` is the status when the notification was queued, also in a replay; how its delivery went
+since is answered by `GET /notifications/{id}/status`. The message is the one `verdict.issued`
+produces for the same decision, and its `metadata` names the saga instead of an event:
+```json
+{
+  "eventType": "saga.decision-verdict",
+  "sagaId": "string (uuid)",
+  "decisionId": "string (uuid)",
+  "action": "string (ACCEPT | REJECT | FLAG | BAN)",
+  "violatedRules": ["string"],
+  "issuedAt": "string (ISO-8601 datetime)"
+}
+```
+
+**`POST /internal/sagas/{sagaId}/notification/cancel`** — compensation of
+`queue-verdict-notification`: make sure the saga's notification is never sent.
+
+Request: empty body.
+
+| Answer | When |
+| :--- | :--- |
+| `200 OK`, `{ "sagaId", "state": "CANCELLED", "notificationId" }` | The notification was not delivered (`QUEUED`, `RATE_LIMITED` or `FAILED`): it is removed from the queue and the store, so it is never sent. |
+| The same, with `"notificationId": null` | The saga has queued nothing: a tombstone is stored, so a forward call that arrives later is refused with `409 SAGA_COMPENSATED`. |
+| The same answer again | The notification step was cancelled already. |
+| `409 Conflict`: `NOTIFICATION_ALREADY_SENT` | The notification was delivered. A direct message cannot be taken back, so the pivot is passed and the coordinator completes the saga forward. |
+| `503 Service Unavailable`: `NOTIFICATION_IN_DELIVERY`, with `Retry-After: 1` | A delivery worker is sending the notification to Discord at this moment. The cancellation changed nothing; asked again once the outcome is stored, it answers `200` or `409 NOTIFICATION_ALREADY_SENT`. |
+| `503 Service Unavailable`: `STORE_UNAVAILABLE`, with `Retry-After: 5` | Redis is unreachable or failing over. Nothing changed. |
+
+```json
+{
+  "sagaId": "string (uuid)",
+  "state": "CANCELLED",
+  "notificationId": "string (uuid) | null"
+}
+```
+
+The removal is a Redis transaction that fails when the notification or the saga's receipt
+changed since they were read, or while the delivery worker's in-delivery marker is set. The
+worker sets the marker before it calls Discord, and only on a notification that still exists,
+so a cancellation answered `200` is never followed by a delivery. A `{sagaId}` that is not a
+UUID is `404 NOT_FOUND`. The saga's receipt expires after `Storage__RetentionHours` (7 days),
+like a delivered notification; a saga repeated after that is treated as new. A notification
+deleted with `DELETE /notifications/{id}` counts as cancelled, as it is not sent either. One
+case is not covered: an instance that stops after Discord accepted the message but before the
+outcome was stored. Its marker expires after `Delivery__LeaseSeconds` (30 s); until then a
+cancellation answers `503 NOTIFICATION_IN_DELIVERY`, and afterwards `200`, although the
+applicant has received the message.
 
 **`GET /health`** — the status of this instance: service and Redis health, and load
 ([see Status Endpoint](#status-endpoint)).
@@ -1532,8 +2123,8 @@ proxies do not drop a quiet connection.
 `GET /internal/logs` and `GET /ws/chat` runs under both, whether the request comes over REST or
 through the broker's `ServiceEndpoint.Call`. A request still running after
 `Limits__RequestTimeoutMs` (8 seconds by default) is cancelled, together with its wait for Redis,
-and answered with `504 REQUEST_TIMEOUT`. The default
-is longer than the 5-second command timeout of the Redis client, so a stalled Redis is reported as
+and answered with `504 REQUEST_TIMEOUT`. The default is longer than the 3-second command timeout of
+the Redis client (`Storage__CommandTimeoutMilliseconds`), so a stalled Redis is reported as
 `503 STORE_UNAVAILABLE`, and shorter than the gateway's 10-second timeout; keep that order when
 changing it. Redis still carries out a write it has already received, so a timed-out request may
 have taken effect: sending `POST /notifications/dm` again can queue the message twice, while an
@@ -1563,12 +2154,15 @@ ID of its upgrade request, so its join and leave lines carry it too.
 | `400` | `WEBSOCKET_REQUIRED` | `GET /ws/chat` was requested without a WebSocket upgrade. |
 | `401` | `INVALID_TICKET` | The chat ticket is missing, invalid, expired, or already used; negotiate a new one at the gateway (`POST /ws/negotiate`). |
 | `404` | `NOTIFICATION_NOT_FOUND` | No notification has this id: it never existed, was deleted, or has expired. |
-| `404` | `NOT_FOUND` | No endpoint matches the path, including an `{id}` that is not a UUID. |
+| `404` | `NOT_FOUND` | No endpoint matches the path, including an `{id}` or `{sagaId}` that is not a UUID. |
 | `405` | `METHOD_NOT_ALLOWED` | The path exists, but not for this method. |
 | `409` | `NOTIFICATION_NOT_FAILED` | Only a `FAILED` notification can be retried. |
+| `409` | `SAGA_COMPENSATED` | The saga's notification step was compensated, so its notification is not queued. |
+| `409` | `NOTIFICATION_ALREADY_SENT` | The saga's notification was delivered and cannot be cancelled. |
 | `415` | `UNSUPPORTED_MEDIA_TYPE` | The body is not sent as `application/json`. |
 | `500` | `INTERNAL_ERROR` | Unexpected failure. |
-| `503` | `STORE_UNAVAILABLE` | Redis is unreachable. Returned by every endpoint that reads or writes notifications, and by `GET /ws/chat`, until it is back; a broker delivery is answered `RETRY` instead. |
+| `503` | `STORE_UNAVAILABLE` | Redis is unreachable, does not answer within the command timeout, or is failing over ([see the Lab 5 failover runbook](docs/LAB_5_MODERATION_DMS_FAILOVER.md)). Sent with a `Retry-After: 5` header. Returned by every endpoint that reads or writes notifications, and by `GET /ws/chat`, until it is back; a broker delivery is answered `RETRY` instead. |
+| `503` | `NOTIFICATION_IN_DELIVERY` | The saga's notification is being sent to Discord, so it can be neither cancelled nor known to be delivered yet. Sent with a `Retry-After: 1` header. |
 | `503` | `TOO_MANY_REQUESTS` | The concurrency limit is reached, or for `GET /ws/chat` the connection limit. The request was not processed; retry after the `Retry-After` delay. |
 | `503` | `WEBSOCKET_UNAVAILABLE` | The chat is switched off because `Chat__TicketSecret` is not set. |
 | `504` | `REQUEST_TIMEOUT` | The request did not finish within `Limits__RequestTimeoutMs` and was cancelled. |
@@ -1849,6 +2443,236 @@ file, filters by service, and checks the `400 VALIDATION_ERROR` and `401 UNAUTHO
 npx newman run docs/postman/gateway-log-download.postman_collection.json --env-var apiKey=<key>
 ```
 
+#### `gateway-service` — decision-verdict saga
+
+
+Lab 5, Grade 9: issuing a verdict changes two databases. The decision is stored in
+`moderation-service` (PostgreSQL), and the verdict direct message is queued in `discord-dms-service`
+(Redis). Either both changes stay or neither does. Neither a direct message that has been delivered
+nor Redis can take part in a two-phase commit, so the Gateway coordinates the change as an
+orchestrated saga
+([`app/saga.py`](https://github.com/diana7376/gateway-service/blob/dev/app/saga.py)). The CPR
+contract, with the participants' routes, is [`contracts/saga.md`](contracts/saga.md).
+
+| # | Step | Participant | Forward call | Compensation |
+|---|---|---|---|---|
+| 1 | `record-decision` | `moderation-service` | `POST /internal/sagas/{sagaId}/decision`, with the request's body unchanged | `POST /internal/sagas/{sagaId}/decision/compensate` |
+| 2 | `queue-verdict-notification` | `discord-dms-service` | `POST /internal/sagas/{sagaId}/notification`, with a body made from step 1's `DecisionResponse` | `POST /internal/sagas/{sagaId}/notification/cancel` |
+| 3 | `confirm-decision` | `moderation-service` | `POST /internal/sagas/{sagaId}/decision/confirm` | None: retried until it succeeds |
+
+- **Step 1** records the decision as pending. `moderation-service` holds its events until step 3,
+  so no other service sees a decision that is later undone.
+- **Step 2 is the pivot.** A direct message that has been delivered cannot be taken back. A cancel
+  answered `409 NOTIFICATION_ALREADY_SENT` therefore counts step 2 as done, and the saga goes
+  forward to step 3 instead of back.
+- **Step 2's body** is made from step 1's answer: `id` as `decisionId`, `applicantId`, `action`,
+  `verdict.violatedRules` as `violatedRules`, and `createdAt` as `issuedAt`.
+- **Idempotent participants.** Every participant route is idempotent per saga ID. A compensation of
+  something that never happened leaves a tombstone, so a late forward call is refused with
+  `409 SAGA_COMPENSATED`. The coordinator may therefore repeat any call whose outcome it does not
+  know.
+- **Not reachable from outside.** The participant routes are under `/internal`, which the proxy does
+  not route (`404 ROUTE_NOT_FOUND` on both ports). Only the coordinator calls them.
+
+**The saga API.** The routes need an API key on the public port, like every path but
+`GET /health`, and none on the internal port. With `SAGA_ENABLED=false`, or while the saga log
+cannot be opened, each of them answers `503 SAGA_UNAVAILABLE`; the rest of the Gateway works as
+usual.
+
+**`POST /sagas/decision-verdicts`** starts a saga. The body is the `CreateDecisionRequest` of
+`moderation-service`'s `POST /decisions` (`sessionId`, `applicantId`, `credentialId`, `moderatorId`,
+`action`). The Gateway only checks that it is a JSON object and passes it to step 1 unchanged;
+`moderation-service` validates it.
+
+```bash
+curl -i -X POST http://localhost:8080/sagas/decision-verdicts \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -H "Idempotency-Key: verdict-2026-11-23-001" \
+  -d '{"sessionId":"<uuid>","applicantId":"<uuid>","credentialId":"<uuid>","moderatorId":"<uuid>","action":"ACCEPT"}'
+```
+
+- **`Idempotency-Key`**, optional: 1 to 128 visible ASCII characters, sent once. The same key again
+  answers the saga it started, and no second saga is created. The key alone names the saga: the body
+  of the repeated request is not compared with the first one.
+- **The wait.** The request waits for the saga at most `SAGA_RESPONSE_TIMEOUT_SECONDS` (8). The saga
+  runs in its own task, so it goes on after the answer.
+- **Headers.** Every answer with a saga document has `Location: /sagas/{sagaId}`. An answer for a
+  saga found by its key also has `Idempotent-Replay: true`.
+
+| Status | Body | When |
+|---|---|---|
+| `201 Created` | The saga document | `COMPLETED`: the decision is confirmed and the direct message queued. `200 OK` when the saga was found by its key |
+| `202 Accepted` | The saga document | Still `RUNNING` or `COMPENSATING` at the deadline. `GET /sagas/{sagaId}` shows how it ends |
+| The participant's status (`400`, `404`, `409`, `422`, ...) | The saga document, with the participant's `error` and `message` | `FAILED`: `moderation-service` refused the decision in step 1, so nothing changed. Also, never expected, a refused step 3 (`CONFIRM_REFUSED`) |
+| `409 Conflict` | The saga document, `error: SAGA_COMPENSATED` | `COMPENSATED`: a step failed and every step that had run was undone |
+| `400` | `VALIDATION_ERROR` | The body is not a JSON object, or the `Idempotency-Key` is invalid or sent twice. No saga is created |
+
+**`GET /sagas/{sagaId}`** answers `200` with the saga document and its `log`, `404 SAGA_NOT_FOUND`
+for a saga the log does not know, and `400 VALIDATION_ERROR` when the ID is not a UUID.
+
+**`GET /sagas?state=&limit=`** answers `200` with `{ "sagas": [ ... ] }`, the newest first and
+without their logs. `state` keeps one state (`RUNNING`, `COMPLETED`, `FAILED`, `COMPENSATING` or
+`COMPENSATED`, in capitals). `limit` is from 1 to 100 (default 20). An unknown parameter, one given
+twice, or an invalid value answers `400 VALIDATION_ERROR`.
+
+**The saga document**, here from `GET /sagas/{sagaId}` for a saga that completed:
+
+```json
+{
+  "sagaId": "6c1d3b52-8f0e-4a57-9d2b-0f6e1c9a7b34",
+  "type": "decision-verdict",
+  "state": "COMPLETED",
+  "decisionId": "1f54a0c2-3b7d-4e19-8a6f-5c2d9e0b7a13",
+  "notificationId": "9a0b6e4d-2c51-4f87-b3a9-7d1e0c5f2b68",
+  "createdAt": "2026-11-23T10:15:02.118Z",
+  "updatedAt": "2026-11-23T10:15:02.204Z",
+  "steps": [
+    { "name": "record-decision", "participant": "moderation-service", "state": "SUCCEEDED",
+      "attempts": 1, "compensationAttempts": 0, "lastStatus": 201, "lastError": null },
+    { "name": "queue-verdict-notification", "participant": "discord-dms-service", "state": "SUCCEEDED",
+      "attempts": 1, "compensationAttempts": 0, "lastStatus": 202, "lastError": null },
+    { "name": "confirm-decision", "participant": "moderation-service", "state": "SUCCEEDED",
+      "attempts": 1, "compensationAttempts": 0, "lastStatus": 200, "lastError": null }
+  ],
+  "log": [
+    { "at": "2026-11-23T10:15:02.118Z", "step": null, "action": "state", "attempt": null, "outcome": "RUNNING" },
+    { "at": "2026-11-23T10:15:02.161Z", "step": "record-decision", "action": "forward", "attempt": 1, "outcome": "201" },
+    { "at": "2026-11-23T10:15:02.179Z", "step": "queue-verdict-notification", "action": "forward", "attempt": 1, "outcome": "202" },
+    { "at": "2026-11-23T10:15:02.203Z", "step": "confirm-decision", "action": "forward", "attempt": 1, "outcome": "200" },
+    { "at": "2026-11-23T10:15:02.204Z", "step": null, "action": "state", "attempt": null, "outcome": "COMPLETED" }
+  ]
+}
+```
+
+A saga that is `FAILED` or `COMPENSATED` also has `error`, `message` and `cause`, the step and the
+answer that ended it:
+
+```json
+{
+  "state": "COMPENSATED",
+  "error": "SAGA_COMPENSATED",
+  "message": "The saga was compensated: queue-verdict-notification has no known outcome (503 STORE_UNAVAILABLE), and every step that had run was undone",
+  "cause": { "step": "queue-verdict-notification", "status": 503, "error": "STORE_UNAVAILABLE" }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `sagaId` | A UUID made by the Gateway |
+| `decisionId` | The decision of step 1; `null` until step 1 succeeds |
+| `notificationId` | The notification of step 2; `null` until step 2 succeeds, and when the pivot was passed through `409 NOTIFICATION_ALREADY_SENT`, which names no notification |
+| `steps[].attempts`, `steps[].compensationAttempts` | The calls of the forward route and of the compensation so far, counted across restarts |
+| `steps[].lastStatus`, `steps[].lastError` | The last call's status and error code. Without an answer, `lastStatus` is `null` and `lastError` says why: `TIMEOUT`, `UNREACHABLE` or `NO_AVAILABLE_INSTANCES` |
+| `log` | Only from `GET /sagas/{sagaId}`: every call and state change, oldest first. A `forward` or `compensate` entry has the attempt and the outcome (`201`, `409 SAGA_COMPENSATED`, `TIMEOUT`, `201 INVALID_RESPONSE`, ...). A `state` entry has the saga's new state, or `RESUMED` when a Gateway took the saga up again from the log |
+| `error`, `message` | Only for `FAILED` and `COMPENSATED`. `FAILED` from step 1 copies the participant's (`SAGA_STEP_REFUSED` and a message of the Gateway's own if it sent none); a refused step 3 is `CONFIRM_REFUSED`; `COMPENSATED` is `SAGA_COMPENSATED` |
+| `cause` | Only for `FAILED` and `COMPENSATED`: the step, the status (`null` without an answer) and the error code that ended the saga |
+
+**States:**
+
+```text
+RUNNING --> COMPLETED      step 3 succeeded
+RUNNING --> FAILED         step 1 refused (nothing to undo), or step 3 refused (CONFIRM_REFUSED)
+RUNNING --> COMPENSATING   step 1 without a known outcome after every attempt, or step 2 refused or
+                           without a known outcome after every attempt
+COMPENSATING --> RUNNING   the cancel answered 409 NOTIFICATION_ALREADY_SENT: the pivot is passed
+COMPENSATING --> COMPENSATED   every compensation answered 2xx
+```
+
+`COMPLETED`, `FAILED` and `COMPENSATED` are final. A step is `PENDING` (not called yet), `RUNNING`,
+`SUCCEEDED`, `FAILED`, `COMPENSATING`, `COMPENSATED`, or `SKIPPED`: never called, either after the
+step that failed, or because there was nothing to undo.
+
+**How the coordinator decides.** Each call has one of three outcomes:
+
+| Outcome | Answer |
+|---|---|
+| Success | `2xx`. For steps 1 and 2, only with a UUID `id` in the body: what the step made |
+| Definitive refusal | `4xx` except `429`, `409 SAGA_COMPENSATED` included |
+| Unknown | No answer within `SAGA_STEP_TIMEOUT_SECONDS`, no connection, no instance available, `5xx`, `429`, or a `2xx` of step 1 or 2 without a usable `id` (`INVALID_RESPONSE`) |
+
+An unknown outcome is retried with the same idempotent call, after `SAGA_RETRY_BACKOFF_SECONDS` (1),
+doubled after each call up to `SAGA_MAX_BACKOFF_SECONDS` (30).
+
+| Situation | What the coordinator does |
+|---|---|
+| Step 1 refused | `FAILED`. Nothing was recorded, so nothing is compensated |
+| Step 1 unknown after `SAGA_STEP_ATTEMPTS` (3) calls | The decision may exist. `COMPENSATING`: compensate step 1 (a tombstone if it was never recorded), then `COMPENSATED` |
+| Step 2 refused, or unknown after `SAGA_STEP_ATTEMPTS` calls | `COMPENSATING`, in reverse order: cancel the notification, then compensate the decision, then `COMPENSATED`. On `409 NOTIFICATION_ALREADY_SENT`, step 2 becomes `SUCCEEDED`, the saga goes back to `RUNNING` and step 3 runs; the decision is not undone |
+| Step 3 unknown | Retried without limit: the saga is past the pivot, and step 3 has no compensation |
+| Step 3 refused | Not expected. `FAILED` with `CONFIRM_REFUSED`, logged as an `ERROR`: the direct message is queued and the decision stays pending, for someone to look at |
+| A compensation | Retried without limit until it answers `2xx`: it is idempotent. A step that was never called is `SKIPPED`, not compensated |
+
+**The saga log and recovery:**
+
+- **One SQLite file** at `SAGA_LOG_PATH` (`/data/gateway-sagas.sqlite3`), with the standard library's
+  `sqlite3`. It has three tables: `sagas` (one row per saga, with its `Idempotency-Key`),
+  `saga_steps` (one row per step), and `saga_log` (every call and state change). Triggers make
+  `saga_log` append-only.
+- **Durable.** The file is opened in WAL mode with `synchronous=FULL`, and every change is one
+  transaction. A change that returned survives a crash of the Gateway or of the machine. All access
+  runs on one dedicated thread, so the event loop never waits for a disk write.
+- **Write-ahead.** Before a participant is called, the attempt is committed: the step's state
+  (`RUNNING` or `COMPENSATING`) and its attempt counter. Right after the answer, the outcome is
+  committed as a new `saga_log` entry. After a crash, the log therefore shows each call that may have
+  happened without a recorded answer, and the coordinator repeats it. The participant answers a
+  repeated call as a replay.
+- **Recovery.** At startup, after the first instance list from the Service Discovery and before the
+  Gateway reports ready, and then every `SAGA_RECOVERY_INTERVAL_SECONDS` (5), the coordinator resumes
+  every saga in `RUNNING` or `COMPENSATING` that no task of its own drives. It logs `RESUMED`, then
+  repeats the current step's call or goes on compensating. Attempts count across restarts. When the
+  last allowed attempt of step 1 or 2 was cut off by the stop, its outcome is unknown (`INTERRUPTED`)
+  and the saga compensates. On shutdown the coordinator stops driving; every unfinished saga stays in
+  the log where it was.
+- **One owner.** One Gateway instance owns the log file. The CPR Compose runs one Gateway. Several
+  Gateways on one file are not supported: each would resume the others' sagas.
+- **A log that cannot be opened.** The directory of `SAGA_LOG_PATH` is created if it is missing. If
+  the file still cannot be opened (no permission, a read-only volume), the Gateway logs one `ERROR`
+  naming the path and the reason, and starts anyway: the `/sagas` routes answer
+  `503 SAGA_UNAVAILABLE` until it restarts with a writable path, and the proxy is not affected.
+- **In Docker.** The image has a `/data` directory owned by its non-root user. The CPR Compose mounts
+  the named volume `gateway-data` there (`gateway-data:/data`, `SAGA_LOG_PATH=/data/gateway-sagas.sqlite3`),
+  so the log outlives the container. Without a volume, the log is lost with the container.
+
+**Reaching the participants:**
+
+- **Like the proxy.** Each call picks an instance of the participant through the load balancer
+  (Service Discovery), preferring one whose circuit lets requests through, else the static
+  `MODERATION_SERVICE_URL` or `DMS_SERVICE_URL`. A retry may reach another replica. While every
+  discovered instance is removed, the call's outcome is `NO_AVAILABLE_INSTANCES` (unknown).
+- **The shared client.** The calls use the proxy's connection pool. Each call is a `POST` with
+  `X-Request-Id` (the ID of the request that started the saga, also after a restart) and `X-Saga-Id`.
+- **Not counted in the circuit breaker.** The saga handles a failed call itself, by retrying and then
+  compensating. Its retries while a participant is down would otherwise open the circuit for the
+  ordinary requests to that participant too, and an open circuit would hold back the compensations.
+- **The concurrent task limit** counts the `POST /sagas/decision-verdicts` request while it waits, like
+  any request, but not the saga's own calls.
+
+**Settings.** Environment variables of the Gateway. The CPR `docker-compose.yml` fixes `SAGA_ENABLED=true` and
+`SAGA_LOG_PATH=/data/gateway-sagas.sqlite3` on the `gateway-data` volume, and takes the others from `.env` as
+`GATEWAY_` + the name (`.env.example` lists them with these defaults):
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `SAGA_ENABLED` | `true` | `true` or `false`. `false`: no saga log is opened, and every `/sagas` route answers `503 SAGA_UNAVAILABLE` |
+| `SAGA_LOG_PATH` | `/data/gateway-sagas.sqlite3` | The SQLite file of the saga log; its directory is created if missing. One Gateway instance owns it. In Docker, keep it on a volume |
+| `SAGA_STEP_ATTEMPTS` | `3` | Calls of step 1 or 2 while the outcome stays unknown, before the saga compensates. Step 3 and the compensations are retried without limit |
+| `SAGA_RETRY_BACKOFF_SECONDS` | `1` | The wait before the second call of a step, doubled after each call |
+| `SAGA_MAX_BACKOFF_SECONDS` | `30` | The longest that wait gets. At least `SAGA_RETRY_BACKOFF_SECONDS` |
+| `SAGA_STEP_TIMEOUT_SECONDS` | `5` | How long one participant call may take. No answer in time is an unknown outcome |
+| `SAGA_RESPONSE_TIMEOUT_SECONDS` | `8` | How long `POST /sagas/decision-verdicts` waits for the saga to end before it answers `202` |
+| `SAGA_RECOVERY_INTERVAL_SECONDS` | `5` | How often the unfinished sagas in the log that no task drives are resumed |
+| `SAGA_STEP_DELAY_SECONDS` | `0` | Demonstrations only: a pause before steps 2 and 3, so the Gateway can be stopped in the middle of a saga. `0`: none |
+
+**Postman.** `docs/postman/gateway-saga.postman_collection.json` runs a saga to `COMPLETED`, reads it
+with its log, repeats it with the same `Idempotency-Key`, checks the confirmed decision in
+`moderation-service` and the queued `VERDICT` notification in `discord-dms-service`, lists the
+completed sagas, and checks a refused saga (`FAILED`, nothing recorded) and the `400`, `401` and
+`404` answers:
+
+```bash
+npx newman run docs/postman/gateway-saga.postman_collection.json --env-var apiKey=<key>
+```
+
 ## Contribution Workflow & GitHub Rules
 
 To ensure code quality, predictable releases, and equal team collaboration, all contributions to the
@@ -1986,16 +2810,18 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 
 | Service | Image | Requirements |
 | :--- | :--- | :--- |
-| `service-discovery` | [`drateeva/service-discovery`](https://hub.docker.com/r/drateeva/service-discovery) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | No external database; in-memory registry with one Uvicorn worker. Port `8089` (internal only, never published to the host). Optional: `INSTANCE_TTL_SECONDS` (default `30`), `POLL_INTERVAL_SECONDS` (default `10`), `REQUEST_TIMEOUT_SECONDS` (default `5`), `MAX_CONCURRENT_REQUESTS` (default `200`). Developer alerts are optional; see the [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md). |
-| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8087` (internal only — route through the gateway on `8080`). |
-| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | Redis 7; `ConnectionStrings__Redis` (StackExchange.Redis connection string, for example `host:6379,password=...`). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
-| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | No external dependencies. Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
-| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | MongoDB 7; `MONGODB_URI`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8085` (internal only — route through gateway on `8080`). |
-| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8086` (internal only — route through gateway on `8080`). |
-| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
-| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`) | Redis 7; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
-| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Port `8081` (internal only — route through the gateway on `8080`). |
-| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0` | PostgreSQL 16; `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE`, `DMS_CLIENT_MODE` (`http` or `mock`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Port `8082` (internal only — route through the gateway on `8080`). |
+| `service-discovery` | [`drateeva/service-discovery`](https://hub.docker.com/r/drateeva/service-discovery) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | No external database; in-memory registry with one Uvicorn worker. Port `8089` (internal only, never published to the host). Optional: `INSTANCE_TTL_SECONDS` (default `30`), `POLL_INTERVAL_SECONDS` (default `10`), `REQUEST_TIMEOUT_SECONDS` (default `5`), `MAX_CONCURRENT_REQUESTS` (default `200`). Developer alerts are optional; see the [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md). |
+| `message-broker` | [`drateeva/message-broker`](https://hub.docker.com/r/drateeva/message-broker) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | No external database: durable topic queues, the dead letter channel and (Lab 5) the two-phase commit decision log in SQLite at `QUEUE_STORE_PATH` (`/data/broker.sqlite3` on the `broker-data` volume in `docker-compose.yml`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, it registers nowhere and finds no topic subscribers). Ports `8091` (HTTP: health, metrics, topics, events, dead letters, two-phase transactions) and `9091` (gRPC `MessageBroker`), internal only. Optional: `BROKER_MAX_THREADS` (default `32`), `QUEUE_CAPACITY` (default `10000`), `QUEUE_LEASE_SECONDS` (default `10`), `MAX_DELIVERY_ATTEMPTS` (default `0`: no limit), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `17.5`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `REQUEST_QUEUE_SERVICES` (`0.6.0`, default `server-rules-service,university-record-service`), Lab 5 two-phase commit: `TWO_PHASE_PREPARE_TIMEOUT_SECONDS` (default `3`), `TWO_PHASE_COMMIT_TIMEOUT_SECONDS` (default `2`), `TWO_PHASE_RETRY_SECONDS` (default `5`), `TWO_PHASE_PHASE_TWO_DELAY_SECONDS` (default `0`, demonstrations only); see the [Message Broker contract](docs/MESSAGE_BROKER_CONTRACT.md) and [`contracts/two-phase.md`](contracts/two-phase.md). |
+| `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `moderation-postgres` cluster, reached through its HAProxy); `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname), `Database__ConnectTimeoutSeconds` (default `3`: longest wait to open a database connection before `503 DATABASE_UNAVAILABLE` with `Retry-After`). Lab 5 saga participant: the internal routes under `/internal/sagas/{sagaId}/decision`, no setting; see [`contracts/saga.md`](contracts/saga.md). Port `8087` (internal only — route through the gateway on `8080`). |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 (Lab 5: three members `dms-redis-1/2/3` watched by three Sentinels `dms-redis-sentinel-1/2/3`, master name `dms-redis`, all on fixed addresses on the private network `dms-redis-ha`); `ConnectionStrings__Redis` (StackExchange.Redis connection string: the server, for example `host:6379,password=...`; in `docker-compose.yml` the HAProxy `dms-redis:6379`, which forwards to the current primary; the Sentinels with `serviceName=` also work where the service can reach them). Reports `503 STORE_UNAVAILABLE` with `Retry-After` when the Redis store is unavailable. Optional Redis timeouts: `Storage__ConnectTimeoutMilliseconds` and `Storage__CommandTimeoutMilliseconds` (default `3000` each). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
+| `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | No external dependencies (Lab 5: the saga log, one SQLite file on the `gateway-data` volume at `/data`). Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Lab 5 saga coordinator: `SAGA_ENABLED` (default `true`), `SAGA_LOG_PATH` (default `/data/gateway-sagas.sqlite3`), `SAGA_STEP_ATTEMPTS` (default `3`), `SAGA_RETRY_BACKOFF_SECONDS` (default `1`), `SAGA_MAX_BACKOFF_SECONDS` (default `30`), `SAGA_STEP_TIMEOUT_SECONDS` (default `5`), `SAGA_RESPONSE_TIMEOUT_SECONDS` (default `8`), `SAGA_RECOVERY_INTERVAL_SECONDS` (default `5`), `SAGA_STEP_DELAY_SECONDS` (default `0`); see [`contracts/saga.md`](contracts/saga.md). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
+| `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | MongoDB 7 (Lab 5: 3-member replica set `rules-mongo-1/2/3`, RS name `rs0`); `MONGODB_URI` (RS-aware URI with all three seed hosts and `?replicaSet=rs0`). Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9085), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s during a primary election. Port `8085` (internal only — route through gateway on `8080`). |
+| `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: 3-member Patroni cluster `record-postgres-1/2/3`, HAProxy at `record-postgres`); `DB_URL` (`jdbc:postgresql://record-postgres:5432/university_record` — unchanged), `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9086), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s (HikariCP `connectionTimeout`) during a failover. Port `8086` (internal only — route through gateway on `8080`). |
+| `etl` | [`diana7376/pad-etl`](https://hub.docker.com/r/diana7376/pad-etl) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Lab 5, Grade 4: reads all 8 source databases (player-postgres, session-postgres, record-postgres, moderation-postgres, rules-mongo, applicant-redis, credential-redis, dms-redis) on a schedule and loads a star schema into `warehouse-db` idempotently. Required: `WAREHOUSE_DB_URL`, `PLAYER_POSTGRES_URL`, `SESSION_POSTGRES_URL`, `MODERATION_POSTGRES_URL`, `RECORD_POSTGRES_URL`, `RULES_MONGO_URI`, `APPLICANT_REDIS_URL`, `CREDENTIAL_REDIS_URL`, `DMS_REDIS_URL`. Optional: `ETL_INTERVAL_SECONDS` (default `300`). A source database being down produces a warning log and the run continues for the remaining sources. No published port. |
+| `applicant-service` | [`caramisca/applicant-service`](https://hub.docker.com/r/caramisca/applicant-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 with Sentinel failover; `Redis__ConnectionString`, `Services__CredentialServiceMode` (`Grpc`, `Http` or `Mock`), `Services__CredentialServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8083` (internal only — route through gateway on `8080`). |
+| `credential-service` | [`caramisca/credential-service`](https://hub.docker.com/r/caramisca/credential-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 with Sentinel failover; `Redis__ConnectionString`, `Services__UniversityRecordMode` (`Grpc`, `Http` or `Mock`), `Services__UniversityRecordServiceUrl`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000). Port `8084` (internal only — route through gateway on `8080`). |
+| `player-service` | [`drateeva/player-service`](https://hub.docker.com/r/drateeva/player-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `player-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`. `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `TASK_TIMEOUT` (default `10s`), `MAX_CONCURRENT_TASKS` (default `20`), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`: longest wait for a database connection before `503 DATABASE_UNAVAILABLE`), `INSTANCE_ID` (default the hostname), `DISCOVERY_ADVERTISED_URL` (default the container's IP address and port; never the shared service name), `LOG_LEVEL` (default `INFO`). Lab 5 two-phase commit: `TWO_PHASE_PARTICIPANT_ENABLED` (default `false`, `true` in `docker-compose.yml`), `TWO_PHASE_COORDINATOR_URL` (default `http://localhost:8091`), see [`contracts/two-phase.md`](contracts/two-phase.md). Port `8081` (internal only — route through the gateway on `8080`). |
+| `server-moderation-session-service` | [`drateeva/server-moderation-session-service`](https://hub.docker.com/r/drateeva/server-moderation-session-service) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `session-postgres` cluster, reached through its HAProxy); `SPRING_DATASOURCE_URL`, `SPRING_DATASOURCE_USERNAME`, `SPRING_DATASOURCE_PASSWORD`; `GATEWAY_URL` with `APPLICANT_CLIENT_MODE`, `RULES_CLIENT_MODE` (`mock`, `http` or `broker`) and `DMS_CLIENT_MODE` (`mock` or `broker`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register and no failing instance is removed). Optional: `SESSION_MAX_APPLICANTS_PER_SHIFT` (default `10`), `TASK_TIMEOUT`, `MAX_CONCURRENT_TASKS`, `SSE_TIMEOUT`, `SSE_HEARTBEAT`, `SSE_MAX_CONNECTIONS`, `SSE_RELAY_MODE` (default `postgres`: live updates across instances), `DATABASE_CONNECTION_TIMEOUT_MS` (default `3000`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW` (default `TASK_TIMEOUT` x 3.5), `CIRCUIT_BREAKER_OPEN_DURATION` (default the window), `INSTANCE_ID`, `DISCOVERY_ADVERTISED_URL` (see the service's `.env.example`). Lab 5 two-phase commit: `SHIFT_CLOSE_MODE` (`event` by default, `two-phase` in `docker-compose.yml`), `TWO_PHASE_PARTICIPANT_ENABLED`, `TWO_PHASE_COORDINATOR_URL`, `SHIFT_CLOSE_COORDINATOR_TIMEOUT` (default `7s`). Port `8082` (internal only — route through the gateway on `8080`). |
 
 
 ## Getting Started
@@ -2024,13 +2850,15 @@ git submodule update --init --recursive
 
 ### Working with Submodules
 
-To pull the latest commits for all microservices:
+Use `git submodule update --init --recursive` to check out the service commits pinned by CPR.
+A public image is sufficient to run Compose. Reading a private service's source requires access
+granted by its owner.
 
-```bash
-git submodule update --remote --merge
-```
-
-To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+For a service release, merge its reviewed `dev` into `main` and confirm that the publication job
+produced the versioned Linux amd64 and arm64 image. In CPR `dev`, update the submodule to the
+verified release commit and update the Compose image and release checks when the tag changes.
+Run the integration tests on that CPR commit. The last step is the CPR `dev` to `main` release
+PR, using **Create a merge commit**. Follow the contribution workflow for service feature changes.
 
 ### Calling the system through the Gateway (Lab 2)
 
@@ -2050,12 +2878,71 @@ variable and uses `baseUrl` `http://localhost:8080`.
 
 ### Running `player-service` and `server-moderation-session-service`
 
-The root `docker-compose.yml` runs both from their DockerHub images (`0.5.0`), each against its own
-PostgreSQL 16 (`player-postgres` and `session-postgres`, on the `player-postgres-data` and
-`session-postgres-data` volumes). Set `PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD` and
-`SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD` in `.env`, then `docker compose up`. Each schema
-is created by the service's own Flyway migrations (copies in `docs/db/<service>/`), run once even
-when several instances start together.
+The root `docker-compose.yml` runs both from their DockerHub images (`0.6.0`), each against its own
+PostgreSQL 16 database, `player-postgres` and `session-postgres`. Set
+`PLAYER_POSTGRES_USER`/`PLAYER_POSTGRES_PASSWORD`, `SESSION_POSTGRES_USER`/`SESSION_POSTGRES_PASSWORD`
+and (Lab 5) `PLAYER_POSTGRES_SUPERUSER_PASSWORD`, `PLAYER_POSTGRES_REPLICATION_PASSWORD`,
+`SESSION_POSTGRES_SUPERUSER_PASSWORD`, `SESSION_POSTGRES_REPLICATION_PASSWORD` in `.env`, then
+`docker compose up`. Each schema is created by the service's own Flyway migrations (copies in
+`docs/db/<service>/`), run once even when several instances start together.
+
+**Replicated databases with failover (Lab 5, Grade 5).** Each of the two databases is a cluster of
+three PostgreSQL 16 members (`player-postgres-1..3`, `session-postgres-1..3`, image
+`drateeva/postgres-ha`, built from `docker/postgres-ha/`): Patroni keeps one member the primary and
+the other two streaming standbys, one of them synchronous, so every commit is on two members before
+the service gets its answer. The leader lock lives in a three-member etcd (`postgres-etcd-1..3`). The
+old hostnames `player-postgres` and `session-postgres` are now HAProxy, which always forwards to the
+current primary (it asks each member's Patroni API `GET /primary`), so the services' URLs are
+unchanged. When a primary is lost, a standby is promoted and writes work again after about 20 s
+(the services answer `503 DATABASE_UNAVAILABLE` meanwhile); the old primary rejoins as a standby
+when it comes back. Every member keeps its data on its own volume (`<member>-data`); the Lab 4
+volumes `player-postgres-data` / `session-postgres-data` are no longer used. Runbook, demo and
+measured results: [`docs/LAB_5_DATABASE_FAILOVER.md`](docs/LAB_5_DATABASE_FAILOVER.md); the check:
+`python3 scripts/check_postgres_failover.py`.
+
+**Gateway cache and Redis failover (Lab 5, Grades 5–7).** Applicant and Credential use two Redis
+replication groups behind stable primary-only endpoints. The Gateway cache overlay enables
+client-scoped GET caching and authentication caching on three Redis shards.
+Use `python scripts/check_redis_failover.py` for the Redis failover check.
+
+**Public Lab 5 images.** The default stack pins the published `0.6.0` application images.
+Applicant and Credential include the Lab 4 gRPC error-parity fixes. The same Gateway image
+provides the saga coordinator and, with the cache overlay, sharded response and auth caching.
+
+**Two-phase commit for closing a shift (Lab 5, Grade 8).** `POST /sessions/{id}/close` changes both
+databases (the shift; `totalShifts` / `lastShiftAt` of every moderator) as one transaction: the
+`message-broker` coordinates it (`POST /two-phase/transactions` on its HTTP port 8091, decision log
+in its SQLite file), and both services take part with PostgreSQL's `PREPARE TRANSACTION` /
+`COMMIT PREPARED` behind `POST /internal/two-phase/{id}/prepare|commit|abort` (gRPC
+`ServiceEndpoint.Call`, never routed by the Gateway). Presumed abort, recovery after a broker or
+service restart and after a database failover. Compose: `SHIFT_CLOSE_MODE` (session, default
+`two-phase`; `SESSION_SHIFT_CLOSE_MODE=event` in `.env` for the Lab 4 way), `TWO_PHASE_PARTICIPANT_ENABLED`
+and `TWO_PHASE_COORDINATOR_URL` (both services); `max_prepared_transactions: 20` comes from
+`docker/postgres-ha/patroni.yml`, which every member mounts (clusters created before: one
+`patronictl edit-config` each). Contract: [`contracts/two-phase.md`](contracts/two-phase.md); runbook,
+demo and measured results: [`docs/LAB_5_TWO_PHASE_COMMIT.md`](docs/LAB_5_TWO_PHASE_COMMIT.md); the
+check: `python3 scripts/check_two_phase_commit.py`.
+
+**Replicated databases with failover — rules and record (Lab 5, Grade 5).** `server-rules-service`
+connects to a 3-member **MongoDB replica set** (`rules-mongo-1/2/3`, RS name `rs0`): Spring Data
+MongoDB routes writes to the elected primary automatically via the RS-aware `MONGODB_URI`; during a
+primary election (~15 s) writes return `503 DATABASE_UNAVAILABLE` and reads may succeed on a
+secondary. `university-record-service` connects to a 3-member **Patroni PostgreSQL cluster**
+(`record-postgres-1/2/3`) through an HAProxy at the existing hostname `record-postgres`; the JDBC
+URL is unchanged. Both services return `503 DATABASE_UNAVAILABLE` with `Retry-After: 5` within 3 s
+during failover — no request hangs. The cluster reuses the shared etcd (`postgres-etcd-1..3`) and
+the `drateeva/postgres-ha` image. The old single-container volumes `rules-mongo-data` and
+`record-postgres-data` are replaced by per-member volumes.
+
+**Data warehouse and ETL (Lab 5, Grade 4).** A `warehouse-db` PostgreSQL container holds a
+star schema: `fact_decisions`, `fact_shifts`, `fact_applicants` (facts) and `dim_players`,
+`dim_rulesets`, `dim_students`, `dim_services` (dimensions). The `etl` container
+(`diana7376/pad-etl:0.6.0`) reads all 8 source databases read-only on a schedule
+(`ETL_INTERVAL_SECONDS`, default 5 min) and loads the warehouse idempotently via
+`INSERT ... ON CONFLICT DO UPDATE`. The applicant fact stores `role` and the full Redis
+`deceptions` list as JSON text. An active legitimate applicant has `[]`, while an absent Redis
+record yields `NULL`. The DMS row in `dim_services` stores the Redis notification count.
+The ETL starts after the warehouse and both Redis proxy health checks pass.
 
 **Several instances (Lab 3).** Each service runs `PLAYER_REPLICAS` / `SESSION_REPLICAS` replicas
 (`2` by default), with no fixed container name and no published port, all against the service's one
@@ -2111,17 +2998,72 @@ npx newman run docs/postman/player-service.postman_collection.json --env-var api
 npx newman run docs/postman/server-moderation-session-service.postman_collection.json --env-var apiKey=<key>
 ```
 
+Lab 5 in the collections: the session collection registers its moderators as players first, as the
+two-phase close needs (an unregistered moderator makes it `409 SHIFT_CLOSE_ABORTED`), and its folder
+"Two-Phase Commit Close (Lab 5)" shows the commit (the shift counted in the moderator's stats at once)
+and the abort; both collections keep a saved, never-run example of `503 DATABASE_UNAVAILABLE`. The
+folders that call an instance directly (status, metrics, the request log, and the two-phase
+participant routes `POST /internal/two-phase/{id}/prepare|commit|abort`) need `playerInstanceUrl` /
+`sessionInstanceUrl`, and are skipped without them. The coordinator's HTTP API is in
+`docs/postman/message-broker-two-phase.postman_collection.json` (a NO vote, a commit, the same
+transaction asked twice, the listing, `404 TRANSACTION_NOT_FOUND`, the `400` answers, the metrics; no
+API key). None of these ports is published, so run newman on the Compose network:
+
+```bash
+docker run --rm --network cpr-pad-team-19_default -v "$PWD/docs/postman:/etc/newman:ro" postman/newman:6-alpine \
+  run /etc/newman/server-moderation-session-service.postman_collection.json --env-var baseUrl=http://gateway-service:8080 \
+  --env-var apiKey=<key> --env-var sessionInstanceUrl=http://server-moderation-session-service:8082
+docker run --rm --network cpr-pad-team-19_default -v "$PWD/docs/postman:/etc/newman:ro" postman/newman:6-alpine \
+  run /etc/newman/message-broker-two-phase.postman_collection.json --env-var brokerUrl=http://message-broker:8091 \
+  --env-var playerInstanceUrl=http://player-service:8081
+```
+
+(The player collection the same way, with `playerInstanceUrl=http://player-service:8081`.) All three
+ran green against this compose with the `0.6.0` code (both Lab 4 overlays, `BROKER_GRPC_URL` empty as
+in `docker-compose.yml`): [`docs/evidence/lab5-postman-2026-11-22.json`](docs/evidence/lab5-postman-2026-11-22.json).
+
 The services' own health endpoints (`/actuator/health`) are checked by Compose (`docker compose ps`
 shows `healthy`); they and `GET /health` are not routed through the Gateway.
 
 ### Running `moderation-service` and `discord-dms-service`
 
-The root `docker-compose.yml` runs both services from their DockerHub images (`0.5.0`), each
-against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`, on the
-`moderation-postgres-data` volume) and `discord-dms-service` against Redis 7 with append-only
-persistence (`dms-redis`, on the `dms-redis-data` volume). Set `MODERATION_POSTGRES_USER`,
-`MODERATION_POSTGRES_PASSWORD` (it must not contain `;`), `DMS_REDIS_PASSWORD` (it must not contain
-`,`), and `GATEWAY_WS_TICKET_SECRET` in `.env`, then run `docker compose up`.
+The root `docker-compose.yml` runs both services from their DockerHub images (`0.6.0`), each
+against its own database: `moderation-service` against PostgreSQL 16 (`moderation-postgres`) and
+`discord-dms-service` against Redis 7 with append-only persistence (`dms-redis`), both replicated
+since Lab 5 (below). Set `MODERATION_POSTGRES_USER`, `MODERATION_POSTGRES_PASSWORD` (it must not
+contain `;`), `MODERATION_POSTGRES_SUPERUSER_PASSWORD`, `MODERATION_POSTGRES_REPLICATION_PASSWORD`,
+`DMS_REDIS_PASSWORD` (it must not contain `,`), and `GATEWAY_WS_TICKET_SECRET` in `.env`, then run
+`docker compose up`.
+
+**Replicated databases with failover (Lab 5, Grade 5).** `moderation-postgres` is a cluster of
+three PostgreSQL 16 members (`moderation-postgres-1..3`) set up like `player-postgres`: Patroni
+keeps one member the primary, one a synchronous and one a streaming standby, with the leader lock
+in the shared `postgres-etcd-1..3`. The old hostname `moderation-postgres` is now HAProxy, which
+always forwards to the current primary, so the connection string is unchanged. `dms-redis` is three
+Redis 7 members (`dms-redis-1..3`: a primary and two replicas, AOF on each) watched by three
+Sentinels (`dms-redis-sentinel-1..3`, quorum 2). DMS and ETL reach the primary through the
+`dms-redis` HAProxy. In the first local crash test, the Sentinels named the members by hostname,
+lost DNS resolution for the stopped primary, and writes stayed unavailable for 90 s
+([#320](https://github.com/caramisca/cpr-pad-team-19/issues/320)). The members and Sentinels now
+have fixed addresses on the private network `dms-redis-ha` and know each other only by address,
+as the shared `redis-ha` does; the retest is pending. The two
+services report database or Redis outages with `503` and `Retry-After`. Each member and Sentinel
+keeps its data on an individual volume. Runbook and measured results:
+[`docs/LAB_5_MODERATION_DMS_FAILOVER.md`](docs/LAB_5_MODERATION_DMS_FAILOVER.md); the check:
+`python3 scripts/check_moderation_dms_failover.py`.
+
+**A saga for issuing a verdict (Lab 5, Grade 9).** `POST /sagas/decision-verdicts` on the Gateway
+records a decision in `moderation-postgres` and queues the applicant's `VERDICT` direct message in
+`dms-redis` as one saga: the Gateway is the coordinator (log of every attempt and outcome in SQLite
+on the `gateway-data` volume, retries with backoff, recovery after a restart), and when a step is
+refused or never answers it compensates in reverse order (the message cancelled, the decision
+voided). Both services take part on `/internal/sagas/{sagaId}/...`, which the Gateway never routes
+for clients. Until the saga confirms it, the decision is `PENDING`: it cannot be amended or deleted
+(`409 DECISION_PENDING`) and its events stay held, so no other service reacts to a decision that is
+later compensated. Compose: `SAGA_ENABLED` and `SAGA_LOG_PATH` on `gateway-service`, the other
+settings from `GATEWAY_SAGA_*` in `.env`. Contract: [`contracts/saga.md`](contracts/saga.md);
+runbook, demo and measured results: [`docs/LAB_5_SAGA.md`](docs/LAB_5_SAGA.md); the check:
+`python3 scripts/check_saga.py`.
 
 Clients reach both through the Gateway with an API key, as above, for example
 `http://localhost:8080/decisions/{id}` and `http://localhost:8080/notifications/{id}`; their
@@ -2138,13 +3080,30 @@ tickets signed with the same value; while it is empty, the chat is switched off 
 [`gateway-service` — WebSocket negotiation](#gateway-service--websocket-negotiation) and open the
 returned `url` with a WebSocket client before `expiresAt`.
 
-Test them with `docs/postman/moderation-service.postman_collection.json` and
-`docs/postman/discord-dms-service.postman_collection.json`, from Postman (set the collection
-variable `apiKey`) or from the command line:
+Test them with `docs/postman/moderation-service.postman_collection.json`,
+`docs/postman/discord-dms-service.postman_collection.json` and, for the saga,
+`docs/postman/gateway-saga.postman_collection.json`, from Postman (set the collection variable
+`apiKey`) or from the command line. The folder `Lab 5 Saga participant` of the `moderation-service`
+collection calls the participant routes of steps 1 and 3 directly on one instance (record, replay,
+`409 DECISION_PENDING`, confirm, compensate, tombstone); like `Lab 4 Internal diagnostics`, it is
+skipped unless the collection variable `runInternalDiagnostics` is `true` and `internalBaseUrl`
+reaches an instance, because `moderation-service` publishes no port:
 
 ```bash
 npx newman run docs/postman/moderation-service.postman_collection.json --env-var apiKey=<key>
 npx newman run docs/postman/discord-dms-service.postman_collection.json --env-var apiKey=<key>
+npx newman run docs/postman/gateway-saga.postman_collection.json --env-var apiKey=<key>
+```
+
+`<key>` is the part after `postman:` in `GATEWAY_API_KEYS` of `.env`. To run the internal folders
+of the `moderation-service` collection as well, run Newman inside the Compose network, where the
+instances are reachable by name (the two replicas share one Postgres, so it does not matter which
+one answers):
+
+```bash
+docker run --rm --network cpr-pad-team-19_default -v "$PWD/docs/postman:/etc/newman:ro" postman/newman:6-alpine \
+  run /etc/newman/moderation-service.postman_collection.json --env-var baseUrl=http://gateway-service:8080 \
+  --env-var apiKey=<key> --env-var runInternalDiagnostics=true --env-var internalBaseUrl=http://moderation-service:8087
 ```
 
 Both services enforce a request timeout (`504 REQUEST_TIMEOUT`) and a concurrency limit
@@ -2169,9 +3128,9 @@ docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml config   # 
 docker compose -f docker-compose.yml -f docker-compose.lab4-andi.yml up -d
 ```
 
-`docker-compose.yml` already pins the 0.5.0 images with the broker mode off. Apply the overlay only
-once the `message-broker` service is in the stack
-([#243](https://github.com/caramisca/cpr-pad-team-19/issues/243)).
+`docker-compose.yml` itself now runs `message-broker` and turns the broker mode on for the three
+instances, but keeps the three dependencies of `moderation-service` on `Http`. The overlay adds
+only their switch to `Grpc`.
 
 - **Ports.** REST, `GET /health`, `GET /internal/logs` and `GET /metrics` stay on `8087` and `8088`.
   `ServiceEndpoint` listens on that port + 1000 (`9087`, `9088`), cleartext HTTP/2 only. The broker

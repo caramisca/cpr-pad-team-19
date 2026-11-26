@@ -1,0 +1,141 @@
+flowchart TB
+  CLIENT["Client<br/>Postman, Discord-side tools"]
+
+  subgraph EDGE["Edge"]
+    GW["gateway-service<br/>public :8080 (API key), internal :8090 (Compose network only)<br/>routing, load balancing, circuit breakers, discovery snapshot cache<br/>saga coordinator: decision-verdict"]
+    GWDATA[("gateway-data<br/>SQLite saga log")]
+    subgraph CACHE["Gateway cache overlay (Grades 6 and 7)"]
+      SHARDS[("cache-redis-1..3 :6379<br/>independent cache shards")]
+      SHARD4[("cache-redis-4 :6379<br/>profile cache-extra, joins the ring<br/>once listed in nodes.txt")]
+    end
+  end
+
+  subgraph PLATFORM["Platform"]
+    SD["service-discovery :8089<br/>instance registry, topic subscriptions,<br/>health checks, Discord / Telegram alerts"]
+    MB["message-broker<br/>HTTP :8091, gRPC :9091<br/>Call routing, topic fan-out, dead letters,<br/>two-phase commit coordinator"]
+    MBDATA[("broker-data<br/>SQLite topic queues, dead letters, 2PC log")]
+  end
+
+  subgraph MON["Monitoring (profile monitoring)"]
+    PROM["prometheus :9090<br/>published on 127.0.0.1"]
+    GRAF["grafana :3000<br/>published on 127.0.0.1"]
+    BBX["blackbox-exporter :9115<br/>HTTP probes of /health"]
+  end
+
+  subgraph SERVICES["Domain services: every instance registers with service-discovery"]
+    PS["player-service x2<br/>HTTP :8081, gRPC :9081"]
+    SS["server-moderation-session-service x2<br/>HTTP :8082, gRPC :9082"]
+    AS["applicant-service x2<br/>HTTP :8083, gRPC :9083"]
+    CS["credential-service x2<br/>HTTP :8084, gRPC :9084"]
+    RS["server-rules-service x2<br/>HTTP :8085, gRPC :9085"]
+    US["university-record-service x2<br/>HTTP :8086, gRPC :9086"]
+    MS["moderation-service x2<br/>HTTP :8087, gRPC :9087"]
+    DS["discord-dms-service and discord-dms-service-replica<br/>HTTP + WebSocket :8088 (published by discord-dms-service), gRPC :9088"]
+  end
+
+  subgraph DATA["Data stores: Database-per-Service, private to the Compose network"]
+    ETCD["postgres-etcd-1..3 :2379<br/>leader locks of the four Patroni clusters"]
+
+    subgraph PPG["player-postgres: Patroni"]
+      PPGH["HAProxy player-postgres :5432<br/>health :8404"] --> PP1[("player-postgres-1<br/>primary")]
+      PP1 -->|"WAL, synchronous"| PP2[("player-postgres-2<br/>sync standby")]
+      PP1 -->|"WAL"| PP3[("player-postgres-3<br/>standby")]
+    end
+
+    subgraph SPG["session-postgres: Patroni"]
+      SPGH["HAProxy session-postgres :5432"] --> SP1[("session-postgres-1<br/>primary")]
+      SP1 -->|"WAL, synchronous"| SP2[("session-postgres-2<br/>sync standby")]
+      SP1 -->|"WAL"| SP3[("session-postgres-3<br/>standby")]
+    end
+
+    subgraph RPG["record-postgres: Patroni"]
+      RPGH["HAProxy record-postgres :5432"] --> RP1[("record-postgres-1<br/>primary")]
+      RP1 -->|"WAL, synchronous"| RP2[("record-postgres-2<br/>sync standby")]
+      RP1 -->|"WAL"| RP3[("record-postgres-3<br/>standby")]
+    end
+
+    subgraph MPG["moderation-postgres: Patroni"]
+      MPGH["HAProxy moderation-postgres :5432"] --> MP1[("moderation-postgres-1<br/>primary")]
+      MP1 -->|"WAL, synchronous"| MP2[("moderation-postgres-2<br/>sync standby")]
+      MP1 -->|"WAL"| MP3[("moderation-postgres-3<br/>standby")]
+    end
+
+    subgraph RMG["rules-mongo: replica set rs0"]
+      RM1[("rules-mongo-1 :27017<br/>primary")] -->|"oplog"| RM2[("rules-mongo-2<br/>secondary")]
+      RM1 -->|"oplog"| RM3[("rules-mongo-3<br/>secondary")]
+    end
+
+    subgraph DRD["dms-redis: Sentinel"]
+      DRS["dms-redis-sentinel-1..3 :26379<br/>master name dms-redis, quorum 2"]
+      DRH["HAProxy dms-redis :6379<br/>to the member with role:master"]
+      DR1[("dms-redis-1 :6379<br/>primary, fixed address")] -->|"replication, async"| DR2[("dms-redis-2<br/>replica")]
+      DR1 -->|"replication, async"| DR3[("dms-redis-3<br/>replica")]
+      DRS -.->|"monitor, promote"| DR1
+      DRH --> DR1
+    end
+
+    subgraph ACRED["Applicant and Credential Redis HA (Grade 5)"]
+      AR["HAProxy applicant-redis :6379"]
+      CR["HAProxy credential-redis :6379"]
+      AM[("applicant-redis-1..3<br/>elected primary and two replicas")]
+      CM[("credential-redis-1..3<br/>elected primary and two replicas")]
+      ACS["redis-sentinel-1..3 :26379<br/>quorum 2 for each group"]
+      AR -->|elected primary| AM
+      CR -->|elected primary| CM
+      ACS -.->|monitor and promote| AM
+      ACS -.->|monitor and promote| CM
+    end
+  end
+
+  subgraph ANALYTICS["Analytics (Lab 5, Grade 4)"]
+    ETL["etl (pad-etl)<br/>scheduled, every ETL_INTERVAL_SECONDS"]
+    WH[("warehouse-db :5432<br/>PostgreSQL star schema")]
+  end
+
+  subgraph SETUP["One-shot setup jobs: run once at start, exit 0"]
+    SEED["applicant-seed, credential-seed<br/>load the demo data of docs/db/ into an empty Redis"]
+    RMSET["rules-mongo-setup<br/>rs.initiate of rs0"]
+  end
+
+  CLIENT -->|"HTTP + API key"| GW
+  CLIENT -.->|"WebSocket chat, ticket from POST /ws/negotiate"| DS
+
+  GW -->|"HTTP: player, session, moderation, DMS; SSE"| SERVICES
+  GW -->|"gRPC MessageBroker.Call: applicant, credential, rules, record"| MB
+  SERVICES -->|"service-to-service HTTP through :8090"| GW
+  MB <-->|"gRPC Call / Publish / Deliver"| SERVICES
+  GW ==>|"saga steps 1 and 3: /internal/sagas/{id}/decision"| MS
+  GW ==>|"saga step 2: /internal/sagas/{id}/notification"| DS
+  SS ==>|"POST /two-phase/transactions"| MB
+  MB ==>|"2PC prepare / commit / abort"| PS
+  MB ==>|"2PC prepare / commit / abort"| SS
+  GW --- GWDATA
+  GW -->|"consistent hash: GET responses and auth metadata"| SHARDS
+  GW -->|"once listed in nodes.txt"| SHARD4
+  MB --- MBDATA
+
+  SERVICES -->|"register, heartbeat, subscriptions"| SD
+  GW -->|"instance lookup"| SD
+  MB -->|"instance + topic lookup"| SD
+  PROM -->|"scrape /metrics per replica"| SERVICES
+  PROM -->|"scrape /metrics"| MB
+  GRAF --> PROM
+  PROM -->|"probe"| BBX
+  BBX -->|"GET /health"| GW
+  BBX -->|"GET /health"| SD
+
+  PS --> PPGH
+  SS --> SPGH
+  US --> RPGH
+  MS --> MPGH
+  RS -->|"replica set URI"| RM1
+  AS --> AR
+  CS --> CR
+  DS -->|"dms-redis:6379"| DRH
+  PPG & SPG & RPG & MPG <-.->|"leader lock"| ETCD
+
+  ETL -->|"read-only: 4 Postgres and 3 Redis HAProxys, rs0 URI"| DATA
+  ETL -->|"INSERT ... ON CONFLICT"| WH
+  SEED --> AR
+  SEED --> CR
+  RMSET -->|"mongosh"| RM1

@@ -74,6 +74,41 @@
       "key": "seededDecisionId",
       "value": "",
       "type": "string"
+    },
+    {
+      "key": "sagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaModeratorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaDecisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pendingSagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "pendingDecisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "tombstoneSagaId",
+      "value": "",
+      "type": "string"
     }
   ],
   "item": [
@@ -157,7 +192,8 @@
                   "  pm.expect(body.verdict.rulesetVersion).to.be.a(\"number\");",
                   "  pm.expect(body.verdict.evaluatedAt).to.be.a(\"string\");",
                   "});",
-                  "pm.collectionVariables.set(\"acceptDecisionId\", body.id);"
+                  "pm.collectionVariables.set(\"acceptDecisionId\", body.id);",
+                  "pm.test(\"is not part of a saga (Lab 5)\", () => pm.expect(body).to.have.property(\"saga\", null));"
                 ]
               }
             }
@@ -199,7 +235,8 @@
                   "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"acceptDecisionId\"));",
                   "  pm.expect(body.action).to.eql(\"ACCEPT\");",
                   "  pm.expect(body.verdict).to.be.an(\"object\");",
-                  "});"
+                  "});",
+                  "pm.test(\"is not part of a saga (Lab 5)\", () => pm.expect(body).to.have.property(\"saga\", null));"
                 ]
               }
             }
@@ -323,7 +360,8 @@
                   "pm.test(\"lists both decisions, oldest first\", () => {",
                   "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\"));",
                   "  pm.expect(body.decisions.map(d => d.id)).to.eql([pm.collectionVariables.get(\"acceptDecisionId\"), pm.collectionVariables.get(\"rejectDecisionId\")]);",
-                  "});"
+                  "});",
+                  "pm.test(\"none is part of a saga (Lab 5)\", () => body.decisions.forEach(d => pm.expect(d).to.have.property(\"saga\", null)));"
                 ]
               }
             }
@@ -1149,6 +1187,713 @@
               "path": [
                 "health"
               ]
+            }
+          }
+        }
+      ],
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "if (pm.collectionVariables.get('runInternalDiagnostics') !== 'true') pm.execution.skipRequest();"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Lab 5 Saga participant (private network or a published test port only)",
+      "auth": {
+        "type": "noauth"
+      },
+      "item": [
+        {
+          "name": "Record Saga Decision",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sagaId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"sagaSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"sagaModeratorId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"Location points at the new decision\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/decisions/\" + body.id));",
+                  "pm.test(\"is not a replay\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.be.oneOf([undefined, null]));",
+                  "pm.test(\"is evaluated like POST /decisions\", () => {",
+                  "  pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sagaSessionId\"));",
+                  "  pm.expect(body.action).to.eql(\"ACCEPT\");",
+                  "  pm.expect(body.verdict.violatedRules).to.be.an(\"array\");",
+                  "  pm.expect(body.verdict.rulesetVersion).to.be.a(\"number\");",
+                  "});",
+                  "pm.test(\"is PENDING in its saga\", () => pm.expect(body.saga).to.eql({ sagaId: pm.collectionVariables.get(\"sagaId\"), state: \"PENDING\" }));",
+                  "pm.collectionVariables.set(\"sagaDecisionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sagaSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{sagaModeratorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Repeat Record Saga Decision Is A Replay",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is marked Idempotent-Replay\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.eql(\"true\"));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"answers the same decision, still PENDING\", () => {",
+                  "  pm.expect(body.id).to.eql(pm.collectionVariables.get(\"sagaDecisionId\"));",
+                  "  pm.expect(body.saga.state).to.eql(\"PENDING\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sagaSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{sagaModeratorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Amend Pending Saga Decision Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error is DECISION_PENDING\", () => pm.expect(pm.response.json().error).to.eql(\"DECISION_PENDING\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/decisions/{{sagaDecisionId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{sagaDecisionId}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"FLAG\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Void Pending Saga Decision Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error is DECISION_PENDING\", () => pm.expect(pm.response.json().error).to.eql(\"DECISION_PENDING\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/decisions/{{sagaDecisionId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{sagaDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Confirm Saga Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is CONFIRMED\", () => {",
+                  "  pm.expect(body.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\"));",
+                  "  pm.expect(body.state).to.eql(\"CONFIRMED\");",
+                  "  pm.expect(body.decisionId).to.eql(pm.collectionVariables.get(\"sagaDecisionId\"));",
+                  "  pm.expect(body.updatedAt).to.be.a(\"string\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision/confirm",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision",
+                "confirm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Confirm Saga Decision Again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is still CONFIRMED\", () => pm.expect(pm.response.json().state).to.eql(\"CONFIRMED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision/confirm",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision",
+                "confirm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Confirmed Saga Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is CONFIRMED in its saga\", () => pm.expect(pm.response.json().saga).to.eql({ sagaId: pm.collectionVariables.get(\"sagaId\"), state: \"CONFIRMED\" }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/decisions/{{sagaDecisionId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{sagaDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Compensate Confirmed Saga Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is COMPENSATED and names the decision\", () => {",
+                  "  pm.expect(body.state).to.eql(\"COMPENSATED\");",
+                  "  pm.expect(body.decisionId).to.eql(pm.collectionVariables.get(\"sagaDecisionId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision/compensate",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision",
+                "compensate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Compensated Saga Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error is DECISION_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"DECISION_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/decisions/{{sagaDecisionId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{sagaDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Confirm Compensated Saga Returns 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error is SAGA_COMPENSATED\", () => pm.expect(pm.response.json().error).to.eql(\"SAGA_COMPENSATED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{sagaId}}/decision/confirm",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{sagaId}}",
+                "decision",
+                "confirm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Pending Saga Decision",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"pendingSagaId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"sagaSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is PENDING in its saga\", () => pm.expect(body.saga.state).to.eql(\"PENDING\"));",
+                  "pm.collectionVariables.set(\"pendingDecisionId\", body.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{pendingSagaId}}/decision",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{pendingSagaId}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sagaSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{sagaModeratorId}}\",\n  \"action\": \"REJECT\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Compensate Pending Saga Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is COMPENSATED and names the decision\", () => {",
+                  "  pm.expect(body.state).to.eql(\"COMPENSATED\");",
+                  "  pm.expect(body.decisionId).to.eql(pm.collectionVariables.get(\"pendingDecisionId\"));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{pendingSagaId}}/decision/compensate",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{pendingSagaId}}",
+                "decision",
+                "compensate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Voided Pending Decision Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/decisions/{{pendingDecisionId}}",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{pendingDecisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Compensate Unknown Saga Leaves A Tombstone",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"tombstoneSagaId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a COMPENSATED tombstone\", () => {",
+                  "  pm.expect(body.sagaId).to.eql(pm.collectionVariables.get(\"tombstoneSagaId\"));",
+                  "  pm.expect(body.state).to.eql(\"COMPENSATED\");",
+                  "  pm.expect(body.decisionId).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{tombstoneSagaId}}/decision/compensate",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{tombstoneSagaId}}",
+                "decision",
+                "compensate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Compensate The Tombstone Again",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"is still a COMPENSATED tombstone\", () => {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body.state).to.eql(\"COMPENSATED\");",
+                  "  pm.expect(body.decisionId).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{tombstoneSagaId}}/decision/compensate",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{tombstoneSagaId}}",
+                "decision",
+                "compensate"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record After The Tombstone Returns 409",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sagaSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 409\", () => pm.response.to.have.status(409));",
+                  "pm.test(\"error is SAGA_COMPENSATED\", () => pm.expect(pm.response.json().error).to.eql(\"SAGA_COMPENSATED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{tombstoneSagaId}}/decision",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{tombstoneSagaId}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sagaSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{sagaModeratorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Confirm Unknown Saga Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error is SAGA_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SAGA_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/00000000-0000-4000-8000-000000000000/decision/confirm",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "00000000-0000-4000-8000-000000000000",
+                "decision",
+                "confirm"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Record Saga Decision With Missing Fields Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_FAILED\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_FAILED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{internalBaseUrl}}/internal/sagas/{{$guid}}/decision",
+              "host": [
+                "{{internalBaseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{$guid}}",
+                "decision"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"ACCEPT\"\n}"
             }
           }
         }

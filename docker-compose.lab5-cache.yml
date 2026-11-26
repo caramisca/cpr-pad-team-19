@@ -1,0 +1,32 @@
+# Lab 5 Gateway cache for the published Gateway image from docker-compose.yml.
+x-cache-node: &cache-node
+  image: redis:7.4-alpine
+  command: ["sh", "-ec", "exec docker-entrypoint.sh redis-server --requirepass \"$$REDISCLI_AUTH\" --save '' --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru"]
+  environment:
+    REDISCLI_AUTH: ${GATEWAY_CACHE_PASSWORD:?set GATEWAY_CACHE_PASSWORD in .env}
+  networks: [gateway-cache]
+  restart: unless-stopped
+
+services:
+  gateway-service:
+    environment:
+      CACHE_MEMBERSHIP_FILE: /etc/gateway-cache/nodes.txt
+      CACHE_PASSWORD: ${GATEWAY_CACHE_PASSWORD:?set GATEWAY_CACHE_PASSWORD in .env}
+      CACHE_RESPONSE_TTL_SECONDS: ${GATEWAY_CACHE_RESPONSE_TTL_SECONDS:-15}
+      CACHE_AUTH_TTL_SECONDS: ${GATEWAY_CACHE_AUTH_TTL_SECONDS:-60}
+    volumes:
+      - ${GATEWAY_CACHE_CONFIG_DIR:-./docker/gateway-cache}:/etc/gateway-cache:ro
+    networks: [default, gateway-cache]
+  cache-redis-1:
+    <<: *cache-node
+  cache-redis-2:
+    <<: *cache-node
+  cache-redis-3:
+    <<: *cache-node
+  cache-redis-4:
+    <<: *cache-node
+    profiles: [cache-extra]
+
+networks:
+  gateway-cache:
+    internal: true

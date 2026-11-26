@@ -1,0 +1,876 @@
+{
+  "info": {
+    "name": "gateway-saga",
+    "description": "The decision-verdict saga on gateway-service 0.6.0 (Team 19, Topic 3: Student ID, Please; Laboratory 5, Grade 9): POST /sagas/decision-verdicts records a moderation decision (moderation-service, moderation-postgres) and queues the applicant's VERDICT direct message (discord-dms-service, dms-redis) as one saga coordinated by the Gateway, with compensations in reverse order (contracts/saga.md). Run the folders top to bottom, or use the Collection Runner: later requests use the ids captured from Start Saga. Every run uses a new random session, so it can be run again without clearing anything. The Gateway is at baseUrl (http://localhost:8080) and every request sends the API key from the apiKey variable as Authorization: Bearer (set apiKey to one of the keys in GATEWAY_API_KEYS). The applicant and credential are the demo bundles of the credential-service seed (c0000000-0000-4000-8000-000000000001 is issued to applicant a0000000-0000-4000-8000-000000000001). The compensation and the recovery after a Gateway crash need services stopped or killed, so they are checked by scripts/check_saga.py (docs/LAB_5_SAGA.md), not here.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Happy Path",
+      "item": [
+        {
+          "name": "Start Saga",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"sessionId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"moderatorId\", pm.variables.replaceIn(\"{{$guid}}\"));",
+                  "pm.collectionVariables.set(\"idempotencyKey\", \"postman-\" + pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201 (202 while GATEWAY_SAGA_STEP_DELAY_SECONDS is set)\", () => pm.expect(pm.response.code).to.be.oneOf([201, 202]));",
+                  "const saga = pm.response.json();",
+                  "pm.test(\"is a decision-verdict saga\", () => {",
+                  "  pm.expect(saga.sagaId).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(saga.type).to.eql(\"decision-verdict\");",
+                  "  pm.expect(saga.createdAt).to.be.a(\"string\");",
+                  "  pm.expect(saga.updatedAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"lists the three steps in order\", () => pm.expect(saga.steps.map(step => step.name)).to.eql([\"record-decision\", \"queue-verdict-notification\", \"confirm-decision\"]));",
+                  "pm.test(\"Location points at the saga\", () => pm.expect(pm.response.headers.get(\"Location\")).to.eql(\"/sagas/\" + saga.sagaId));",
+                  "pm.test(\"a new saga is not a replay\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.eql(undefined));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.test(\"COMPLETED: every step SUCCEEDED\", () => {",
+                  "    pm.expect(saga.state).to.eql(\"COMPLETED\");",
+                  "    saga.steps.forEach(step => pm.expect(step.state).to.eql(\"SUCCEEDED\"));",
+                  "  });",
+                  "  pm.test(\"names the decision and the notification\", () => {",
+                  "    pm.expect(saga.decisionId).to.match(/^[0-9a-f-]{36}$/);",
+                  "    pm.expect(saga.notificationId).to.match(/^[0-9a-f-]{36}$/);",
+                  "  });",
+                  "  pm.test(\"has no error and no log\", () => pm.expect(saga).to.not.have.any.keys(\"error\", \"message\", \"cause\", \"log\"));",
+                  "}",
+                  "pm.collectionVariables.set(\"sagaId\", saga.sagaId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Saga With Its Log",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// With GATEWAY_SAGA_STEP_DELAY_SECONDS set, Start Saga answered 202: wait for the saga first.",
+                  "const deadline = Date.now() + 30000;",
+                  "const poll = () => pm.sendRequest({",
+                  "  url: pm.variables.replaceIn(\"{{baseUrl}}/sagas/{{sagaId}}\"),",
+                  "  header: { Authorization: \"Bearer \" + pm.variables.get(\"apiKey\") }",
+                  "}, (err, res) => {",
+                  "  if (!err && res.code === 200 && res.json().state === \"RUNNING\" && Date.now() < deadline) setTimeout(poll, 1000);",
+                  "});",
+                  "poll();"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const saga = pm.response.json();",
+                  "pm.test(\"is a decision-verdict saga\", () => {",
+                  "  pm.expect(saga.sagaId).to.match(/^[0-9a-f-]{36}$/);",
+                  "  pm.expect(saga.type).to.eql(\"decision-verdict\");",
+                  "  pm.expect(saga.createdAt).to.be.a(\"string\");",
+                  "  pm.expect(saga.updatedAt).to.be.a(\"string\");",
+                  "});",
+                  "pm.test(\"lists the three steps in order\", () => pm.expect(saga.steps.map(step => step.name)).to.eql([\"record-decision\", \"queue-verdict-notification\", \"confirm-decision\"]));",
+                  "pm.test(\"is the saga just started\", () => pm.expect(saga.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\")));",
+                  "pm.test(\"is COMPLETED (or still RUNNING with a step delay)\", () => pm.expect(saga.state).to.be.oneOf([\"COMPLETED\", \"RUNNING\"]));",
+                  "pm.test(\"the log has a line per call\", () => {",
+                  "  pm.expect(saga.log).to.be.an(\"array\").that.is.not.empty;",
+                  "  saga.log.forEach(line => {",
+                  "    pm.expect(line).to.include.all.keys(\"at\", \"step\", \"action\", \"attempt\", \"outcome\");",
+                  "    pm.expect([\"forward\", \"compensate\", \"state\"]).to.include(line.action);",
+                  "  });",
+                  "  pm.expect(saga.log[0]).to.include({step: null, action: \"state\", outcome: \"RUNNING\"});",
+                  "  if (saga.state === \"COMPLETED\") {",
+                  "    const recordCalls = saga.log.filter(line => line.action === \"forward\" && line.step === \"record-decision\");",
+                  "    pm.expect(recordCalls.some(line => [\"200\", \"201\"].includes(line.outcome))).to.eql(true);",
+                  "  }",
+                  "});",
+                  "if (saga.state === \"COMPLETED\") {",
+                  "  pm.collectionVariables.set(\"decisionId\", saga.decisionId);",
+                  "  pm.collectionVariables.set(\"notificationId\", saga.notificationId);",
+                  "  pm.test(\"the last line is COMPLETED\", () => pm.expect(saga.log[saga.log.length - 1].outcome).to.eql(\"COMPLETED\"));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas/{{sagaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{sagaId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Start Saga Again With The Same Key Returns The Same Saga",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"Idempotent-Replay: true\", () => pm.expect(pm.response.headers.get(\"Idempotent-Replay\")).to.eql(\"true\"));",
+                  "const saga = pm.response.json();",
+                  "pm.test(\"the same saga, no new one\", () => pm.expect(saga.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\")));",
+                  "pm.test(\"the same decision\", () => pm.expect(saga.decisionId).to.eql(pm.collectionVariables.get(\"decisionId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get The Saga's Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is the requested decision\", () => { pm.expect(body.sessionId).to.eql(pm.collectionVariables.get(\"sessionId\")); pm.expect(body.applicantId).to.eql(\"a0000000-0000-4000-8000-000000000001\"); pm.expect(body.action).to.eql(\"ACCEPT\"); });",
+                  "pm.test(\"is CONFIRMED by the saga\", () => pm.expect(body.saga).to.eql({ sagaId: pm.collectionVariables.get(\"sagaId\"), state: \"CONFIRMED\" }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{decisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{decisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List The Session's Decisions",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"one decision, although the saga was started twice\", () => pm.expect(body.decisions.map(d => d.id)).to.eql([pm.collectionVariables.get(\"decisionId\")]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{{sessionId}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{sessionId}}",
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get The Verdict Notification",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.test(\"is a VERDICT for the applicant\", () => { pm.expect(body.type).to.eql(\"VERDICT\"); pm.expect(body.recipientId).to.eql(\"a0000000-0000-4000-8000-000000000001\"); });",
+                  "pm.test(\"metadata names the saga and the decision\", () => {",
+                  "  pm.expect(body.metadata.eventType).to.eql(\"saga.decision-verdict\");",
+                  "  pm.expect(body.metadata.sagaId).to.eql(pm.collectionVariables.get(\"sagaId\"));",
+                  "  pm.expect(body.metadata.decisionId).to.eql(pm.collectionVariables.get(\"decisionId\"));",
+                  "  pm.expect(body.metadata.action).to.eql(\"ACCEPT\");",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/notifications/{{notificationId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "{{notificationId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Amend The Confirmed Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200: the semantic lock ends with the saga\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"amended to FLAG\", () => pm.expect(pm.response.json().action).to.eql(\"FLAG\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"action\": \"FLAG\" }"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/decisions/{{decisionId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "decisions",
+                "{{decisionId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Completed Sagas",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "const sagas = pm.response.json().sagas;",
+                  "pm.test(\"at most 5, all COMPLETED, without logs\", () => {",
+                  "  pm.expect(sagas.length).to.be.within(1, 5);",
+                  "  sagas.forEach(saga => { pm.expect(saga.state).to.eql(\"COMPLETED\"); pm.expect(saga).to.not.have.property(\"log\"); });",
+                  "});",
+                  "pm.test(\"newest first\", () => sagas.slice(1).forEach((saga, i) => pm.expect(Date.parse(saga.createdAt)).to.be.at.most(Date.parse(sagas[i].createdAt))));",
+                  "pm.test(\"includes the saga just run\", () => pm.expect(sagas.map(s => s.sagaId)).to.include(pm.collectionVariables.get(\"sagaId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas?state=COMPLETED&limit=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "COMPLETED"
+                },
+                {
+                  "key": "limit",
+                  "value": "5"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Error Cases",
+      "item": [
+        {
+          "name": "Start Saga With Unknown Credential Fails With 422",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"failedSessionId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 422: moderation-service's answer\", () => pm.response.to.have.status(422));",
+                  "const saga = pm.response.json();",
+                  "pm.test(\"the saga FAILED with moderation's error\", () => {",
+                  "  pm.expect(saga.state).to.eql(\"FAILED\");",
+                  "  pm.expect(saga.error).to.eql(\"CREDENTIAL_NOT_FOUND\");",
+                  "  pm.expect(saga.message).to.be.a(\"string\").and.not.empty;",
+                  "  pm.expect(saga.cause).to.include({ step: \"record-decision\", status: 422 });",
+                  "});",
+                  "pm.test(\"step 1 FAILED, nothing else ran\", () => pm.expect(saga.steps.map(step => step.state)).to.eql([\"FAILED\", \"SKIPPED\", \"SKIPPED\"]));",
+                  "pm.test(\"no decision was recorded\", () => pm.expect(saga.decisionId).to.eql(null));",
+                  "pm.collectionVariables.set(\"failedSagaId\", saga.sagaId);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{failedSessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000099\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Session Of The Failed Saga Has No Decision",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"nothing was left behind\", () => pm.expect(pm.response.json().decisions).to.eql([]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sessions/{{failedSessionId}}/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sessions",
+                "{{failedSessionId}}",
+                "decisions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Start Saga With A Body That Is Not An Object Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR, no saga\", () => { const body = pm.response.json(); pm.expect(body.error).to.eql(\"VALIDATION_ERROR\"); pm.expect(body).to.not.have.property(\"sagaId\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "[1, 2]"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Start Saga With An Idempotency-Key Too Long Returns 400",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"longIdempotencyKey\", \"k\".repeat(129));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{longIdempotencyKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Unknown Saga Returns 404",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set(\"unknownSagaId\", pm.variables.replaceIn(\"{{$guid}}\"));"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error is SAGA_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"SAGA_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas/{{unknownSagaId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "{{unknownSagaId}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Saga With Invalid Uuid Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas/not-a-uuid",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "not-a-uuid"
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Sagas With Unknown State Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas?state=DONE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "state",
+                  "value": "DONE"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Sagas With Limit Zero Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas?limit=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List Sagas With Unknown Parameter Returns 400",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"error is VALIDATION_ERROR\", () => pm.expect(pm.response.json().error).to.eql(\"VALIDATION_ERROR\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/sagas?type=decision-verdict",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "decision-verdict"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Participant Route Through The Gateway Returns 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 404: the Gateway routes no /internal path\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"error is ROUTE_NOT_FOUND\", () => pm.expect(pm.response.json().error).to.eql(\"ROUTE_NOT_FOUND\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/internal/sagas/{{unknownSagaId}}/decision",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "internal",
+                "sagas",
+                "{{unknownSagaId}}",
+                "decision"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Start Saga Without An API Key Returns 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 401\", () => pm.response.to.have.status(401));",
+                  "pm.test(\"error is UNAUTHORIZED\", () => pm.expect(pm.response.json().error).to.eql(\"UNAUTHORIZED\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "noauth"
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"applicantId\": \"a0000000-0000-4000-8000-000000000001\",\n  \"credentialId\": \"c0000000-0000-4000-8000-000000000001\",\n  \"moderatorId\": \"{{moderatorId}}\",\n  \"action\": \"ACCEPT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/sagas/decision-verdicts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sagas",
+                "decision-verdicts"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{apiKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    },
+    {
+      "key": "apiKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "moderatorId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "idempotencyKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "decisionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "notificationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "failedSessionId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "failedSagaId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "longIdempotencyKey",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "unknownSagaId",
+      "value": "",
+      "type": "string"
+    }
+  ]
+}
