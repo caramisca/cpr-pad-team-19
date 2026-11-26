@@ -135,12 +135,17 @@ x-redis-proxy: &redis-proxy
 
 # The replicated Redis of discord-dms-service (Lab 5, Grade 5): dms-redis-1..3 (one primary, two
 # replicas), three Sentinels that promote a replica when the primary is lost, and an HAProxy under
-# the old hostname dms-redis (docker/redis-ha/, docs/LAB_5_MODERATION_DMS_FAILOVER.md).
+# the old hostname dms-redis (docker/redis-ha/, docs/LAB_5_MODERATION_DMS_FAILOVER.md). Members and
+# Sentinels have fixed addresses on the private dms-redis-ha network and know each other only by
+# address: Docker removes a stopped container's name from its DNS, and a Sentinel that looks such a
+# name up stalls and never fails over (#320). Members .11-.13, Sentinels .21-.23; Docker hands out
+# the other addresses only from .128 up.
 x-dms-redis-cluster: &dms-redis-cluster
   REDISCLI_AUTH: ${DMS_REDIS_PASSWORD}
   REDIS_MASTER_NAME: dms-redis
-  REDIS_INITIAL_PRIMARY: dms-redis-1
-  REDIS_SENTINELS: dms-redis-sentinel-1 dms-redis-sentinel-2 dms-redis-sentinel-3
+  REDIS_INITIAL_PRIMARY: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.11
+  REDIS_MEMBERS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.11 ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.12 ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.13
+  REDIS_SENTINELS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.21 ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.22 ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.23
 
 x-dms-redis-member: &dms-redis-member
   image: redis:7.4-alpine
@@ -163,6 +168,9 @@ x-dms-redis-sentinel: &dms-redis-sentinel
     interval: 5s
     timeout: 3s
     retries: 12
+    # A Sentinel created on an existing cluster first asks the members which one is the primary
+    # (up to REDIS_MEMBER_WAIT_SECONDS, sentinel.sh).
+    start_period: 60s
   # Started, not healthy: a member that restarts asks the Sentinels for the primary before it serves,
   # so waiting for the members to be healthy first would only delay both.
   depends_on:
@@ -271,9 +279,11 @@ services:
   # Its REST endpoints are called through the gateway (Lab 2). Port 8088 stays published for the
   # chat WebSocket only: clients open it directly, with the URL that POST /ws/negotiate on the
   # gateway returns. Every instance registers with service-discovery under its container hostname,
-  # and the gateway finds the instances there (Lab 3). Lab 5: it asks the Sentinels which member of
-  # the replicated dms-redis is the primary and follows a failover on its own; while one runs it
-  # answers 503 STORE_UNAVAILABLE with Retry-After. Participant of the decision-verdict saga (Grade 9,
+  # and the gateway finds the instances there (Lab 3). Lab 5: it reaches the replicated dms-redis
+  # through the HAProxy dms-redis, which forwards to the member that is the primary right now and
+  # follows a failover on its own; while one runs it answers 503 STORE_UNAVAILABLE with Retry-After.
+  # It stays on the default network only, so the address it registers is the one the gateway and
+  # the broker reach it on. Participant of the decision-verdict saga (Grade 9,
   # contracts/saga.md) on /internal/sagas/..., called by the gateway.
   discord-dms-service:
     image: andiblindu1/discord-dms-service:0.6.0
@@ -281,8 +291,10 @@ services:
       - "8088:8088"
     environment: &dms-environment
       ServiceDiscovery__Url: http://service-discovery:8089
-      # The Sentinels, not a member: serviceName is the name they monitor the primary under.
-      ConnectionStrings__Redis: dms-redis-sentinel-1:26379,dms-redis-sentinel-2:26379,dms-redis-sentinel-3:26379,serviceName=dms-redis,password=${DMS_REDIS_PASSWORD},abortConnect=false
+      # The HAProxy in front of the primary (the members are on dms-redis-ha, which this service
+      # does not join). On a failover it closes the connections to the old primary, and the client
+      # reconnects to the new one.
+      ConnectionStrings__Redis: dms-redis:6379,password=${DMS_REDIS_PASSWORD},abortConnect=false
       # The gateway's WS_TICKET_SECRET: the chat accepts only the tickets the gateway signs with it.
       Chat__TicketSecret: ${GATEWAY_WS_TICKET_SECRET}
       Limits__RequestTimeoutMs: ${DMS_REQUEST_TIMEOUT_MS:-8000}
@@ -329,11 +341,12 @@ services:
   # and two replicas that copy it asynchronously; dms-redis-sentinel-1..3 watch the primary and, when
   # two of them lose it for 5 s, promote a replica (~10 s in all) and turn the old primary into a
   # replica of the new one once it is back. Under the old hostname dms-redis, an HAProxy forwards to
-  # the current primary for clients that know one address only (the ETL job). Each member and each
-  # Sentinel keeps its configuration on its own volume, so a restart keeps the roles the last
-  # failover gave them.
+  # the current primary: for discord-dms-service and the ETL job, on the default network, the one
+  # way in to the members. Each member and each Sentinel keeps its configuration on its own volume,
+  # so a restart keeps the roles the last failover gave them.
   dms-redis:
     image: haproxy:3.0.31-alpine
+    networks: [default, dms-redis-ha]
     environment:
       REDIS_PASSWORD: ${DMS_REDIS_PASSWORD}
       REDIS_MEMBER_1: dms-redis-1
@@ -360,7 +373,10 @@ services:
     <<: *dms-redis-member
     environment:
       <<: *dms-redis-cluster
-      REDIS_NODE_NAME: dms-redis-1
+      REDIS_NODE_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.11
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.11
     volumes:
       - dms-redis-1-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -369,7 +385,10 @@ services:
     <<: *dms-redis-member
     environment:
       <<: *dms-redis-cluster
-      REDIS_NODE_NAME: dms-redis-2
+      REDIS_NODE_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.12
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.12
     volumes:
       - dms-redis-2-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -378,7 +397,10 @@ services:
     <<: *dms-redis-member
     environment:
       <<: *dms-redis-cluster
-      REDIS_NODE_NAME: dms-redis-3
+      REDIS_NODE_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.13
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.13
     volumes:
       - dms-redis-3-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -387,7 +409,10 @@ services:
     <<: *dms-redis-sentinel
     environment:
       <<: *dms-redis-cluster
-      REDIS_SENTINEL_NAME: dms-redis-sentinel-1
+      REDIS_SENTINEL_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.21
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.21
     volumes:
       - dms-redis-sentinel-1-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -396,7 +421,10 @@ services:
     <<: *dms-redis-sentinel
     environment:
       <<: *dms-redis-cluster
-      REDIS_SENTINEL_NAME: dms-redis-sentinel-2
+      REDIS_SENTINEL_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.22
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.22
     volumes:
       - dms-redis-sentinel-2-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -405,7 +433,10 @@ services:
     <<: *dms-redis-sentinel
     environment:
       <<: *dms-redis-cluster
-      REDIS_SENTINEL_NAME: dms-redis-sentinel-3
+      REDIS_SENTINEL_ADDRESS: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.23
+    networks:
+      dms-redis-ha:
+        ipv4_address: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.23
     volumes:
       - dms-redis-sentinel-3-data:/data
       - ./docker/redis-ha:/redis-ha:ro
@@ -1202,6 +1233,15 @@ networks:
     ipam:
       config:
         - subnet: ${REDIS_HA_IP_PREFIX:-172.30.57}.0/24
+  # discord-dms-service's Redis members and Sentinels (fixed addresses .11-.13 and .21-.23) and the
+  # HAProxy dms-redis. Only Docker's own allocations come from ip_range, so a container started while
+  # a member is stopped never takes the member's address.
+  dms-redis-ha:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.0/24
+          ip_range: ${DMS_REDIS_HA_IP_PREFIX:-172.30.58}.128/25
 
 volumes:
   broker-data:

@@ -22,8 +22,9 @@ together with the notices that close the chat of a session.
 The shared `docker-compose.yml` runs Redis with append-only persistence, so queued notifications,
 retries, and processed event ids survive a restart. Since Lab 5 it is replicated: three members
 (`dms-redis-1/2/3`, one primary and two replicas, each on its own `dms-redis-<n>-data` volume) and
-three Sentinels (`dms-redis-sentinel-1/2/3`). The service asks the Sentinels for the primary and
-ETL connects through `dms-redis` HAProxy. The local crash test found that Sentinel lost DNS
-resolution of the stopped primary, so automatic promotion still needs the fix tracked in
-[#320](https://github.com/caramisca/cpr-pad-team-19/issues/320). See
+three Sentinels (`dms-redis-sentinel-1/2/3`), all on fixed addresses on the private network
+`dms-redis-ha`. The service and ETL connect through the `dms-redis` HAProxy, which forwards to the
+current primary. The first local crash test found that the Sentinels, which then named the members
+by hostname, lost DNS resolution of the stopped primary and did not fail over; they now know the
+members by address ([#320](https://github.com/caramisca/cpr-pad-team-19/issues/320)). See
 [`docs/LAB_5_MODERATION_DMS_FAILOVER.md`](../../LAB_5_MODERATION_DMS_FAILOVER.md).

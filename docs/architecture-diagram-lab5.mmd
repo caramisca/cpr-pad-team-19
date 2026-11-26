@@ -68,7 +68,7 @@ flowchart TB
     subgraph DRD["dms-redis: Sentinel"]
       DRS["dms-redis-sentinel-1..3 :26379<br/>master name dms-redis, quorum 2"]
       DRH["HAProxy dms-redis :6379<br/>to the member with role:master"]
-      DR1[("dms-redis-1 :6379<br/>primary")] -->|"replication, async"| DR2[("dms-redis-2<br/>replica")]
+      DR1[("dms-redis-1 :6379<br/>primary, fixed address")] -->|"replication, async"| DR2[("dms-redis-2<br/>replica")]
       DR1 -->|"replication, async"| DR3[("dms-redis-3<br/>replica")]
       DRS -.->|"monitor, promote"| DR1
       DRH --> DR1
@@ -131,8 +131,7 @@ flowchart TB
   RS -->|"replica set URI"| RM1
   AS --> AR
   CS --> CR
-  DS -->|"ask for the primary"| DRS
-  DS -->|"commands"| DR1
+  DS -->|"dms-redis:6379"| DRH
   PPG & SPG & RPG & MPG <-.->|"leader lock"| ETCD
 
   ETL -->|"read-only: 4 Postgres and 3 Redis HAProxys, rs0 URI"| DATA

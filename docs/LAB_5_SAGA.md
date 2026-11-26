@@ -133,8 +133,9 @@ The coordinator's log lines: `docker compose logs gateway-service | grep Saga`.
 The 26 November 2026 isolated run at CPR commit `152ec94` verified compensation and recovery
 after stopping Gateway between the first and second steps. The saga completed 10.3 seconds after
 Gateway restarted. Refusal and API checks also passed. The published Gateway passed completion
-and replay when rerun with a local diagnostic sorting correction. The repository script still
-needs to handle `step: null` in its log sort before its unmodified complete/replay checks can pass.
+and replay when rerun with a local diagnostic sorting correction. That correction is now in
+`scripts/check_saga.py`: log entries with `step: null` sort first instead of failing the sort
+([#321](https://github.com/caramisca/cpr-pad-team-19/issues/321)).
 
 ## Notes
 
