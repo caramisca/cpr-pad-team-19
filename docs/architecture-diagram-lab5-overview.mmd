@@ -1,0 +1,25 @@
+﻿flowchart TB
+    CLIENT["Postman and Discord clients"]
+    GW["Gateway · API keys · Saga coordinator"]
+    CACHE[("Redis shards<br/>GET and auth cache")]
+    MB["Message Broker<br/>gRPC · events · 2PC"]
+    SD["Service Discovery<br/>registry · health"]
+    APPS["Eight domain services<br/>HTTP · SSE · WebSocket"]
+    DATA["Eight operational stores → ETL → PostgreSQL Warehouse<br/>Patroni · MongoDB · Redis Sentinel"]
+    MON["Prometheus and Grafana"]
+
+    CLIENT --> GW
+    GW --> CACHE
+    GW --> MB
+    GW --> SD
+    GW --> APPS
+    MB <-->|2PC and events| APPS
+    APPS --> DATA
+    APPS -.-> MON
+
+    classDef app fill:#edf4ff,stroke:#3966a5,color:#142840
+    classDef data fill:#e8f7ef,stroke:#367957,color:#153325
+    classDef analytics fill:#fff3dc,stroke:#9d650c,color:#432a08
+    class GW,MB,SD,APPS app
+    class CACHE data
+    class DATA analytics

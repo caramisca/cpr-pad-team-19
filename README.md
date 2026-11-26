@@ -4,29 +4,201 @@ Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (
 
 A distributed system of eight domain services, Gateway, Service Discovery and Message Broker powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
-## Laboratory 5: run and verify
+## Laboratory 5: sharding and replication
 
-The Lab 5 stack uses published `0.6.0` application images. Create `.env` from `.env.example`
-and set local passwords, `GATEWAY_API_KEYS` and `GATEWAY_CACHE_PASSWORD`. Use the monitoring profile
-and the cache overlay to reproduce the Lab 5 demonstration. The Andi overlay enables gRPC for
-Moderation and DMS. The Mihai overlay specifies the Applicant and Credential adapters.
+[![Lab 5 architecture overview. The client enters through the Gateway, which uses a sharded Redis cache and coordinates Saga. The Broker coordinates 2PC. ETL reads eight operational stores and loads the PostgreSQL warehouse.](docs/architecture-diagram-lab5-overview.png)](docs/architecture-diagram-lab5.png)
+
+[Open the full deployment diagram](docs/architecture-diagram-lab5.png) ·
+[Deployment details and service counts](#laboratory-5-the-complete-deployment) ·
+[Full Mermaid source](docs/architecture-diagram-lab5.mmd) and [overview source](docs/architecture-diagram-lab5-overview.mmd)
+
+### Start the demonstration stack
+
+Create `.env` from [`.env.example`](.env.example) and set the local database passwords, two
+distinct `GATEWAY_API_KEYS` clients, `GATEWAY_WS_TICKET_SECRET` and `GATEWAY_CACHE_PASSWORD`.
+Keep `DMS_PUBLIC_WS_URL` aligned with the published DMS endpoint for the WebSocket demo.
+The overlays enable the Applicant, Credential, Moderation and DMS gRPC adapters, the
+Gateway cache and the monitoring profile. Run these PowerShell commands from the CPR root.
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab4-andi.yml -f docker-compose.lab5-cache.yml -f docker-compose.monitoring.yml --profile monitoring up -d --wait
+$env:COMPOSE_PROJECT_NAME = 'pad-lab5-demo'
+$env:COMPOSE_PROFILES = 'monitoring'
+$env:COMPOSE_FILE = @(
+    'docker-compose.yml', 'docker-compose.lab4-mihai.yml',
+    'docker-compose.lab4-andi.yml', 'docker-compose.lab5-cache.yml',
+    'docker-compose.monitoring.yml'
+) -join [IO.Path]::PathSeparator
+docker compose up -d --pull always --wait
 ```
 
-Gateway serves `http://localhost:8080/health`. The public API uses the key in `.env`.
-Grafana is on port 3000 and Prometheus is on port 9090. For the individual demonstrations see the
-[deployment diagram](#laboratory-5-the-complete-deployment),
-[PostgreSQL failover](docs/LAB_5_DATABASE_FAILOVER.md),
-[2PC runbook](docs/LAB_5_TWO_PHASE_COMMIT.md) and [Saga runbook](docs/LAB_5_SAGA.md).
+Use a dedicated Compose project for the failure tests. They intentionally stop members of
+the clusters. If another project already owns a Redis HA subnet, choose a free
+`REDIS_HA_IP_PREFIX` or `DMS_REDIS_HA_IP_PREFIX` in `.env`.
 
-An isolated 26 November run of CPR commit `152ec94` passed 13 Newman collections, all five 2PC
-scenarios, SSE and WebSocket chat. Prometheus had 20 UP targets and Grafana served 42 panels.
-DMS Redis did not resume writes after the primary stopped in that run. The follow-up ETL fix
-in #331 preserves the complete `deceptions` list and passed migration and repeated-load checks
-against a local PostgreSQL test database. See [release #328](https://github.com/caramisca/cpr-pad-team-19/pull/328)
-for final integrated validation.
+### Grade 1 · Start and inspect the system
+
+Run `docker compose ps -a` and open [Gateway health](http://localhost:8080/health).
+The application replicas should be running. The three one-shot jobs for Applicant, Credential
+and Rules MongoDB should exit with code 0. Open [Prometheus targets](http://localhost:9090/targets)
+and the [Grafana dashboard](http://localhost:3000/d/lab4-services) to inspect the live services.
+
+### Grade 2 · Account for the existing architecture
+
+Start at the [full deployment diagram](docs/architecture-diagram-lab5.png) and trace HTTP,
+gRPC, event delivery, WebSocket chat and SSE. The diagram labels the Gateway's public and
+private listeners, Service Discovery, the Message Broker, the eight domain services and
+their replicas, seed jobs, health probes, and the volumes that hold the Broker and Gateway logs.
+Use `docker compose config --services` and `docker compose ps -a` to match the components
+shown in the diagram to the configured services and running containers.
+
+### Grade 3 · Trace the new analytics and cache components
+
+Trace two paths in the diagram. The first is eight operational stores → `etl` →
+the `warehouse-db` PostgreSQL database. The second is client → Gateway → the Redis cache
+shards. The warehouse stores facts and dimensions for analytics. The cache stores
+short-lived GET responses and API client lookups for the request path.
+
+### Grade 4 · Run ETL and read the warehouse
+
+The [ETL job](etl/main.py) reads four PostgreSQL clusters, the Rules MongoDB replica set and
+three Redis groups. It joins Session queue rows with Applicant and Credential data and maps
+DMS notification counts to `dim_services`. It preserves every value in an Applicant's
+`deceptions` array and the `role` from Redis. The [warehouse schema](etl/schema.sql) declares
+three fact tables and four dimensions. The [loader](etl/load.py) uses primary-key upserts
+so a repeat run updates the same rows.
+
+```powershell
+docker compose logs --tail 45 etl
+docker compose exec -T warehouse-db psql -U warehouse -d warehouse -c "SELECT role, deceptions FROM fact_applicants WHERE deceptions IS NOT NULL LIMIT 5;"
+docker compose exec -T warehouse-db psql -U warehouse -d warehouse -c "SELECT notification_count, etl_at FROM dim_services WHERE service_name = 'discord-dms-service';"
+```
+
+Generate a shift and a verdict before reading the warehouse to produce reportable data.
+Look for `ETL run completed` and next-run `Upserted` messages. Repeat the queries after
+another `ETL_INTERVAL_SECONDS` interval with the source data stable. Check that the
+values and counts are preserved and that `etl_at` advances.
+
+### Grade 5 · Fail over the replicated stores
+
+Player, Session, University Record and Moderation use three-member PostgreSQL/Patroni clusters.
+Rules uses a three-member MongoDB replica set. Applicant, Credential and DMS use three-member
+Redis groups with Sentinel and stable HAProxy service names. DMS runs Sentinel and its Redis
+members on a private network with fixed addresses so a stopped Redis member can still be
+identified during the election.
+
+```powershell
+python scripts/check_postgres_failover.py
+python scripts/check_redis_failover.py --project $env:COMPOSE_PROJECT_NAME --env-file .env
+python scripts/check_moderation_dms_failover.py
+docker compose logs --tail 100 dms-redis-sentinel-1 dms-redis-sentinel-2 dms-redis-sentinel-3
+```
+
+Look for the old and promoted primary, the time until writes resume, the retained marker
+and the old primary rejoining as a replica. For the other stores use the
+[PostgreSQL runbook](docs/LAB_5_DATABASE_FAILOVER.md),
+[Moderation/DMS runbook](docs/LAB_5_MODERATION_DMS_FAILOVER.md),
+[Rules runbook](docs/db/server-rules-service/README.md) and
+[University Record runbook](docs/db/university-record-service/README.md).
+
+### Grade 6 · Cache GET responses and authentication
+
+The Gateway caches selected successful GET responses with the API client included in the
+cache key. A successful write invalidates cached responses by advancing the generation.
+Valid API key lookups have a separate hashed key and TTL. In the
+[Gateway Cache Postman collection](docs/postman/gateway-cache.postman_collection.json),
+set two valid client keys in `apiKey` and `secondApiKey`. Look for `X-Cache: MISS`,
+then `HIT`, a separate `MISS` for the second client and updated data after a write.
+
+```powershell
+docker compose exec -T cache-redis-1 redis-cli --scan --pattern 'gateway:auth:*'
+```
+
+Repeat the Redis scan on the other two shards if needed. Send a valid authenticated
+request immediately before scanning to stay within the auth TTL. Redis stores hashed
+cache keys. Keep Bearer credentials out of logs and screenshots.
+
+### Grade 7 · Add a cache shard without restarting Gateway
+
+The Gateway hashes keys onto a ring of virtual nodes. Adding a node moves a portion of the
+keys to the new shard. The cache overlay starts three independent Redis nodes and provides
+a fourth through the `cache-extra` profile.
+
+```powershell
+docker compose --profile cache-extra up -d cache-redis-4
+docker compose logs -f gateway-service
+```
+
+Add `cache-redis-4:6379` to `docker/gateway-cache/nodes.txt`, or to the equivalent file in
+`GATEWAY_CACHE_CONFIG_DIR` if you set it. Look for `Gateway cache ring updated: 4 Redis nodes`.
+Issue authenticated GETs with different query strings, then run
+`docker compose exec -T cache-redis-4 redis-cli DBSIZE` and show that the new shard holds
+keys. Remove the line from `nodes.txt`, watch the log return to three nodes, then stop the
+optional fourth shard. The same Gateway container handles both changes.
+
+### Grade 8 · Close a shift with two-phase commit
+
+`POST /sessions/{id}/close` uses the Message Broker as coordinator. Session and Player
+prepare their database updates and receive the persisted commit or abort decision.
+The [2PC check](scripts/check_two_phase_commit.py) covers commit, a negative vote,
+participant crash, coordinator crash and PostgreSQL failover while prepared.
+
+Set `BROKER_TWO_PHASE_PHASE_TWO_DELAY_SECONDS=4` in `.env` so the crash probes can stop
+a participant or coordinator between phases. Apply the setting and run the check.
+
+```powershell
+docker compose up -d --no-deps --wait message-broker
+python scripts/check_two_phase_commit.py --scenario all
+docker compose logs --tail 80 message-broker
+```
+
+For an isolated failover run, increase the delay to 12 seconds if the broker starts
+phase two before Docker can stop the primary. Run the check with
+`--scenario database-failover`. During recovery the initial close request can return
+`503 DEPENDENCY_UNAVAILABLE`. Inspect the broker's persisted outcome and
+`GET /sessions/{id}` to confirm the same shift closes, the moderator receives credit
+once and the prepared transactions are cleared.
+
+Show the committed or aborted outcome and the state in both services. The
+[2PC runbook](docs/LAB_5_TWO_PHASE_COMMIT.md) and [contract](contracts/two-phase.md)
+describe the endpoints and failure cases.
+
+### Grade 9 · Run and recover a verdict saga
+
+`POST /sagas/decision-verdicts` makes the Gateway record a moderation decision, enqueue a
+DMS notification and confirm the decision. Each step commits independently. The Gateway
+stores progress in SQLite, compensates completed steps in reverse order when needed and
+resumes after a restart. Repeating an `Idempotency-Key` returns the existing Saga.
+
+Set `GATEWAY_SAGA_STEP_DELAY_SECONDS=4` in `.env` for the crash window. Apply it and
+run all six scenarios.
+
+```powershell
+docker compose up -d --no-deps --wait gateway-service
+python scripts/check_saga.py --scenario all
+docker compose logs --tail 80 gateway-service
+```
+
+Show completion, replay, credential rejection, compensation while DMS is unavailable,
+Gateway restart recovery and the API checks. The [Saga runbook](docs/LAB_5_SAGA.md)
+and [contract](contracts/saga.md) describe the states and DTOs. Set both demo delays back
+to `0` and recreate Gateway and Broker after demonstrating the crash cases.
+
+### Grade 10 · Verify the delivery
+
+Run [the Postman collections](docs/postman) against the Gateway and run the internal
+diagnostic folders from the Compose network. Check application image tags and public
+manifests, then inspect Prometheus and Grafana.
+
+```powershell
+python scripts/check_lab4_release.py --require-published
+python scripts/check_lab4_monitoring.py --scope team
+docker compose images
+```
+
+The [service API reference in this README](#endpoint-contracts), the
+[2PC contract](contracts/two-phase.md) and the [Saga contract](contracts/saga.md) record
+the endpoint and DTO details. Compare the diagram with the stack actually run and use the
+collection assertion counts, failed assertions and image digests as presentation evidence.
 
 ## Laboratory 4: Breaking and Brokering
 
@@ -335,6 +507,8 @@ most.
 ## Architecture Diagram
 
 ### Laboratory 5: the complete deployment
+
+[Open the high-resolution deployment diagram](docs/architecture-diagram-lab5.png).
 
 The diagram below shows every container of the common Compose configuration (`docker-compose.yml`,
 plus `docker-compose.monitoring.yml` for the monitoring profile and `docker-compose.lab5-cache.yml`
