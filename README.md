@@ -4,13 +4,37 @@ Common Public Repository (CPR) for Team 19 — **Topic 3: Student ID, Please** (
 
 A distributed system of eight domain services, Gateway, Service Discovery and Message Broker powering a cooperative verification and moderation platform set within a university Discord server, where student credentials, academic records, and dynamic access rules are evaluated by moderator teams in real time.
 
+## Laboratory 5: run and verify
+
+The Lab 5 stack uses published `0.6.0` application images. Create `.env` from `.env.example`
+and set local passwords, `GATEWAY_API_KEYS` and `GATEWAY_CACHE_PASSWORD`. Use the monitoring profile
+and the cache overlay to reproduce the Lab 5 demonstration. The Andi overlay enables gRPC for
+Moderation and DMS. The Mihai overlay specifies the Applicant and Credential adapters.
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.lab4-mihai.yml -f docker-compose.lab4-andi.yml -f docker-compose.lab5-cache.yml -f docker-compose.monitoring.yml --profile monitoring up -d --wait
+```
+
+Gateway serves `http://localhost:8080/health`. The public API uses the key in `.env`.
+Grafana is on port 3000 and Prometheus is on port 9090. For the individual demonstrations see the
+[deployment diagram](#laboratory-5-the-complete-deployment),
+[Redis and cache runbook](docs/LAB_5_MIHAI.md),
+[PostgreSQL failover](docs/LAB_5_DATABASE_FAILOVER.md),
+[2PC runbook](docs/LAB_5_TWO_PHASE_COMMIT.md) and [Saga runbook](docs/LAB_5_SAGA.md).
+
+An isolated 26 November run of CPR commit `152ec94` passed 13 Newman collections, all five 2PC
+scenarios, SSE and WebSocket chat. Prometheus had 20 UP targets and Grafana served 42 panels.
+DMS Redis did not resume writes after the primary stopped in that run. The follow-up ETL fix
+in #331 preserves the complete `deceptions` list and passed migration and repeated-load checks
+against a local PostgreSQL test database. See [release #328](https://github.com/caramisca/cpr-pad-team-19/pull/328)
+for final integrated validation.
+
 ## Laboratory 4: Breaking and Brokering
 
 The common Compose configuration pins each application image to its verified release. The
 release checks verify linux/amd64 and linux/arm64 manifests and compare each pinned tag with
 `latest`. Source gitlinks pin individual service commits.
-The [current acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records exact commits,
-test results and the remaining release gates. These version pins alone do not certify Lab 4.
+The [Lab 4 acceptance report](docs/LAB_4_RELEASE_READINESS_2026-11-12.md) records the 12 November commits and test results.
 
 Start the complete documented Lab 4 mode after creating `.env` from `.env.example` and setting
 local credentials. Set `BROKER_GRPC_URL=message-broker:9091`,
@@ -30,14 +54,13 @@ gRPC ports, logs, metrics and health endpoints stay inside the Compose network.
 | Component | Current implementation |
 |---|---|
 | Gateway | Optional gRPC `MessageBroker.Call` for Applicant/Credential/Rules/Record; other client routes and Session SSE still use HTTP. `GET /logs` downloads correlated NDJSON; retired internal event routes are blocked |
-| Broker 0.5.0 main | Thread-per-request gRPC; service-instance selection and breakers; per-subscriber topic fan-out, SQLite topic queues and DLC; `/topics` and `/dead-letters` |
-| Broker current dev | PR #11 adds in-memory subscriber request queues, default Rules/Record only; a new release is pending |
+| Broker | Thread-per-request gRPC, instance selection and breakers, per-subscriber topic fan-out, SQLite topic queues and dead letters. Release `0.6.0` adds in-memory subscriber request queues for Rules and Record by default. |
 | Service Discovery | Physical instance registry with topic subscriptions; broker uses instance and topic lookups over the HTTP control plane |
 | Applicant / Credential (Mihai) | gRPC adapters and dependency calls, Redis shared inbox/outbox, session/applicant cleanup, logs and metrics; enabled in the base Compose |
 | Player / Session (Daria) | gRPC adapters, topic consumers and Session publisher; broker dependency modes configured in `.env` |
 | Moderation / DMS (Andi) | gRPC adapters, outbox/consumers, private logs/metrics and DMS Redis chat relay; enabled by the Andi overlay |
 | Rules / Record (Diana) | gRPC adapters; both require `BROKER_GRPC_URL=message-broker:9091` at startup (configured in base Compose) |
-| Monitoring | All eight domain services scraped per replica plus Broker/Prometheus. Dashboard coverage and P95 still have gaps documented in the report |
+| Monitoring | All eight domain services scraped per replica, plus Broker and Prometheus. Gateway and Service Discovery have blackbox health probes. |
 
 ```mermaid
 flowchart LR
@@ -54,9 +77,9 @@ flowchart LR
   GRAF[Grafana] --> PROM
 ```
 
-The diagram shows the current mixed transport. Subscriber request queues in Broker dev do not
-yet cover every Gateway route. Live service-load feeding and same-call rerouting remain
-unverified/incomplete; do not claim all cumulative grade criteria from a successful basic flow.
+The diagram shows the current mixed transport. Broker request queues cover Rules and Record by
+default. The broker skips instances with open circuits on subsequent calls. Feeding live service
+load into the selector and retrying a failed call on another instance remain Lab 4 follow-ups.
 
 Use the [Lab 4 runbook](docs/LAB_4_RUNBOOK.md), [message contract](docs/MESSAGE_BROKER_CONTRACT.md),
 [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md) and
@@ -2618,7 +2641,7 @@ Public images pushed so far, tagged `username/service-name:version` per the lab 
 | `service-discovery` | [`drateeva/service-discovery`](https://hub.docker.com/r/drateeva/service-discovery) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | No external database; in-memory registry with one Uvicorn worker. Port `8089` (internal only, never published to the host). Optional: `INSTANCE_TTL_SECONDS` (default `30`), `POLL_INTERVAL_SECONDS` (default `10`), `REQUEST_TIMEOUT_SECONDS` (default `5`), `MAX_CONCURRENT_REQUESTS` (default `200`). Developer alerts are optional; see the [Service Discovery contract](docs/SERVICE_DISCOVERY_CONTRACT.md). |
 | `message-broker` | [`drateeva/message-broker`](https://hub.docker.com/r/drateeva/message-broker) (`linux/amd64`, `linux/arm64`), Lab 4: `0.5.0`, Lab 5: `0.6.0` | No external database: durable topic queues, the dead letter channel and (Lab 5) the two-phase commit decision log in SQLite at `QUEUE_STORE_PATH` (`/data/broker.sqlite3` on the `broker-data` volume in `docker-compose.yml`). `DISCOVERY_URL` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, it registers nowhere and finds no topic subscribers). Ports `8091` (HTTP: health, metrics, topics, events, dead letters, two-phase transactions) and `9091` (gRPC `MessageBroker`), internal only. Optional: `BROKER_MAX_THREADS` (default `32`), `QUEUE_CAPACITY` (default `10000`), `QUEUE_LEASE_SECONDS` (default `10`), `MAX_DELIVERY_ATTEMPTS` (default `0`: no limit), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `17.5`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `REQUEST_QUEUE_SERVICES` (`0.6.0`, default `server-rules-service,university-record-service`), Lab 5 two-phase commit: `TWO_PHASE_PREPARE_TIMEOUT_SECONDS` (default `3`), `TWO_PHASE_COMMIT_TIMEOUT_SECONDS` (default `2`), `TWO_PHASE_RETRY_SECONDS` (default `5`), `TWO_PHASE_PHASE_TWO_DELAY_SECONDS` (default `0`, demonstrations only); see the [Message Broker contract](docs/MESSAGE_BROKER_CONTRACT.md) and [`contracts/two-phase.md`](contracts/two-phase.md). |
 | `moderation-service` | [`andiblindu1/moderation-service`](https://hub.docker.com/r/andiblindu1/moderation-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: the replicated `moderation-postgres` cluster, reached through its HAProxy); `ConnectionStrings__Moderation` (Npgsql connection string), and `Downstream__<Name>__Mode` (`Http` or `Mock`) with `Downstream__<Name>__BaseUrl` for `Credential`, `Rules`, and `Records` (see the service's README); `docker-compose.yml` points all three at the Gateway's internal port, `http://gateway-service:8090`. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `Downstream__TimeoutSeconds` (default `3`), `CircuitBreaker__Failures` (default `3`), `CircuitBreaker__WindowSeconds` (default the request timeout x 3.5, `28`), `CircuitBreaker__OpenSeconds` (default the window), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname), `Database__ConnectTimeoutSeconds` (default `3`: longest wait to open a database connection before `503 DATABASE_UNAVAILABLE` with `Retry-After`). Lab 5 saga participant: the internal routes under `/internal/sagas/{sagaId}/decision`, no setting; see [`contracts/saga.md`](contracts/saga.md). Port `8087` (internal only — route through the gateway on `8080`). |
-| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 (Lab 5: three members `dms-redis-1/2/3` watched by three Sentinels `dms-redis-sentinel-1/2/3`, master name `dms-redis`); `ConnectionStrings__Redis` (StackExchange.Redis connection string: the server, for example `host:6379,password=...`, or the Sentinels with `serviceName=`, as in `docker-compose.yml`). Returns `503 STORE_UNAVAILABLE` with `Retry-After: 5` within 3 s during a failover. Optional Redis timeouts: `Storage__ConnectTimeoutMilliseconds` and `Storage__CommandTimeoutMilliseconds` (default `3000` each). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
+| `discord-dms-service` | [`andiblindu1/discord-dms-service`](https://hub.docker.com/r/andiblindu1/discord-dms-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | Redis 7 (Lab 5: three members `dms-redis-1/2/3` watched by three Sentinels `dms-redis-sentinel-1/2/3`, master name `dms-redis`); `ConnectionStrings__Redis` (StackExchange.Redis connection string: the server, for example `host:6379,password=...`, or the Sentinels with `serviceName=`, as in `docker-compose.yml`). Reports `503 STORE_UNAVAILABLE` with `Retry-After` when the Redis store is unavailable. Optional Redis timeouts: `Storage__ConnectTimeoutMilliseconds` and `Storage__CommandTimeoutMilliseconds` (default `3000` each). For the chat, `Chat__TicketSecret`: the same value as the Gateway's `WS_TICKET_SECRET`, at least 32 bytes; while it is empty, the chat is switched off. `ServiceDiscovery__Url` (`http://service-discovery:8089` in `docker-compose.yml`; while it is empty, the instance does not register). Optional: `Chat__MaxConnections` (default `100`), `Limits__RequestTimeoutMs` (default `8000`), `Limits__MaxConcurrentRequests` (default `100`), `ServiceDiscovery__InstanceUrl` (default the container's IPv4 address and port), `ServiceDiscovery__InstanceId` (default the hostname). Port `8088` (REST through the gateway on `8080`; published only for the chat WebSocket). |
 | `gateway-service` | [`diana7376/gateway-service`](https://hub.docker.com/r/diana7376/gateway-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | No external dependencies (Lab 5: the saga log, one SQLite file on the `gateway-data` volume at `/data`). Env vars: `PLAYER_SERVICE_URL`, `SESSION_SERVICE_URL`, `APPLICANT_SERVICE_URL`, `CREDENTIAL_SERVICE_URL`, `RULES_SERVICE_URL`, `RECORD_SERVICE_URL`, `MODERATION_SERVICE_URL`, `DMS_SERVICE_URL`, `AUTH_API_KEYS` (`<client>:<key>` pairs, each key ≥ 32 bytes), `GATEWAY_INTERNAL_PORT` (see `docker-compose.yml`). Optional: `REQUEST_TIMEOUT_SECONDS` (default `10`), `MAX_CONCURRENT_REQUESTS` (default `200`), `CIRCUIT_BREAKER_FAILURES` (default `3`), `CIRCUIT_BREAKER_WINDOW_SECONDS` (default `REQUEST_TIMEOUT_SECONDS` x 3.5, `35`), `CIRCUIT_BREAKER_OPEN_SECONDS` (default the window), `WS_TICKET_SECRET` (≥ 32 bytes, the same value as `Chat__TicketSecret` of `discord-dms-service`; without it `POST /ws/negotiate` answers `503 WEBSOCKET_UNAVAILABLE`), `DMS_PUBLIC_WS_URL` (default `ws://localhost:8088`), `WS_TICKET_TTL_SECONDS` (default `30`). Lab 5 saga coordinator: `SAGA_ENABLED` (default `true`), `SAGA_LOG_PATH` (default `/data/gateway-sagas.sqlite3`), `SAGA_STEP_ATTEMPTS` (default `3`), `SAGA_RETRY_BACKOFF_SECONDS` (default `1`), `SAGA_MAX_BACKOFF_SECONDS` (default `30`), `SAGA_STEP_TIMEOUT_SECONDS` (default `5`), `SAGA_RESPONSE_TIMEOUT_SECONDS` (default `8`), `SAGA_RECOVERY_INTERVAL_SECONDS` (default `5`), `SAGA_STEP_DELAY_SECONDS` (default `0`); see [`contracts/saga.md`](contracts/saga.md). Port `8080` (clients, API key required); internal port `8090` (services only, never published). |
 | `server-rules-service` | [`diana7376/server-rules-service`](https://hub.docker.com/r/diana7376/server-rules-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | MongoDB 7 (Lab 5: 3-member replica set `rules-mongo-1/2/3`, RS name `rs0`); `MONGODB_URI` (RS-aware URI with all three seed hosts and `?replicaSet=rs0`). Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9085), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s during a primary election. Port `8085` (internal only — route through gateway on `8080`). |
 | `university-record-service` | [`diana7376/university-record-service`](https://hub.docker.com/r/diana7376/university-record-service) (`linux/amd64`, `linux/arm64`), Lab 5: `0.6.0` | PostgreSQL 16 (Lab 5: 3-member Patroni cluster `record-postgres-1/2/3`, HAProxy at `record-postgres`); `DB_URL` (`jdbc:postgresql://record-postgres:5432/university_record` — unchanged), `DB_USERNAME`, `DB_PASSWORD`. Optional: `MAX_THREADS` (default 200), `REQUEST_TIMEOUT_MS` (default 5000), `GRPC_PORT` (default 9086), `BROKER_GRPC_URL`, `SD_URL`. Returns `503 DATABASE_UNAVAILABLE` within 3 s (HikariCP `connectionTimeout`) during a failover. Port `8086` (internal only — route through gateway on `8080`). |
@@ -2655,13 +2678,15 @@ git submodule update --init --recursive
 
 ### Working with Submodules
 
-To pull the latest commits for all microservices:
+Use `git submodule update --init --recursive` to check out the service commits pinned by CPR.
+A public image is sufficient to run Compose. Reading a private service's source requires access
+granted by its owner.
 
-```bash
-git submodule update --remote --merge
-```
-
-To contribute to a specific microservice, navigate to its respective directory, create a feature branch, and follow the team's contribution guidelines.
+For a service release, merge its reviewed `dev` into `main` and confirm that the publication job
+produced the versioned Linux amd64 and arm64 image. In CPR `dev`, update the submodule to the
+verified release commit and update the Compose image and release checks when the tag changes.
+Run the integration tests on that CPR commit. The last step is the CPR `dev` to `main` release
+PR, using **Create a merge commit**. Follow the contribution workflow for service feature changes.
 
 ### Calling the system through the Gateway (Lab 2)
 
@@ -2742,8 +2767,10 @@ star schema: `fact_decisions`, `fact_shifts`, `fact_applicants` (facts) and `dim
 `dim_rulesets`, `dim_students`, `dim_services` (dimensions). The `etl` container
 (`diana7376/pad-etl:0.6.0`) reads all 8 source databases read-only on a schedule
 (`ETL_INTERVAL_SECONDS`, default 5 min) and loads the warehouse idempotently via
-`INSERT ... ON CONFLICT DO UPDATE`. A source database being temporarily unavailable produces a
-warning log and the run continues for the remaining sources.
+`INSERT ... ON CONFLICT DO UPDATE`. The applicant fact stores `role` and the full Redis
+`deceptions` list as JSON text. An active legitimate applicant has `[]`, while an absent Redis
+record yields `NULL`. The DMS row in `dim_services` stores the Redis notification count.
+The ETL starts after the warehouse and both Redis proxy health checks pass.
 
 **Several instances (Lab 3).** Each service runs `PLAYER_REPLICAS` / `SESSION_REPLICAS` replicas
 (`2` by default), with no fixed container name and no published port, all against the service's one
@@ -2842,14 +2869,12 @@ keeps one member the primary, one a synchronous and one a streaming standby, wit
 in the shared `postgres-etcd-1..3`. The old hostname `moderation-postgres` is now HAProxy, which
 always forwards to the current primary, so the connection string is unchanged. `dms-redis` is three
 Redis 7 members (`dms-redis-1..3`: a primary and two replicas, AOF on each) watched by three
-Sentinels (`dms-redis-sentinel-1..3`, quorum 2), which promote a replica when the primary is lost
-for 5 s. `discord-dms-service` asks the Sentinels for the primary (`ConnectionStrings__Redis`
-lists them, with `serviceName=dms-redis`) and follows a failover on its own; the old hostname
-`dms-redis` is HAProxy to the member that reports `role:master`, for the ETL job. Meanwhile
-`moderation-service` answers `503 DATABASE_UNAVAILABLE` and `discord-dms-service`
-`503 STORE_UNAVAILABLE`, both with `Retry-After: 5` and within 3 s. Every member and every Sentinel
-keeps its data on its own volume; the Lab 4 volumes `moderation-postgres-data` / `dms-redis-data`
-are no longer used. Runbook, demo and measured results:
+Sentinels (`dms-redis-sentinel-1..3`, quorum 2). DMS asks the Sentinels for the primary using
+`serviceName=dms-redis`. The `dms-redis` HAProxy endpoint is used by ETL. In the local crash test,
+Sentinels lost DNS resolution for the stopped primary and writes stayed unavailable for 90 s.
+Track the correction in [#320](https://github.com/caramisca/cpr-pad-team-19/issues/320). The two
+services report database or Redis outages with `503` and `Retry-After`. Each member and Sentinel
+keeps its data on an individual volume. Runbook and measured results:
 [`docs/LAB_5_MODERATION_DMS_FAILOVER.md`](docs/LAB_5_MODERATION_DMS_FAILOVER.md); the check:
 `python3 scripts/check_moderation_dms_failover.py`.
 

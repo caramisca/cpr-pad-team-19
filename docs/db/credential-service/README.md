@@ -21,9 +21,10 @@ these copies.
   a forgery with a fake authority and a fabricated hash. Their hashes are real SHA-256 digests, so
   `POST /credentials/{id}/verify-hash` answers exactly as for issued bundles.
 
-The shared `docker-compose.yml` runs `seed.sh` as the one-shot `credential-seed` container before the
-service starts, and runs Redis with append-only persistence on the `credential-redis-data` volume. To
-seed a Redis by hand:
+The shared `docker-compose.yml` runs `seed.sh` as the one-shot `credential-seed` container.
+It connects through `credential-redis:6379`, the HAProxy endpoint for the current primary. The three
+Redis members have separate append-only volumes and Sentinel elects a replica after a primary
+failure. See [Lab 5 Redis failover](../../LAB_5_MIHAI.md). To seed a standalone Redis by hand:
 
 ```bash
 REDIS_HOST=localhost REDISCLI_AUTH=<password> sh docs/db/credential-service/seed.sh
